@@ -1,5 +1,6 @@
 use livesplit_hotkey::{Hook, KeyCode};
 use process_memory::{DataMember, Memory, Pid, ProcessHandle, TryIntoProcessHandle};
+use std::fmt;
 use std::ptr::{null, null_mut};
 use std::sync::mpsc;
 
@@ -9,6 +10,8 @@ extern crate winapi;
 fn main() {
     let keys = vec![
         (KeyCode::F5, Action::ToggleActive),
+        (KeyCode::F6, Action::StorePosition),
+        (KeyCode::F7, Action::RestorePosition),
         (KeyCode::W, Action::Forward),
         (KeyCode::S, Action::Backward),
         (KeyCode::A, Action::Left),
@@ -54,33 +57,65 @@ fn main() {
     println!("Started!");
     print_help(&keys);
 
+    let mut saved_position = position.clone();
     loop {
         let signal = rx.try_recv();
-        if active {
-            match signal {
-                Ok(Action::ToggleActive) => {
+        match signal {
+            Ok(Action::ToggleActive) => {
+                if active {
                     active = false;
                     println!("deactivated");
-                }
-                Ok(Action::Forward) => position.x.data += 100.0,
-                Ok(Action::Backward) => position.x.data -= 100.0,
-                Ok(Action::Left) => position.y.data += 100.0,
-                Ok(Action::Right) => position.y.data -= 100.0,
-                Ok(Action::Up) => position.z.data += 100.0,
-                Ok(Action::Down) => position.z.data -= 100.0,
-                _ => {}
-            }
-
-            position.apply_to_game(handle);
-        } else {
-            match signal {
-                Ok(Action::ToggleActive) => {
+                } else {
                     active = true;
                     position.fetch_from_game(handle);
                     println!("activated");
                 }
-                _ => {}
             }
+            Ok(Action::StorePosition) => {
+                saved_position = position.clone();
+                saved_position.fetch_from_game(handle);
+                println!("Stored position: {:}", saved_position);
+            }
+            Ok(Action::RestorePosition) => {
+                position = saved_position.clone();
+                position.apply_to_game(handle);
+                println!("Restored position: {:}", position);
+            }
+            Ok(Action::Forward) => {
+                if active {
+                    position.x.data += 100.0
+                }
+            }
+            Ok(Action::Backward) => {
+                if active {
+                    position.x.data -= 100.0
+                }
+            }
+            Ok(Action::Left) => {
+                if active {
+                    position.y.data += 100.0
+                }
+            }
+            Ok(Action::Right) => {
+                if active {
+                    position.y.data -= 100.0
+                }
+            }
+            Ok(Action::Up) => {
+                if active {
+                    position.z.data += 100.0
+                }
+            }
+            Ok(Action::Down) => {
+                if active {
+                    position.z.data -= 100.0
+                }
+            }
+            _ => {}
+        }
+
+        if active {
+            position.apply_to_game(handle);
         }
     }
 }
@@ -88,6 +123,8 @@ fn main() {
 #[derive(Debug, Copy, Clone)]
 enum Action {
     ToggleActive,
+    StorePosition,
+    RestorePosition,
     Forward,
     Backward,
     Left,
@@ -102,6 +139,7 @@ fn print_help(keys: &Vec<(KeyCode, Action)>) {
     }
 }
 
+#[derive(Debug, Clone)]
 struct Position {
     x: TrackedMemory<f32>,
     y: TrackedMemory<f32>,
@@ -122,6 +160,13 @@ impl Position {
     }
 }
 
+impl fmt::Display for Position {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}, {}, {}", self.x.data, self.y.data, self.z.data)
+    }
+}
+
+#[derive(Debug, Clone)]
 struct TrackedMemory<T: Copy> {
     data: T,
     offsets: Vec<usize>,
