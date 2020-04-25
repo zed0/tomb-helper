@@ -242,8 +242,7 @@ dependencies = [
 [[package]]
 name = "process-memory"
 version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fc5ca614491c267fa165db985fc84c7f266e5e374c8e02fa73b8d44ddbc08371"
+source = "git+https://github.com/Tommoa/rs-process-memory.git?rev=7b9b263932f16fc5864c294efbf338edb0010f39#7b9b263932f16fc5864c294efbf338edb0010f39"
 dependencies = [
  "libc",
  "mach",
@@ -511,6 +510,7 @@ dependencies = [
  "libc",
  "livesplit-hotkey",
  "process-memory",
+ "win32-error",
  "winapi 0.3.8",
 ]
 
@@ -519,6 +519,16 @@ name = "unicode-xid"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "826e7639553986605ec5979c7dd957c7895e93eabed50ab2ffa7f6128a75097c"
+
+[[package]]
+name = "win32-error"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9b07214ecc964462ab20bbc1d5dc41c41ad8a9ce95e4b95185e908d3ff703f9e"
+dependencies = [
+ "kernel32-sys",
+ "winapi 0.2.8",
+]
 
 [[package]]
 name = "winapi"
