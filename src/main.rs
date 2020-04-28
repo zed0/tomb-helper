@@ -1,38 +1,20 @@
-use livesplit_hotkey::{Hook, KeyCode};
+use livesplit_hotkey::Hook;
 use process_memory::{DataMember, Memory, Pid, ProcessHandle, TryIntoProcessHandle, Architecture};
-use std::{fmt, env, fs};
+use std::fmt;
 use std::ptr::{null, null_mut};
 use std::sync::mpsc;
-use serde::{Deserialize};
+use crate::action::Action;
+use crate::config::Hotkey;
 
 mod process_details;
+mod action;
+mod config;
 
 #[cfg(windows)]
 extern crate winapi;
 
 fn main() {
-    let config_path = env::current_exe().unwrap().parent().unwrap().join("tomb-helper.json");
-    let hotkeys: Vec<Hotkey>;
-
-    if config_path.is_file() {
-        println!("Found config at {:?}", config_path.as_os_str());
-        let config = fs::read_to_string(config_path).expect("Unable to read config file");
-        let config_parsed: Config = serde_json::from_str(&config).unwrap();
-        hotkeys = config_parsed.hotkeys;
-    } else {
-        println!("No config found, using defaults. To use a different config create {:?}", config_path);
-        hotkeys = vec![
-            Hotkey::new(KeyCode::F5, Action::ToggleActive),
-            Hotkey::new(KeyCode::F6, Action::StorePosition),
-            Hotkey::new(KeyCode::F7, Action::RestorePosition),
-            Hotkey::new(KeyCode::W, Action::Forward),
-            Hotkey::new(KeyCode::S, Action::Backward),
-            Hotkey::new(KeyCode::A, Action::Left),
-            Hotkey::new(KeyCode::D, Action::Right),
-            Hotkey::new(KeyCode::Space, Action::Up),
-            Hotkey::new(KeyCode::C, Action::Down),
-        ];
-    }
+    let config = config::get_config();
 
     let (pid, details) = process_details::known_process_details()
         .iter()
@@ -54,7 +36,7 @@ fn main() {
     let (tx, rx) = mpsc::channel();
 
     let hook = Hook::new().unwrap();
-    for hotkey in hotkeys.clone() {
+    for hotkey in config.hotkeys.clone() {
         let current_tx = tx.clone();
         hook.register(hotkey.key, move || {
             current_tx.send(hotkey.action).unwrap();
@@ -63,12 +45,12 @@ fn main() {
     }
 
     println!("Started!");
-    print_help(&hotkeys);
+    print_help(&config.hotkeys);
 
     loop {
         let signal = rx.try_recv();
         match signal {
-            Ok(Action::ToggleActive) => {
+            Ok(Action::ToggleActive{}) => {
                 if active {
                     active = false;
                     println!("deactivated");
@@ -78,44 +60,44 @@ fn main() {
                     println!("activated");
                 }
             }
-            Ok(Action::StorePosition) => {
+            Ok(Action::StorePosition{}) => {
                 saved_position = position.clone();
                 saved_position.fetch_from_game(handle);
                 println!("Stored position: {:}", saved_position);
             }
-            Ok(Action::RestorePosition) => {
+            Ok(Action::RestorePosition{}) => {
                 position = saved_position.clone();
                 position.apply_to_game(handle);
                 println!("Restored position: {:}", position);
             }
-            Ok(Action::Forward) => {
+            Ok(Action::Forward{distance}) => {
                 if active {
-                    position.x.data += 100.0
+                    position.x.data += distance;
                 }
             }
-            Ok(Action::Backward) => {
+            Ok(Action::Backward{distance}) => {
                 if active {
-                    position.x.data -= 100.0
+                    position.x.data -= distance;
                 }
             }
-            Ok(Action::Left) => {
+            Ok(Action::Left{distance}) => {
                 if active {
-                    position.y.data += 100.0
+                    position.y.data += distance;
                 }
             }
-            Ok(Action::Right) => {
+            Ok(Action::Right{distance}) => {
                 if active {
-                    position.y.data -= 100.0
+                    position.y.data -= distance;
                 }
             }
-            Ok(Action::Up) => {
+            Ok(Action::Up{distance}) => {
                 if active {
-                    position.z.data += 100.0
+                    position.z.data += distance;
                 }
             }
-            Ok(Action::Down) => {
+            Ok(Action::Down{distance}) => {
                 if active {
-                    position.z.data -= 100.0
+                    position.z.data -= distance;
                 }
             }
             _ => {}
@@ -125,39 +107,6 @@ fn main() {
             position.apply_to_game(handle);
         }
     }
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct Hotkey {
-    key: KeyCode,
-    action: Action,
-}
-
-impl Hotkey {
-    fn new(key: KeyCode, action: Action) -> Hotkey {
-        Hotkey {
-            key,
-            action,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct Config {
-    hotkeys: Vec<Hotkey>,
-}
-
-#[derive(Debug, Copy, Clone, Deserialize)]
-enum Action {
-    ToggleActive,
-    StorePosition,
-    RestorePosition,
-    Forward,
-    Backward,
-    Left,
-    Right,
-    Up,
-    Down,
 }
 
 fn print_help(hotkeys: &Vec<Hotkey>) {

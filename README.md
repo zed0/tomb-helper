@@ -14,3 +14,41 @@ Current features:
 - Download the [latest version](https://github.com/zed0/tomb-helper/releases/latest) of tomb-helper.exe
 - Open a `cmd` prompt in the directory it was downloaded to (you can type `cmd<enter>` in the Windows Explorer address bar)
 - Run `tomb-helper.exe`
+
+# Configuration
+
+Tomb-helper can be configured by a file named `tomb-helper.json` adjacent to the `tomb-helper.exe` file.
+
+The default configuration is:
+```json
+{
+	"hotkeys": [
+		{"key": "F5", "action": {"ToggleActive": {}}},
+		{"key": "F6", "action": {"StorePosition": {}}},
+		{"key": "F7", "action": {"RestorePosition": {}}},
+		{"key": "W", "action": {"Forward": {"distance": 100.0}}},
+		{"key": "S", "action": {"Backward": {"distance": 100.0}}},
+		{"key": "A", "action": {"Left": {"distance": 100.0}}},
+		{"key": "D", "action": {"Right": {"distance": 100.0}}},
+		{"key": "Space", "action": {"Up": {"distance": 100.0}}},
+		{"key": "C", "action": {"Down": {"distance": 100.0}}}
+	]
+}
+```
+
+## Hotkeys
+The hotkeys can be customised via the `hotkeys` property.
+Each entry comprises of a `key` and an `action` field.
+
+Currently the available actions are:
+- `ToggleActive`
+- `StorePosition`
+- `RestorePosition`
+- `Forward` (can take a distance, which defaults to `100.0`)
+- `Backward` (can take a distance, which defaults to `100.0`)
+- `Left` (can take a distance, which defaults to `100.0`)
+- `Right` (can take a distance, which defaults to `100.0`)
+- `Up` (can take a distance, which defaults to `100.0`)
+- `Down` (can take a distance, which defaults to `100.0`)
+
+The available keys are listed in the [livesplit_hotkey library documentation](https://docs.rs/livesplit-hotkey/0.5.0/livesplit_hotkey/linux/enum.KeyCode.html).
