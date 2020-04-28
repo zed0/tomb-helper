@@ -14,6 +14,8 @@ no-dev-version = true
 livesplit-hotkey = "0.5.0"
 process-memory = { git = "https://github.com/Tommoa/rs-process-memory.git", rev = "7b9b263932f16fc5864c294efbf338edb0010f39" }
 libc = "0.2"
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
 
 [target.'cfg(windows)'.dev-dependencies]
 winapi = { version = "0.3", features = ["tlhelp32"] }

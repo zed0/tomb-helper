@@ -1,8 +1,9 @@
 use livesplit_hotkey::{Hook, KeyCode};
 use process_memory::{DataMember, Memory, Pid, ProcessHandle, TryIntoProcessHandle, Architecture};
-use std::fmt;
+use std::{fmt, env, fs};
 use std::ptr::{null, null_mut};
 use std::sync::mpsc;
+use serde::{Deserialize};
 
 mod process_details;
 
@@ -10,17 +11,28 @@ mod process_details;
 extern crate winapi;
 
 fn main() {
-    let keys = vec![
-        (KeyCode::F5, Action::ToggleActive),
-        (KeyCode::F6, Action::StorePosition),
-        (KeyCode::F7, Action::RestorePosition),
-        (KeyCode::W, Action::Forward),
-        (KeyCode::S, Action::Backward),
-        (KeyCode::A, Action::Left),
-        (KeyCode::D, Action::Right),
-        (KeyCode::Space, Action::Up),
-        (KeyCode::C, Action::Down),
-    ];
+    let config_path = env::current_exe().unwrap().parent().unwrap().join("tomb-helper.json");
+    let hotkeys: Vec<Hotkey>;
+
+    if config_path.is_file() {
+        println!("Found config at {:?}", config_path.as_os_str());
+        let config = fs::read_to_string(config_path).expect("Unable to read config file");
+        let config_parsed: Config = serde_json::from_str(&config).unwrap();
+        hotkeys = config_parsed.hotkeys;
+    } else {
+        println!("No config found, using defaults. To use a different config create {:?}", config_path);
+        hotkeys = vec![
+            Hotkey::new(KeyCode::F5, Action::ToggleActive),
+            Hotkey::new(KeyCode::F6, Action::StorePosition),
+            Hotkey::new(KeyCode::F7, Action::RestorePosition),
+            Hotkey::new(KeyCode::W, Action::Forward),
+            Hotkey::new(KeyCode::S, Action::Backward),
+            Hotkey::new(KeyCode::A, Action::Left),
+            Hotkey::new(KeyCode::D, Action::Right),
+            Hotkey::new(KeyCode::Space, Action::Up),
+            Hotkey::new(KeyCode::C, Action::Down),
+        ];
+    }
 
     let (pid, details) = process_details::known_process_details()
         .iter()
@@ -42,16 +54,16 @@ fn main() {
     let (tx, rx) = mpsc::channel();
 
     let hook = Hook::new().unwrap();
-    for (key, action) in keys.clone() {
+    for hotkey in hotkeys.clone() {
         let current_tx = tx.clone();
-        hook.register(key, move || {
-            current_tx.send(action).unwrap();
+        hook.register(hotkey.key, move || {
+            current_tx.send(hotkey.action).unwrap();
         })
         .unwrap();
     }
 
     println!("Started!");
-    print_help(&keys);
+    print_help(&hotkeys);
 
     loop {
         let signal = rx.try_recv();
@@ -115,7 +127,27 @@ fn main() {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Clone, Deserialize)]
+struct Hotkey {
+    key: KeyCode,
+    action: Action,
+}
+
+impl Hotkey {
+    fn new(key: KeyCode, action: Action) -> Hotkey {
+        Hotkey {
+            key,
+            action,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct Config {
+    hotkeys: Vec<Hotkey>,
+}
+
+#[derive(Debug, Copy, Clone, Deserialize)]
 enum Action {
     ToggleActive,
     StorePosition,
@@ -128,9 +160,9 @@ enum Action {
     Down,
 }
 
-fn print_help(keys: &Vec<(KeyCode, Action)>) {
-    for (key, action) in keys {
-        println!("{:?} => {:?}", key, action);
+fn print_help(hotkeys: &Vec<Hotkey>) {
+    for hotkey in hotkeys {
+        println!("{:?} => {:?}", hotkey.key, hotkey.action);
     }
 }
 
