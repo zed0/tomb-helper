@@ -12,6 +12,10 @@ pub fn known_process_details() -> Vec<ProcessDetails> {
             (AddressType::XPosition, vec![0x01_08_2A_B8, 0x10]),
             (AddressType::YPosition, vec![0x01_08_2A_B8, 0x14]),
             (AddressType::ZPosition, vec![0x01_08_2A_B8, 0x18]),
+
+            (AddressType::XLookAt, vec![0x01_5A_4F_88, 0x0140, 0x80]),
+            (AddressType::YLookAt, vec![0x01_5A_4F_88, 0x0140, 0x84]),
+            (AddressType::ZLookAt, vec![0x01_5A_4F_88, 0x0140, 0x88]),
         ].iter().cloned().collect()),
         ProcessDetails::new("Shadow of the Tomb Raider", "SOTTR.exe", Architecture::Arch64Bit, vec![
             (AddressType::XPosition, vec![0x01_3D_5F_B8, 0x10]),
@@ -26,14 +30,19 @@ pub enum AddressType {
     XPosition,
     YPosition,
     ZPosition,
+    XLookAt,
+    YLookAt,
+    ZLookAt,
 }
+
+pub type AddressOffsets = HashMap<AddressType, Vec<usize>>;
 
 #[derive(Debug, Clone)]
 pub struct ProcessDetails {
     pub name: String,
     pub executable_name: String,
     pub arch: Architecture,
-    pub address_offsets: HashMap<AddressType, Vec<usize>>,
+    pub address_offsets: AddressOffsets,
 }
 
 impl ProcessDetails {

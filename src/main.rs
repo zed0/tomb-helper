@@ -5,6 +5,7 @@ use std::ptr::{null, null_mut};
 use std::sync::mpsc;
 use crate::action::Action;
 use crate::config::Hotkey;
+use crate::process_details::AddressType;
 
 mod process_details;
 mod action;
@@ -30,8 +31,34 @@ fn main() {
     let base_addr = get_base_address(pid) as *const _ as usize;
 
     let mut active = false;
-    let mut position = TrackedPosition::from_process_details(&details, base_addr);
+    let mut position = TrackedPosition::new(
+        details.address_offsets[&AddressType::XPosition].clone(),
+        details.address_offsets[&AddressType::YPosition].clone(),
+        details.address_offsets[&AddressType::ZPosition].clone(),
+        details.arch,
+        base_addr,
+    );
+
+    let mut look_at = {
+        if details.address_offsets.contains_key(&AddressType::XLookAt)
+            && details.address_offsets.contains_key(&AddressType::YLookAt)
+            && details.address_offsets.contains_key(&AddressType::ZLookAt)
+        {
+            Some(TrackedPosition::new(
+                details.address_offsets[&AddressType::XLookAt].clone(),
+                details.address_offsets[&AddressType::YLookAt].clone(),
+                details.address_offsets[&AddressType::ZLookAt].clone(),
+                details.arch,
+                base_addr,
+            ))
+        } else {
+            None
+        }
+
+    };
+
     let mut saved_position = position.clone();
+    let mut saved_look_at = look_at.clone();
 
     let (tx, rx) = mpsc::channel();
 
@@ -63,12 +90,16 @@ fn main() {
             Ok(Action::StorePosition{}) => {
                 saved_position = position.clone();
                 saved_position.fetch_from_game(handle);
-                println!("Stored position: {:}", saved_position);
+                saved_look_at = look_at.clone();
+                saved_look_at.as_mut().map(|l| l.fetch_from_game(handle));
+                println!("Stored! (position: {:} look_at: {:})", saved_position, option_fmt(&saved_look_at));
             }
             Ok(Action::RestorePosition{}) => {
                 position = saved_position.clone();
                 position.apply_to_game(handle);
-                println!("Restored position: {:}", position);
+                look_at = saved_look_at.clone();
+                saved_look_at.as_mut().map(|l| l.apply_to_game(handle));
+                println!("Restored! (position: {:}, look_at: {:})", position, option_fmt(&look_at));
             }
             Ok(Action::Forward{distance}) => {
                 if active {
@@ -109,6 +140,10 @@ fn main() {
     }
 }
 
+fn option_fmt<T: fmt::Display>(opt: & Option<T>) -> String {
+    opt.as_ref().map_or(String::from("None"), |p| format!("{}", p))
+}
+
 fn print_help(hotkeys: &Vec<Hotkey>) {
     for hotkey in hotkeys {
         println!("{:?} => {:?}", hotkey.key, hotkey.action);
@@ -135,24 +170,30 @@ impl TrackedPosition {
         self.z.apply_to_game(handle);
     }
 
-    fn from_process_details(details: &process_details::ProcessDetails, base_addr: usize) -> TrackedPosition {
+    fn new(
+        x_offsets: Vec<usize>,
+        y_offsets: Vec<usize>,
+        z_offsets: Vec<usize>,
+        arch: Architecture,
+        base_addr: usize,
+    ) -> TrackedPosition {
         TrackedPosition {
             x: TrackedMemory {
                 data: 0.0,
-                offsets: details.address_offsets[&process_details::AddressType::XPosition].clone(),
-                arch: details.arch,
+                offsets: x_offsets,
+                arch: arch,
                 base_addr: base_addr,
             },
             y: TrackedMemory {
                 data: 0.0,
-                offsets: details.address_offsets[&process_details::AddressType::YPosition].clone(),
-                arch: details.arch,
+                offsets: y_offsets,
+                arch: arch,
                 base_addr: base_addr,
             },
             z: TrackedMemory {
                 data: 0.0,
-                offsets: details.address_offsets[&process_details::AddressType::ZPosition].clone(),
-                arch: details.arch,
+                offsets: z_offsets,
+                arch: arch,
                 base_addr: base_addr,
             },
         }
@@ -161,7 +202,7 @@ impl TrackedPosition {
 
 impl fmt::Display for TrackedPosition {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}, {}, {}", self.x.data, self.y.data, self.z.data)
+        write!(f, "({}, {}, {})", self.x.data, self.y.data, self.z.data)
     }
 }
 
