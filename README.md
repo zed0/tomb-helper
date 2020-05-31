@@ -26,6 +26,7 @@ The default configuration is:
 		{"key": "F5", "action": {"ToggleActive": {}}},
 		{"key": "F6", "action": {"StorePosition": {}}},
 		{"key": "F7", "action": {"RestorePosition": {}}},
+		{"key": "F8", "action": {"SkipCutscene": {}}},
 		{"key": "W", "action": {"Forward": {"distance": 100.0}}},
 		{"key": "S", "action": {"Backward": {"distance": 100.0}}},
 		{"key": "A", "action": {"Left": {"distance": 100.0}}},
@@ -44,6 +45,7 @@ Currently the available actions are:
 - `ToggleActive`
 - `StorePosition`
 - `RestorePosition`
+- `SkipCutscene` (very experimental, can easily crash or softlock the game when used at unexpected times)
 - `Forward` (can take a distance, which defaults to `100.0`)
 - `Backward` (can take a distance, which defaults to `100.0`)
 - `Left` (can take a distance, which defaults to `100.0`)

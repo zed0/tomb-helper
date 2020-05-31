@@ -1,6 +1,7 @@
 use livesplit_hotkey::Hook;
 use process_memory::{DataMember, Memory, Pid, ProcessHandle, TryIntoProcessHandle, Architecture};
 use std::fmt;
+use std::io;
 use std::ptr::{null, null_mut};
 use std::sync::mpsc;
 use crate::action::Action;
@@ -57,6 +58,19 @@ fn main() {
 
     };
 
+    let mut cutscene_status = {
+        if details.address_offsets.contains_key(&AddressType::CutsceneStatus) {
+            Some(TrackedMemory::<u8> {
+                data: 0,
+                offsets: details.address_offsets[&AddressType::CutsceneStatus].clone(),
+                arch: details.arch,
+                base_addr: base_addr,
+            })
+        } else {
+            None
+        }
+    };
+
     let mut saved_position = position.clone();
     let mut saved_look_at = look_at.clone();
 
@@ -80,26 +94,76 @@ fn main() {
             Ok(Action::ToggleActive{}) => {
                 if active {
                     active = false;
-                    println!("deactivated");
+                    println!("Deactivated");
                 } else {
                     active = true;
-                    position.fetch_from_game(handle);
-                    println!("activated");
+                    match position.fetch_from_game(handle) {
+                        Err(msg) => eprintln!("Error activating: {}", msg),
+                        Ok(()) => println!("Activated"),
+                    }
                 }
             }
             Ok(Action::StorePosition{}) => {
                 saved_position = position.clone();
-                saved_position.fetch_from_game(handle);
+                match saved_position.fetch_from_game(handle) {
+                    Err(msg) => {
+                        eprintln!("Error storing position: {}", msg);
+                        return;
+                    },
+                    Ok(()) => {},
+                }
                 saved_look_at = look_at.clone();
-                saved_look_at.as_mut().map(|l| l.fetch_from_game(handle));
+                match &mut saved_look_at {
+                    Some(s) => {
+                        match s.fetch_from_game(handle) {
+                            Err(msg) => {
+                                eprintln!("Error storing look_at: {}", msg);
+                                return;
+                            },
+                            Ok(()) => {},
+                        }
+
+                    }
+                    None => {}
+                }
+
                 println!("Stored! (position: {:} look_at: {:})", saved_position, option_fmt(&saved_look_at));
             }
             Ok(Action::RestorePosition{}) => {
                 position = saved_position.clone();
-                position.apply_to_game(handle);
+                match position.apply_to_game(handle) {
+                    Err(msg) => {
+                        eprintln!("Error restoring position: {}", msg);
+                        return;
+                    },
+                    Ok(()) => {},
+                }
                 look_at = saved_look_at.clone();
-                saved_look_at.as_mut().map(|l| l.apply_to_game(handle));
+                match &mut saved_look_at {
+                    Some(s) => {
+                        match s.apply_to_game(handle) {
+                            Err(msg) => {
+                                eprintln!("Error restoring look_at: {}", msg);
+                                return;
+                            },
+                            Ok(()) => {},
+                        }
+                    },
+                    None => {},
+                }
                 println!("Restored! (position: {:}, look_at: {:})", position, option_fmt(&look_at));
+            }
+            Ok(Action::SkipCutscene{}) => {
+                match &mut cutscene_status {
+                    Some(s) => {
+                        s.data = 5;
+                        match s.apply_to_game(handle) {
+                            Err(msg) => println!("Could not skip cutscene: {}", msg),
+                            Ok(()) => println!("Skipped cutscene"),
+                        }
+                    },
+                    None => {},
+                }
             }
             Ok(Action::Forward{distance}) => {
                 if active {
@@ -135,7 +199,10 @@ fn main() {
         }
 
         if active {
-            position.apply_to_game(handle);
+            match position.apply_to_game(handle) {
+                Err(msg) => eprintln!("Error updating position: {}", msg),
+                Ok(()) => {},
+            }
         }
     }
 }
@@ -158,16 +225,18 @@ struct TrackedPosition {
 }
 
 impl TrackedPosition {
-    fn fetch_from_game(&mut self, handle: ProcessHandle) {
-        self.x.fetch_from_game(handle);
-        self.y.fetch_from_game(handle);
-        self.z.fetch_from_game(handle);
+    fn fetch_from_game(&mut self, handle: ProcessHandle) -> io::Result<()> {
+        self.x.fetch_from_game(handle)?;
+        self.y.fetch_from_game(handle)?;
+        self.z.fetch_from_game(handle)?;
+        Ok(())
     }
 
-    fn apply_to_game(&mut self, handle: ProcessHandle) {
-        self.x.apply_to_game(handle);
-        self.y.apply_to_game(handle);
-        self.z.apply_to_game(handle);
+    fn apply_to_game(&mut self, handle: ProcessHandle) -> io::Result<()> {
+        self.x.apply_to_game(handle)?;
+        self.y.apply_to_game(handle)?;
+        self.z.apply_to_game(handle)?;
+        Ok(())
     }
 
     fn new(
@@ -221,18 +290,18 @@ impl<T: Copy + std::fmt::Debug> TrackedMemory<T> {
         offsets_with_base
     }
 
-    fn fetch_from_game(&mut self, handle: ProcessHandle) {
+    fn fetch_from_game(&mut self, handle: ProcessHandle) -> io::Result<()> {
         self.data = DataMember::<T>::new_offset(handle, self.offsets_with_base())
             .set_arch(self.arch)
-            .read()
-            .unwrap();
+            .read()?;
+        Ok(())
     }
 
-    fn apply_to_game(&self, handle: ProcessHandle) {
+    fn apply_to_game(&self, handle: ProcessHandle) -> io::Result<()> {
         DataMember::<T>::new_offset(handle, self.offsets_with_base())
             .set_arch(self.arch)
-            .write(&self.data)
-            .unwrap()
+            .write(&self.data)?;
+        Ok(())
     }
 }
 

@@ -9,6 +9,7 @@ pub enum Action {
     ToggleActive{},
     StorePosition{},
     RestorePosition{},
+    SkipCutscene{},
     Forward{
         #[serde(default = "default_distance")]
         distance: f32

@@ -27,6 +27,7 @@ fn default_hotkeys() -> Vec<Hotkey> {
         Hotkey::new(KeyCode::F5, Action::ToggleActive{}),
         Hotkey::new(KeyCode::F6, Action::StorePosition{}),
         Hotkey::new(KeyCode::F7, Action::RestorePosition{}),
+        Hotkey::new(KeyCode::F8, Action::SkipCutscene{}),
         Hotkey::new(KeyCode::W, Action::Forward{distance: 100.0}),
         Hotkey::new(KeyCode::S, Action::Backward{distance: 100.0}),
         Hotkey::new(KeyCode::A, Action::Left{distance: 100.0}),
