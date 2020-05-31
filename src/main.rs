@@ -89,126 +89,100 @@ fn main() {
     print_help(&config.hotkeys);
 
     loop {
-        let signal = rx.try_recv();
-        match signal {
-            Ok(Action::ToggleActive{}) => {
-                if active {
-                    active = false;
-                    println!("Deactivated");
-                } else {
-                    active = true;
-                    match position.fetch_from_game(handle) {
-                        Err(msg) => eprintln!("Error activating: {}", msg),
-                        Ok(()) => println!("Activated"),
+        || -> io::Result<()> {
+            let signal = rx.try_recv();
+            match signal {
+                Ok(Action::ToggleActive{}) => {
+                    if active {
+                        active = false;
+                        println!("Deactivated");
+                    } else {
+                        active = true;
+                        match position.fetch_from_game(handle) {
+                            Err(msg) => eprintln!("Error activating: {}", msg),
+                            Ok(()) => println!("Activated"),
+                        }
                     }
                 }
-            }
-            Ok(Action::StorePosition{}) => {
-                saved_position = position.clone();
-                match saved_position.fetch_from_game(handle) {
-                    Err(msg) => {
-                        eprintln!("Error storing position: {}", msg);
-                        return;
-                    },
-                    Ok(()) => {},
-                }
-                saved_look_at = look_at.clone();
-                match &mut saved_look_at {
-                    Some(s) => {
-                        match s.fetch_from_game(handle) {
-                            Err(msg) => {
-                                eprintln!("Error storing look_at: {}", msg);
-                                return;
-                            },
-                            Ok(()) => {},
-                        }
-
+                Ok(Action::StorePosition{}) => {
+                    saved_position = position.clone();
+                    saved_position.fetch_from_game(handle)?;
+                    saved_look_at = look_at.clone();
+                    match &mut saved_look_at {
+                        Some(s) => s.fetch_from_game(handle)?,
+                        None => {},
                     }
-                    None => {}
-                }
 
-                println!("Stored! (position: {:} look_at: {:})", saved_position, option_fmt(&saved_look_at));
-            }
-            Ok(Action::RestorePosition{}) => {
-                position = saved_position.clone();
-                match position.apply_to_game(handle) {
-                    Err(msg) => {
-                        eprintln!("Error restoring position: {}", msg);
-                        return;
-                    },
-                    Ok(()) => {},
+                    println!("Stored! (position: {:} look_at: {:})", saved_position, display_option(&saved_look_at));
                 }
-                look_at = saved_look_at.clone();
-                match &mut saved_look_at {
-                    Some(s) => {
-                        match s.apply_to_game(handle) {
-                            Err(msg) => {
-                                eprintln!("Error restoring look_at: {}", msg);
-                                return;
-                            },
-                            Ok(()) => {},
-                        }
-                    },
-                    None => {},
-                }
-                println!("Restored! (position: {:}, look_at: {:})", position, option_fmt(&look_at));
-            }
-            Ok(Action::SkipCutscene{}) => {
-                match &mut cutscene_status {
-                    Some(s) => {
-                        s.data = 5;
-                        match s.apply_to_game(handle) {
-                            Err(msg) => println!("Could not skip cutscene: {}", msg),
-                            Ok(()) => println!("Skipped cutscene"),
-                        }
-                    },
-                    None => {},
-                }
-            }
-            Ok(Action::Forward{distance}) => {
-                if active {
-                    position.x.data += distance;
-                }
-            }
-            Ok(Action::Backward{distance}) => {
-                if active {
-                    position.x.data -= distance;
-                }
-            }
-            Ok(Action::Left{distance}) => {
-                if active {
-                    position.y.data += distance;
-                }
-            }
-            Ok(Action::Right{distance}) => {
-                if active {
-                    position.y.data -= distance;
-                }
-            }
-            Ok(Action::Up{distance}) => {
-                if active {
-                    position.z.data += distance;
-                }
-            }
-            Ok(Action::Down{distance}) => {
-                if active {
-                    position.z.data -= distance;
-                }
-            }
-            _ => {}
-        }
+                Ok(Action::RestorePosition{}) => {
+                    position = saved_position.clone();
+                    position.apply_to_game(handle)?;
+                    look_at = saved_look_at.clone();
+                    match &mut saved_look_at {
+                        Some(s) => s.apply_to_game(handle)?,
+                        None => {},
+                    }
 
-        if active {
-            match position.apply_to_game(handle) {
-                Err(msg) => eprintln!("Error updating position: {}", msg),
-                Ok(()) => {},
+                    println!("Restored! (position: {:}, look_at: {:})", position, display_option(&look_at));
+                }
+                Ok(Action::SkipCutscene{}) => {
+                    match &mut cutscene_status {
+                        Some(s) => {
+                            s.data = 5;
+                            s.apply_to_game(handle)?;
+                            println!("Skipped cutscene");
+                        },
+                        None => {},
+                    }
+                }
+                Ok(Action::Forward{distance}) => {
+                    if active {
+                        position.x.data += distance;
+                    }
+                }
+                Ok(Action::Backward{distance}) => {
+                    if active {
+                        position.x.data -= distance;
+                    }
+                }
+                Ok(Action::Left{distance}) => {
+                    if active {
+                        position.y.data += distance;
+                    }
+                }
+                Ok(Action::Right{distance}) => {
+                    if active {
+                        position.y.data -= distance;
+                    }
+                }
+                Ok(Action::Up{distance}) => {
+                    if active {
+                        position.z.data += distance;
+                    }
+                }
+                Ok(Action::Down{distance}) => {
+                    if active {
+                        position.z.data -= distance;
+                    }
+                }
+                _ => {}
             }
-        }
+
+            if active {
+                position.apply_to_game(handle)?;
+            }
+
+            Ok(())
+        }().unwrap_or_else(|msg| eprintln!("Error: {}", msg));
     }
 }
 
-fn option_fmt<T: fmt::Display>(opt: & Option<T>) -> String {
-    opt.as_ref().map_or(String::from("None"), |p| format!("{}", p))
+fn display_option<T: fmt::Display>(opt: & Option<T>) -> String {
+    match &opt {
+        Some(p) => format!("{}", p),
+        None => "None".to_string(),
+    }
 }
 
 fn print_help(hotkeys: &Vec<Hotkey>) {
