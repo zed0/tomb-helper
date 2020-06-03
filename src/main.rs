@@ -2,6 +2,7 @@ use livesplit_hotkey::Hook;
 use process_memory::{DataMember, Memory, Pid, ProcessHandle, TryIntoProcessHandle, Architecture};
 use std::fmt;
 use std::io;
+use std::error::Error;
 use std::ptr::{null, null_mut};
 use std::sync::mpsc;
 use crate::action::Action;
@@ -71,6 +72,20 @@ fn main() {
         }
     };
 
+    // TODO: Merge this and cutscene_status into a single type
+    let mut cutscene_timeline = {
+        if details.address_offsets.contains_key(&AddressType::CutsceneTimeline) {
+            Some(TrackedMemory::<f32> {
+                data: 0.0,
+                offsets: details.address_offsets[&AddressType::CutsceneTimeline].clone(),
+                arch: details.arch,
+                base_addr: base_addr,
+            })
+        } else {
+            None
+        }
+    };
+
     let mut saved_position = position.clone();
     let mut saved_look_at = look_at.clone();
 
@@ -89,7 +104,7 @@ fn main() {
     print_help(&config.hotkeys);
 
     loop {
-        || -> io::Result<()> {
+        || -> Result<(), Box<dyn Error>> {
             let signal = rx.try_recv();
             match signal {
                 Ok(Action::ToggleActive{}) => {
@@ -127,10 +142,24 @@ fn main() {
                     println!("Restored! (position: {:}, look_at: {:})", position, display_option(&look_at));
                 }
                 Ok(Action::SkipCutscene{}) => {
+                    match &mut cutscene_timeline {
+                        Some(s) => {
+                            if s.fetch_from_game(handle).is_err() {
+                                return Err(NotInCutsceneError.into());
+                            }
+                            if s.data <= 6.0 {
+                                return Err(TooEarlyInCutsceneError.into());
+                            }
+                        },
+                        None => {},
+                    }
+
                     match &mut cutscene_status {
                         Some(s) => {
                             s.data = 5;
-                            s.apply_to_game(handle)?;
+                            if s.apply_to_game(handle).is_err() {
+                                return Err(NotInCutsceneError.into());
+                            }
                             println!("Skipped cutscene");
                         },
                         None => {},
@@ -360,3 +389,26 @@ pub fn get_pid(process_name: &str) -> Option<Pid> {
     }
     None
 }
+
+#[derive(Debug)]
+struct NotInCutsceneError;
+
+impl fmt::Display for NotInCutsceneError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Not in a cutscene")
+    }
+}
+
+impl Error for NotInCutsceneError {}
+
+
+#[derive(Debug)]
+struct TooEarlyInCutsceneError;
+
+impl fmt::Display for TooEarlyInCutsceneError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Too early in cutscene")
+    }
+}
+
+impl Error for TooEarlyInCutsceneError {}
