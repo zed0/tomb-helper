@@ -1,4 +1,4 @@
-use serde::{Deserialize};
+use serde::Deserialize;
 
 fn default_distance() -> f32 {
     100.0
@@ -6,32 +6,32 @@ fn default_distance() -> f32 {
 
 #[derive(Debug, Copy, Clone, Deserialize)]
 pub enum Action {
-    ToggleActive{},
-    StorePosition{},
-    RestorePosition{},
-    SkipCutscene{},
-    Forward{
+    ToggleActive {},
+    StorePosition {},
+    RestorePosition {},
+    SkipCutscene {},
+    Forward {
         #[serde(default = "default_distance")]
-        distance: f32
+        distance: f32,
     },
-    Backward{
+    Backward {
         #[serde(default = "default_distance")]
-        distance: f32
+        distance: f32,
     },
-    Left{
+    Left {
         #[serde(default = "default_distance")]
-        distance: f32
+        distance: f32,
     },
-    Right{
+    Right {
         #[serde(default = "default_distance")]
-        distance: f32
+        distance: f32,
     },
-    Up{
+    Up {
         #[serde(default = "default_distance")]
-        distance: f32
+        distance: f32,
     },
-    Down{
+    Down {
         #[serde(default = "default_distance")]
-        distance: f32
+        distance: f32,
     },
 }

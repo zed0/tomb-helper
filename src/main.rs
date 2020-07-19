@@ -1,22 +1,22 @@
+use crate::action::Action;
+use crate::config::Hotkey;
+use crate::cutscene_handler::CutsceneHandler;
+use crate::handler::Handler;
+use crate::position_handler::PositionHandler;
+use itertools::Itertools;
 use livesplit_hotkey::Hook;
+use livesplit_hotkey::KeyCode;
 use process_memory::{Pid, TryIntoProcessHandle};
-use livesplit_hotkey::{KeyCode};
 use std::ptr::{null, null_mut};
 use std::sync::mpsc;
-use itertools::Itertools;
-use crate::config::Hotkey;
-use crate::action::Action;
-use crate::cutscene_handler::CutsceneHandler;
-use crate::position_handler::PositionHandler;
-use crate::handler::Handler;
 
-mod process_details;
 mod action;
 mod config;
-mod tracked_memory;
 mod cutscene_handler;
-mod position_handler;
 mod handler;
+mod position_handler;
+mod process_details;
+mod tracked_memory;
 
 #[cfg(windows)]
 extern crate winapi;
@@ -38,28 +38,46 @@ fn main() {
     let base_addr = get_base_address(pid) as *const _ as usize;
     let mut handlers: Vec<Box<dyn Handler>> = vec![];
 
-    match CutsceneHandler::new(&details.address_offsets, &details.arch, &base_addr, &handle, &config.cutscene_blacklist_file) {
+    match CutsceneHandler::new(
+        &details.address_offsets,
+        &details.arch,
+        &base_addr,
+        &handle,
+        &config.cutscene_blacklist_file,
+    ) {
         Some(h) => handlers.push(Box::new(h)),
-        None => {println!("No support for cutscene handler in this game")},
+        None => println!("No support for cutscene handler in this game"),
     }
 
-    match PositionHandler::new_position_handler(&details.address_offsets, &details.arch, &base_addr, &handle) {
+    match PositionHandler::new_position_handler(
+        &details.address_offsets,
+        &details.arch,
+        &base_addr,
+        &handle,
+    ) {
         Some(h) => handlers.push(Box::new(h)),
-        None => {println!("No support for position handler in this game")},
+        None => println!("No support for position handler in this game"),
     }
 
-    match PositionHandler::new_look_at_handler(&details.address_offsets, &details.arch, &base_addr, &handle) {
+    match PositionHandler::new_look_at_handler(
+        &details.address_offsets,
+        &details.arch,
+        &base_addr,
+        &handle,
+    ) {
         Some(h) => handlers.push(Box::new(h)),
-        None => {println!("No support for look at position handler in this game")},
+        None => println!("No support for look at position handler in this game"),
     }
 
     let (tx, rx) = mpsc::channel();
 
     let hook = Hook::new().unwrap();
-    let key_groups = config.hotkeys.clone().into_iter().map(|h: Hotkey| -> (KeyCode, Action) {
-        (h.key, h.action)
-    })
-    .into_group_map();
+    let key_groups = config
+        .hotkeys
+        .clone()
+        .into_iter()
+        .map(|h: Hotkey| -> (KeyCode, Action) { (h.key, h.action) })
+        .into_group_map();
 
     for (key, actions) in key_groups {
         let current_tx = tx.clone();
@@ -80,14 +98,18 @@ fn main() {
         match signal {
             Ok(s) => {
                 for handler in &mut handlers {
-                    handler.handle_action(s).unwrap_or_else(|msg| eprintln!("Error: {}", msg));
+                    handler
+                        .handle_action(s)
+                        .unwrap_or_else(|msg| eprintln!("Error: {}", msg));
                 }
-            },
+            }
             _ => {}
         }
 
         for handler in &mut handlers {
-            handler.handle_tick().unwrap_or_else(|msg| eprintln!("Error: {}", msg));
+            handler
+                .handle_tick()
+                .unwrap_or_else(|msg| eprintln!("Error: {}", msg));
         }
     }
 }
@@ -97,7 +119,6 @@ fn print_help(hotkeys: &Vec<Hotkey>) {
         println!("{:?} => {:?}", hotkey.key, hotkey.action);
     }
 }
-
 
 #[cfg(windows)]
 pub fn get_base_address(pid: Pid) -> *const u8 {
@@ -121,8 +142,7 @@ pub fn get_base_address(pid: Pid) -> *const u8 {
             winapi::um::tlhelp32::TH32CS_SNAPMODULE | winapi::um::tlhelp32::TH32CS_SNAPMODULE32,
             pid,
         );
-        if snapshot == winapi::um::handleapi::INVALID_HANDLE_VALUE
-        {
+        if snapshot == winapi::um::handleapi::INVALID_HANDLE_VALUE {
             return null();
         }
 

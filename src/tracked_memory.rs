@@ -1,5 +1,5 @@
+use process_memory::{Architecture, DataMember, Memory, ProcessHandle};
 use std::io;
-use process_memory::{DataMember, Memory, ProcessHandle, Architecture};
 
 #[derive(Debug, Clone)]
 pub struct TrackedMemory<T: Copy> {
@@ -44,4 +44,3 @@ impl<T: Copy + std::fmt::Debug> TrackedMemory<T> {
         Ok(())
     }
 }
-

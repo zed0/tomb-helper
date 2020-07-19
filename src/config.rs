@@ -1,12 +1,16 @@
-use serde::{Deserialize};
-use livesplit_hotkey::{KeyCode};
-use std::{env, fs};
+use livesplit_hotkey::KeyCode;
+use serde::Deserialize;
 use std::path::PathBuf;
+use std::{env, fs};
 
 use crate::action::Action;
 
 fn default_config_path() -> PathBuf {
-    env::current_exe().unwrap().parent().unwrap().join("tomb-helper.json")
+    env::current_exe()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("tomb-helper.json")
 }
 
 pub fn get_config() -> Config {
@@ -16,7 +20,10 @@ pub fn get_config() -> Config {
         println!("Found config at {:?}", config_path.as_os_str());
         config = fs::read_to_string(config_path).expect("Unable to read config file.");
     } else {
-        println!("No config found, using defaults. To use a different config create {:?}", config_path);
+        println!(
+            "No config found, using defaults. To use a different config create {:?}",
+            config_path
+        );
         config = String::from("{}");
     }
     serde_json::from_str(&config).unwrap()
@@ -24,16 +31,16 @@ pub fn get_config() -> Config {
 
 fn default_hotkeys() -> Vec<Hotkey> {
     vec![
-        Hotkey::new(KeyCode::F5, Action::ToggleActive{}),
-        Hotkey::new(KeyCode::F6, Action::StorePosition{}),
-        Hotkey::new(KeyCode::F7, Action::RestorePosition{}),
-        Hotkey::new(KeyCode::Space, Action::SkipCutscene{}),
-        Hotkey::new(KeyCode::W, Action::Forward{distance: 100.0}),
-        Hotkey::new(KeyCode::S, Action::Backward{distance: 100.0}),
-        Hotkey::new(KeyCode::A, Action::Left{distance: 100.0}),
-        Hotkey::new(KeyCode::D, Action::Right{distance: 100.0}),
-        Hotkey::new(KeyCode::Space, Action::Up{distance: 100.0}),
-        Hotkey::new(KeyCode::C, Action::Down{distance: 100.0}),
+        Hotkey::new(KeyCode::F5, Action::ToggleActive {}),
+        Hotkey::new(KeyCode::F6, Action::StorePosition {}),
+        Hotkey::new(KeyCode::F7, Action::RestorePosition {}),
+        Hotkey::new(KeyCode::Space, Action::SkipCutscene {}),
+        Hotkey::new(KeyCode::W, Action::Forward { distance: 100.0 }),
+        Hotkey::new(KeyCode::S, Action::Backward { distance: 100.0 }),
+        Hotkey::new(KeyCode::A, Action::Left { distance: 100.0 }),
+        Hotkey::new(KeyCode::D, Action::Right { distance: 100.0 }),
+        Hotkey::new(KeyCode::Space, Action::Up { distance: 100.0 }),
+        Hotkey::new(KeyCode::C, Action::Down { distance: 100.0 }),
     ]
 }
 
@@ -49,10 +56,7 @@ pub struct Hotkey {
 
 impl Hotkey {
     fn new(key: KeyCode, action: Action) -> Hotkey {
-        Hotkey {
-            key,
-            action,
-        }
+        Hotkey { key, action }
     }
 }
 

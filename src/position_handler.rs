@@ -1,11 +1,11 @@
-use std::fmt;
-use std::error::Error;
-use std::io;
-use process_memory::{ProcessHandle, Architecture};
-use crate::process_details::{AddressType, AddressOffsets};
-use crate::tracked_memory::TrackedMemory;
 use crate::action::Action;
 use crate::handler::Handler;
+use crate::process_details::{AddressOffsets, AddressType};
+use crate::tracked_memory::TrackedMemory;
+use process_memory::{Architecture, ProcessHandle};
+use std::error::Error;
+use std::fmt;
+use std::io;
 
 #[derive(Debug, Clone)]
 pub struct PositionHandler {
@@ -81,7 +81,7 @@ impl Handler for PositionHandler {
     }
     fn handle_action(&mut self, action: Action) -> Result<(), Box<dyn Error>> {
         match action {
-            Action::ToggleActive{} => {
+            Action::ToggleActive {} => {
                 if self.active {
                     self.active = false;
                     println!("Deactivated {} handler", self.name);
@@ -92,47 +92,47 @@ impl Handler for PositionHandler {
                         Ok(()) => println!("Activated {} handler", self.name),
                     }
                 }
-            },
-            Action::StorePosition{} => {
+            }
+            Action::StorePosition {} => {
                 self.saved_position = self.position.clone();
                 self.saved_position.fetch_from_game(self.handle)?;
                 println!("Stored {}! {:}", self.name, self.saved_position);
-            },
-            Action::RestorePosition{} => {
+            }
+            Action::RestorePosition {} => {
                 self.position = self.saved_position.clone();
                 self.position.apply_to_game(self.handle)?;
                 println!("Restored {}! {:}", self.name, self.position);
-            },
-            Action::Forward{distance} => {
+            }
+            Action::Forward { distance } => {
                 if self.active {
                     self.position.x.data += distance;
                 }
-            },
-            Action::Backward{distance} => {
+            }
+            Action::Backward { distance } => {
                 if self.active {
                     self.position.x.data -= distance;
                 }
-            },
-            Action::Left{distance} => {
+            }
+            Action::Left { distance } => {
                 if self.active {
                     self.position.y.data += distance;
                 }
-            },
-            Action::Right{distance} => {
+            }
+            Action::Right { distance } => {
                 if self.active {
                     self.position.y.data -= distance;
                 }
-            },
-            Action::Up{distance} => {
+            }
+            Action::Up { distance } => {
                 if self.active {
                     self.position.z.data += distance;
                 }
-            },
-            Action::Down{distance} => {
+            }
+            Action::Down { distance } => {
                 if self.active {
                     self.position.z.data -= distance;
                 }
-            },
+            }
             _ => (),
         }
         Ok(())

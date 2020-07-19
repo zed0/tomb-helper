@@ -1,5 +1,5 @@
-use std::error::Error;
 use crate::action::Action;
+use std::error::Error;
 
 pub trait Handler {
     fn handle_tick(&mut self) -> Result<(), Box<dyn Error>>;

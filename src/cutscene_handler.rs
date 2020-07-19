@@ -1,13 +1,13 @@
-use std::fmt;
-use std::error::Error;
-use std::collections::HashMap;
-use process_memory::{ProcessHandle, Architecture};
-use serde::{Deserialize};
-use reqwest::Url;
-use crate::process_details::{AddressType, AddressOffsets};
-use crate::tracked_memory::TrackedMemory;
 use crate::action::Action;
 use crate::handler::Handler;
+use crate::process_details::{AddressOffsets, AddressType};
+use crate::tracked_memory::TrackedMemory;
+use process_memory::{Architecture, ProcessHandle};
+use reqwest::Url;
+use serde::Deserialize;
+use std::collections::HashMap;
+use std::error::Error;
+use std::fmt;
 
 #[derive(Debug, Clone)]
 pub struct CutsceneHandler {
@@ -68,15 +68,15 @@ impl CutsceneHandler {
         if valid_cutscene.is_err() {
             // We don't generate an error here because if people bind to space we don't want to
             // print an error every time they jump
-            return Ok(())
+            return Ok(());
         }
 
         let mut delay = 6.0;
         match self.blacklist.get(&self.id.data) {
             Some(blacklist_entry) => {
                 delay = blacklist_entry.skip_delay;
-            },
-            None => {},
+            }
+            None => {}
         }
 
         if self.prompt.data != 1 {
@@ -84,12 +84,18 @@ impl CutsceneHandler {
         }
 
         if delay == 20000.0 {
-            return Err(CutsceneError::new("Cutscene blacklisted, cannot be skipped to prevent issues.").into());
+            return Err(CutsceneError::new(
+                "Cutscene blacklisted, cannot be skipped to prevent issues.",
+            )
+            .into());
         }
 
         if self.timeline.data <= delay {
             let remaining = delay - self.timeline.data;
-            return Err(CutsceneError::new(format!("Too early in cutscene.  Skipable in {} seconds.", remaining).as_str()).into());
+            return Err(CutsceneError::new(
+                format!("Too early in cutscene.  Skipable in {} seconds.", remaining).as_str(),
+            )
+            .into());
         }
 
         self.status.data = 5;
@@ -107,12 +113,11 @@ impl Handler for CutsceneHandler {
     }
     fn handle_action(&mut self, action: Action) -> Result<(), Box<dyn Error>> {
         match action {
-            Action::SkipCutscene{} => self.skip(),
+            Action::SkipCutscene {} => self.skip(),
             _ => Ok(()),
         }
     }
 }
-
 
 #[derive(Debug)]
 struct CutsceneError {
@@ -120,11 +125,9 @@ struct CutsceneError {
 }
 
 impl CutsceneError {
-    pub fn new(
-        message: &str,
-    ) -> CutsceneError {
+    pub fn new(message: &str) -> CutsceneError {
         CutsceneError {
-            message: message.to_string()
+            message: message.to_string(),
         }
     }
 }
@@ -137,16 +140,18 @@ impl fmt::Display for CutsceneError {
 
 impl Error for CutsceneError {}
 
-
 #[derive(Debug, Clone, Deserialize)]
-pub struct Blacklist {
-}
+pub struct Blacklist {}
 
 fn get_blacklist(blacklist_location: &String) -> HashMap<u32, BlacklistEntry> {
     println!("Loading cutscene blacklist from {}", blacklist_location);
     let url = Url::parse(blacklist_location).expect("Could not parse cutscene blacklist url");
-    let content = reqwest::blocking::get(url).expect("Could not retrieve cutscene blacklist url").text().unwrap();
-    return serde_json::from_str(&content).expect("Could not parse cutscene blacklist to expected format");
+    let content = reqwest::blocking::get(url)
+        .expect("Could not retrieve cutscene blacklist url")
+        .text()
+        .unwrap();
+    return serde_json::from_str(&content)
+        .expect("Could not parse cutscene blacklist to expected format");
 }
 
 #[derive(Debug, Clone, Deserialize)]
