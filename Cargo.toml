@@ -16,6 +16,7 @@ process-memory = { git = "https://github.com/Tommoa/rs-process-memory.git", rev 
 libc = "0.2"
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
+reqwest = { version = "0.10", features = ["blocking", "json"] }
 
 [target.'cfg(windows)'.dev-dependencies]
 winapi = { version = "0.3", features = ["tlhelp32"] }

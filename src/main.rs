@@ -35,7 +35,7 @@ fn main() {
     let base_addr = get_base_address(pid) as *const _ as usize;
     let mut handlers: Vec<Box<dyn Handler>> = vec![];
 
-    match CutsceneHandler::new(&details.address_offsets, &details.arch, &base_addr, &handle) {
+    match CutsceneHandler::new(&details.address_offsets, &details.arch, &base_addr, &handle, &config.cutscene_blacklist_file) {
         Some(h) => handlers.push(Box::new(h)),
         None => {println!("No support for cutscene handler in this game")},
     }

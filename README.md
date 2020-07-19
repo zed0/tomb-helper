@@ -33,7 +33,8 @@ The default configuration is:
 		{"key": "D", "action": {"Right": {"distance": 100.0}}},
 		{"key": "Space", "action": {"Up": {"distance": 100.0}}},
 		{"key": "C", "action": {"Down": {"distance": 100.0}}}
-	]
+	],
+	"cutscene_blacklist_file": "https://gist.githubusercontent.com/Atorizil/734a7649471f0fa0a2a9f92a167e294b/raw/bace4c713a0cba7188a9e110a703ffab391f7f31/Blacklist.json"
 }
 ```
 
@@ -45,7 +46,7 @@ Currently the available actions are:
 - `ToggleActive`
 - `StorePosition`
 - `RestorePosition`
-- `SkipCutscene` (very experimental, can easily crash or softlock the game when used at unexpected times)
+- `SkipCutscene`
 - `Forward` (can take a distance, which defaults to `100.0`)
 - `Backward` (can take a distance, which defaults to `100.0`)
 - `Left` (can take a distance, which defaults to `100.0`)
@@ -54,3 +55,9 @@ Currently the available actions are:
 - `Down` (can take a distance, which defaults to `100.0`)
 
 The available keys are listed in the [livesplit_hotkey library documentation](https://docs.rs/livesplit-hotkey/0.5.0/livesplit_hotkey/linux/enum.KeyCode.html).
+
+## Cutscene blacklist file
+The cutscene blacklist is the list of timings that are used to configure the time until cutscenes can be skipped.
+
+The default value is [the list](https://gist.github.com/Atorizil/734a7649471f0fa0a2a9f92a167e294b) that is used by both this tool and @Atorizil's [SOTTR Cutscene Skipper](https://github.com/Atorizil/SOTTR-Cutscene-Skipper).
+If you want to use a different file (e.g. to try out some new timings) you can use a pastebin or github gist. Local files may be supported at some point.

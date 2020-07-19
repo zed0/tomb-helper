@@ -22,8 +22,10 @@ pub fn known_process_details() -> Vec<ProcessDetails> {
             (AddressType::YPosition, vec![0x01_3D_5F_B8, 0x14]),
             (AddressType::ZPosition, vec![0x01_3D_5F_B8, 0x18]),
 
+            (AddressType::CutscenePrompt, vec![0x01_41_B8_C0, 0x10]),
             (AddressType::CutsceneStatus, vec![0x01_41_B8_C0, 0x129]),
             (AddressType::CutsceneTimeline, vec![0x01_41_B8_C0, 0x60]),
+            (AddressType::CutsceneId, vec![0x03_60_E0_D0, 0x0, 0x120, 0x10, 0x1D4]),
         ].iter().cloned().collect()),
     ]
 }
@@ -36,8 +38,10 @@ pub enum AddressType {
     XLookAt,
     YLookAt,
     ZLookAt,
+    CutscenePrompt,
     CutsceneStatus,
     CutsceneTimeline,
+    CutsceneId,
 }
 
 pub type AddressOffsets = HashMap<AddressType, Vec<usize>>;

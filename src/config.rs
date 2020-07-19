@@ -37,6 +37,10 @@ fn default_hotkeys() -> Vec<Hotkey> {
     ]
 }
 
+fn default_cutscene_blacklist_file() -> String {
+    "https://gist.githubusercontent.com/Atorizil/734a7649471f0fa0a2a9f92a167e294b/raw/bace4c713a0cba7188a9e110a703ffab391f7f31/Blacklist.json".to_string()
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct Hotkey {
     pub key: KeyCode,
@@ -56,4 +60,6 @@ impl Hotkey {
 pub struct Config {
     #[serde(default = "default_hotkeys")]
     pub hotkeys: Vec<Hotkey>,
+    #[serde(default = "default_cutscene_blacklist_file")]
+    pub cutscene_blacklist_file: String,
 }
