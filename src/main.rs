@@ -1,17 +1,19 @@
 use livesplit_hotkey::Hook;
-use process_memory::{DataMember, Memory, Pid, ProcessHandle, TryIntoProcessHandle, Architecture};
-use std::fmt;
-use std::io;
-use std::error::Error;
+use process_memory::{Pid, TryIntoProcessHandle};
 use std::ptr::{null, null_mut};
 use std::sync::mpsc;
-use crate::action::Action;
 use crate::config::Hotkey;
-use crate::process_details::AddressType;
+use crate::cutscene_handler::CutsceneHandler;
+use crate::position_handler::PositionHandler;
+use crate::handler::Handler;
 
 mod process_details;
 mod action;
 mod config;
+mod tracked_memory;
+mod cutscene_handler;
+mod position_handler;
+mod handler;
 
 #[cfg(windows)]
 extern crate winapi;
@@ -31,63 +33,22 @@ fn main() {
 
     let handle = pid.try_into_process_handle().unwrap();
     let base_addr = get_base_address(pid) as *const _ as usize;
+    let mut handlers: Vec<Box<dyn Handler>> = vec![];
 
-    let mut active = false;
-    let mut position = TrackedPosition::new(
-        details.address_offsets[&AddressType::XPosition].clone(),
-        details.address_offsets[&AddressType::YPosition].clone(),
-        details.address_offsets[&AddressType::ZPosition].clone(),
-        details.arch,
-        base_addr,
-    );
+    match CutsceneHandler::new(&details.address_offsets, &details.arch, &base_addr, &handle) {
+        Some(h) => handlers.push(Box::new(h)),
+        None => {println!("No support for cutscene handler in this game")},
+    }
 
-    let mut look_at = {
-        if details.address_offsets.contains_key(&AddressType::XLookAt)
-            && details.address_offsets.contains_key(&AddressType::YLookAt)
-            && details.address_offsets.contains_key(&AddressType::ZLookAt)
-        {
-            Some(TrackedPosition::new(
-                details.address_offsets[&AddressType::XLookAt].clone(),
-                details.address_offsets[&AddressType::YLookAt].clone(),
-                details.address_offsets[&AddressType::ZLookAt].clone(),
-                details.arch,
-                base_addr,
-            ))
-        } else {
-            None
-        }
+    match PositionHandler::new_position_handler(&details.address_offsets, &details.arch, &base_addr, &handle) {
+        Some(h) => handlers.push(Box::new(h)),
+        None => {println!("No support for position handler in this game")},
+    }
 
-    };
-
-    let mut cutscene_status = {
-        if details.address_offsets.contains_key(&AddressType::CutsceneStatus) {
-            Some(TrackedMemory::<u8> {
-                data: 0,
-                offsets: details.address_offsets[&AddressType::CutsceneStatus].clone(),
-                arch: details.arch,
-                base_addr: base_addr,
-            })
-        } else {
-            None
-        }
-    };
-
-    // TODO: Merge this and cutscene_status into a single type
-    let mut cutscene_timeline = {
-        if details.address_offsets.contains_key(&AddressType::CutsceneTimeline) {
-            Some(TrackedMemory::<f32> {
-                data: 0.0,
-                offsets: details.address_offsets[&AddressType::CutsceneTimeline].clone(),
-                arch: details.arch,
-                base_addr: base_addr,
-            })
-        } else {
-            None
-        }
-    };
-
-    let mut saved_position = position.clone();
-    let mut saved_look_at = look_at.clone();
+    match PositionHandler::new_look_at_handler(&details.address_offsets, &details.arch, &base_addr, &handle) {
+        Some(h) => handlers.push(Box::new(h)),
+        None => {println!("No support for look at position handler in this game")},
+    }
 
     let (tx, rx) = mpsc::channel();
 
@@ -104,113 +65,20 @@ fn main() {
     print_help(&config.hotkeys);
 
     loop {
-        || -> Result<(), Box<dyn Error>> {
-            let signal = rx.try_recv();
-            match signal {
-                Ok(Action::ToggleActive{}) => {
-                    if active {
-                        active = false;
-                        println!("Deactivated");
-                    } else {
-                        active = true;
-                        match position.fetch_from_game(handle) {
-                            Err(msg) => eprintln!("Error activating: {}", msg),
-                            Ok(()) => println!("Activated"),
-                        }
-                    }
-                }
-                Ok(Action::StorePosition{}) => {
-                    saved_position = position.clone();
-                    saved_position.fetch_from_game(handle)?;
-                    saved_look_at = look_at.clone();
-                    match &mut saved_look_at {
-                        Some(s) => s.fetch_from_game(handle)?,
-                        None => {},
-                    }
+        let signal = rx.try_recv();
 
-                    println!("Stored! (position: {:} look_at: {:})", saved_position, display_option(&saved_look_at));
+        match signal {
+            Ok(s) => {
+                for handler in &mut handlers {
+                    handler.handle_action(s).unwrap_or_else(|msg| eprintln!("Error: {}", msg));
                 }
-                Ok(Action::RestorePosition{}) => {
-                    position = saved_position.clone();
-                    position.apply_to_game(handle)?;
-                    look_at = saved_look_at.clone();
-                    match &mut saved_look_at {
-                        Some(s) => s.apply_to_game(handle)?,
-                        None => {},
-                    }
+            },
+            _ => {}
+        }
 
-                    println!("Restored! (position: {:}, look_at: {:})", position, display_option(&look_at));
-                }
-                Ok(Action::SkipCutscene{}) => {
-                    match &mut cutscene_timeline {
-                        Some(s) => {
-                            if s.fetch_from_game(handle).is_err() {
-                                return Err(NotInCutsceneError.into());
-                            }
-                            if s.data <= 6.0 {
-                                return Err(TooEarlyInCutsceneError.into());
-                            }
-                        },
-                        None => {},
-                    }
-
-                    match &mut cutscene_status {
-                        Some(s) => {
-                            s.data = 5;
-                            if s.apply_to_game(handle).is_err() {
-                                return Err(NotInCutsceneError.into());
-                            }
-                            println!("Skipped cutscene");
-                        },
-                        None => {},
-                    }
-                }
-                Ok(Action::Forward{distance}) => {
-                    if active {
-                        position.x.data += distance;
-                    }
-                }
-                Ok(Action::Backward{distance}) => {
-                    if active {
-                        position.x.data -= distance;
-                    }
-                }
-                Ok(Action::Left{distance}) => {
-                    if active {
-                        position.y.data += distance;
-                    }
-                }
-                Ok(Action::Right{distance}) => {
-                    if active {
-                        position.y.data -= distance;
-                    }
-                }
-                Ok(Action::Up{distance}) => {
-                    if active {
-                        position.z.data += distance;
-                    }
-                }
-                Ok(Action::Down{distance}) => {
-                    if active {
-                        position.z.data -= distance;
-                    }
-                }
-                _ => {}
-            }
-
-            if active {
-                position.apply_to_game(handle)?;
-            }
-
-            Ok(())
-        }().unwrap_or_else(|msg| eprintln!("Error: {}", msg));
-    }
-}
-
-fn display_option<T: fmt::Display>(opt: & Option<T>) -> String {
-    match &opt {
-        Some(p) => format!("{}", p),
-        None => "None".to_string(),
+        for handler in &mut handlers {
+            handler.handle_tick().unwrap_or_else(|msg| eprintln!("Error: {}", msg));
+        }
     }
 }
 
@@ -220,93 +88,6 @@ fn print_help(hotkeys: &Vec<Hotkey>) {
     }
 }
 
-#[derive(Debug, Clone)]
-struct TrackedPosition {
-    x: TrackedMemory<f32>,
-    y: TrackedMemory<f32>,
-    z: TrackedMemory<f32>,
-}
-
-impl TrackedPosition {
-    fn fetch_from_game(&mut self, handle: ProcessHandle) -> io::Result<()> {
-        self.x.fetch_from_game(handle)?;
-        self.y.fetch_from_game(handle)?;
-        self.z.fetch_from_game(handle)?;
-        Ok(())
-    }
-
-    fn apply_to_game(&mut self, handle: ProcessHandle) -> io::Result<()> {
-        self.x.apply_to_game(handle)?;
-        self.y.apply_to_game(handle)?;
-        self.z.apply_to_game(handle)?;
-        Ok(())
-    }
-
-    fn new(
-        x_offsets: Vec<usize>,
-        y_offsets: Vec<usize>,
-        z_offsets: Vec<usize>,
-        arch: Architecture,
-        base_addr: usize,
-    ) -> TrackedPosition {
-        TrackedPosition {
-            x: TrackedMemory {
-                data: 0.0,
-                offsets: x_offsets,
-                arch: arch,
-                base_addr: base_addr,
-            },
-            y: TrackedMemory {
-                data: 0.0,
-                offsets: y_offsets,
-                arch: arch,
-                base_addr: base_addr,
-            },
-            z: TrackedMemory {
-                data: 0.0,
-                offsets: z_offsets,
-                arch: arch,
-                base_addr: base_addr,
-            },
-        }
-    }
-}
-
-impl fmt::Display for TrackedPosition {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "({}, {}, {})", self.x.data, self.y.data, self.z.data)
-    }
-}
-
-#[derive(Debug, Clone)]
-struct TrackedMemory<T: Copy> {
-    data: T,
-    offsets: Vec<usize>,
-    arch: Architecture,
-    base_addr: usize,
-}
-
-impl<T: Copy + std::fmt::Debug> TrackedMemory<T> {
-    fn offsets_with_base(&self) -> Vec<usize> {
-        let mut offsets_with_base = self.offsets.clone();
-        offsets_with_base[0] += self.base_addr;
-        offsets_with_base
-    }
-
-    fn fetch_from_game(&mut self, handle: ProcessHandle) -> io::Result<()> {
-        self.data = DataMember::<T>::new_offset(handle, self.offsets_with_base())
-            .set_arch(self.arch)
-            .read()?;
-        Ok(())
-    }
-
-    fn apply_to_game(&self, handle: ProcessHandle) -> io::Result<()> {
-        DataMember::<T>::new_offset(handle, self.offsets_with_base())
-            .set_arch(self.arch)
-            .write(&self.data)?;
-        Ok(())
-    }
-}
 
 #[cfg(windows)]
 pub fn get_base_address(pid: Pid) -> *const u8 {
@@ -389,26 +170,3 @@ pub fn get_pid(process_name: &str) -> Option<Pid> {
     }
     None
 }
-
-#[derive(Debug)]
-struct NotInCutsceneError;
-
-impl fmt::Display for NotInCutsceneError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Not in a cutscene")
-    }
-}
-
-impl Error for NotInCutsceneError {}
-
-
-#[derive(Debug)]
-struct TooEarlyInCutsceneError;
-
-impl fmt::Display for TooEarlyInCutsceneError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Too early in cutscene")
-    }
-}
-
-impl Error for TooEarlyInCutsceneError {}
