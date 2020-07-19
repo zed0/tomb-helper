@@ -1,8 +1,11 @@
 use livesplit_hotkey::Hook;
 use process_memory::{Pid, TryIntoProcessHandle};
+use livesplit_hotkey::{KeyCode};
 use std::ptr::{null, null_mut};
 use std::sync::mpsc;
+use itertools::Itertools;
 use crate::config::Hotkey;
+use crate::action::Action;
 use crate::cutscene_handler::CutsceneHandler;
 use crate::position_handler::PositionHandler;
 use crate::handler::Handler;
@@ -53,10 +56,17 @@ fn main() {
     let (tx, rx) = mpsc::channel();
 
     let hook = Hook::new().unwrap();
-    for hotkey in config.hotkeys.clone() {
+    let key_groups = config.hotkeys.clone().into_iter().map(|h: Hotkey| -> (KeyCode, Action) {
+        (h.key, h.action)
+    })
+    .into_group_map();
+
+    for (key, actions) in key_groups {
         let current_tx = tx.clone();
-        hook.register(hotkey.key, move || {
-            current_tx.send(hotkey.action).unwrap();
+        hook.register(key, move || {
+            for action in &actions {
+                current_tx.send(*action).unwrap();
+            }
         })
         .unwrap();
     }

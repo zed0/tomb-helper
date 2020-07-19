@@ -26,7 +26,7 @@ The default configuration is:
 		{"key": "F5", "action": {"ToggleActive": {}}},
 		{"key": "F6", "action": {"StorePosition": {}}},
 		{"key": "F7", "action": {"RestorePosition": {}}},
-		{"key": "F8", "action": {"SkipCutscene": {}}},
+		{"key": "Space", "action": {"SkipCutscene": {}}},
 		{"key": "W", "action": {"Forward": {"distance": 100.0}}},
 		{"key": "S", "action": {"Backward": {"distance": 100.0}}},
 		{"key": "A", "action": {"Left": {"distance": 100.0}}},
