@@ -34,7 +34,7 @@ The default configuration is:
 		{"key": "Space", "action": {"Up": {"distance": 100.0}}},
 		{"key": "C", "action": {"Down": {"distance": 100.0}}}
 	],
-	"cutscene_blacklist_file": "https://gist.githubusercontent.com/Atorizil/734a7649471f0fa0a2a9f92a167e294b/raw/bace4c713a0cba7188a9e110a703ffab391f7f31/Blacklist.json"
+	"cutscene_blacklist_file": "https://gist.githubusercontent.com/Atorizil/734a7649471f0fa0a2a9f92a167e294b/raw/Blacklist.json"
 }
 ```
 
