@@ -18,6 +18,7 @@ pub struct CutsceneHandler {
     id: TrackedMemory<u32>,
     handle: ProcessHandle,
     blacklist: HashMap<u32, BlacklistEntry>,
+    total_time_skipped: f32,
 }
 
 impl CutsceneHandler {
@@ -61,6 +62,7 @@ impl CutsceneHandler {
             ),
             handle: *handle,
             blacklist: get_blacklist(blacklist_location),
+            total_time_skipped: 0.0,
         })
     }
 
@@ -116,7 +118,9 @@ impl CutsceneHandler {
             return Err(CutsceneError::new("Failed to set cutscene state!").into());
         }
 
-        println!("Skipped cutscene. Saved {} seconds.", self.length.data - self.timeline.data);
+        let time_skipped = self.length.data - self.timeline.data;
+        println!("Skipped cutscene. Saved {} seconds.", time_skipped);
+        self.total_time_skipped += time_skipped;
         Ok(())
     }
 }
@@ -128,6 +132,12 @@ impl Handler for CutsceneHandler {
     fn handle_action(&mut self, action: Action) -> Result<(), Box<dyn Error>> {
         match action {
             Action::SkipCutscene {} => self.skip(),
+            Action::ResetSkipCutsceneTracker {} => {
+                println!("Skipped a total of {} seconds", self.total_time_skipped);
+                self.total_time_skipped = 0.0;
+                println!("Reset skip cutscene tracker");
+                Ok(())
+            }
             _ => Ok(()),
         }
     }

@@ -7,6 +7,7 @@ A speedrun helper for the Tomb Raider reboot series
 Current features:
 - Save and restore positions
 - Move Lara directly
+- Skip cutscenes and record how much time was saved (in Shadow)
 - Supports Tomb Raider 2013, Rise of the Tomb Raider, and Shadow of the Tomb Raider
 
 # Usage
@@ -26,6 +27,7 @@ The default configuration is:
 		{"key": "F5", "action": {"ToggleActive": {}}},
 		{"key": "F6", "action": {"StorePosition": {}}},
 		{"key": "F7", "action": {"RestorePosition": {}}},
+		{"key": "F8", "action": {"ResetSkipCutsceneTracker": {}}},
 		{"key": "Space", "action": {"SkipCutscene": {}}},
 		{"key": "W", "action": {"Forward": {"distance": 100.0}}},
 		{"key": "S", "action": {"Backward": {"distance": 100.0}}},
@@ -47,6 +49,7 @@ Currently the available actions are:
 - `StorePosition`
 - `RestorePosition`
 - `SkipCutscene`
+- `ResetSkipCutsceneTracker` (reset the total amount of time of cutscenes skipped, prints out the previous total, suggest binding this to the same key you use to reset livesplit)
 - `Forward` (can take a distance, which defaults to `100.0`)
 - `Backward` (can take a distance, which defaults to `100.0`)
 - `Left` (can take a distance, which defaults to `100.0`)

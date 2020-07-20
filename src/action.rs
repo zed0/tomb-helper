@@ -10,6 +10,7 @@ pub enum Action {
     StorePosition {},
     RestorePosition {},
     SkipCutscene {},
+    ResetSkipCutsceneTracker {},
     Forward {
         #[serde(default = "default_distance")]
         distance: f32,
