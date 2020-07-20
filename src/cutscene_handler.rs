@@ -14,6 +14,7 @@ pub struct CutsceneHandler {
     prompt: TrackedMemory<u8>,
     status: TrackedMemory<u8>,
     timeline: TrackedMemory<f32>,
+    length: TrackedMemory<f32>,
     id: TrackedMemory<u32>,
     handle: ProcessHandle,
     blacklist: HashMap<u32, BlacklistEntry>,
@@ -46,6 +47,12 @@ impl CutsceneHandler {
                 *arch,
                 *base_addr,
             ),
+            length: TrackedMemory::<f32>::new(
+                0.0,
+                address_offsets.get(&AddressType::CutsceneLength)?.clone(),
+                *arch,
+                *base_addr,
+            ),
             id: TrackedMemory::<u32>::new(
                 0,
                 address_offsets.get(&AddressType::CutsceneId)?.clone(),
@@ -62,12 +69,18 @@ impl CutsceneHandler {
             self.prompt.fetch_from_game(self.handle)?;
             self.status.fetch_from_game(self.handle)?;
             self.timeline.fetch_from_game(self.handle)?;
+            self.length.fetch_from_game(self.handle)?;
             self.id.fetch_from_game(self.handle)?;
             Ok(())
         }();
         if valid_cutscene.is_err() {
             // We don't generate an error here because if people bind to space we don't want to
             // print an error every time they jump
+            return Ok(());
+        }
+
+        if self.status.data == 5{
+            // Already skipping, whether via this tool or regular skip
             return Ok(());
         }
 
@@ -102,7 +115,8 @@ impl CutsceneHandler {
         if self.status.apply_to_game(self.handle).is_err() {
             return Err(CutsceneError::new("Failed to set cutscene state!").into());
         }
-        println!("Skipped cutscene.");
+
+        println!("Skipped cutscene. Saved {} seconds.", self.length.data - self.timeline.data);
         Ok(())
     }
 }

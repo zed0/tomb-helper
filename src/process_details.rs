@@ -43,6 +43,7 @@ pub fn known_process_details() -> Vec<ProcessDetails> {
                 (AddressType::CutscenePrompt, vec![0x01_41_B8_C0, 0x10]),
                 (AddressType::CutsceneStatus, vec![0x01_41_B8_C0, 0x129]),
                 (AddressType::CutsceneTimeline, vec![0x01_41_B8_C0, 0x60]),
+                (AddressType::CutsceneLength, vec![0x01_41_B8_A0, 0x00, 0x20]),
                 (
                     AddressType::CutsceneId,
                     vec![0x03_60_E0_D0, 0x0, 0x120, 0x10, 0x1D4],
@@ -66,6 +67,7 @@ pub enum AddressType {
     CutscenePrompt,
     CutsceneStatus,
     CutsceneTimeline,
+    CutsceneLength,
     CutsceneId,
 }
 
