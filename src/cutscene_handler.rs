@@ -1,13 +1,15 @@
 use crate::action::Action;
 use crate::handler::Handler;
 use crate::process_details::{AddressOffsets, AddressType};
+use crate::cutscene_timing_info::{TimingInfo, TimingEntry};
 use crate::tracked_memory::TrackedMemory;
+use crate::readable_from_path::ReadableFromPath;
 use process_memory::{Architecture, ProcessHandle};
-use reqwest::Url;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
+use std::time::Instant;
 
 #[derive(Debug, Clone)]
 pub struct CutsceneHandler {
@@ -18,7 +20,12 @@ pub struct CutsceneHandler {
     id: TrackedMemory<u32>,
     handle: ProcessHandle,
     blacklist: HashMap<u32, BlacklistEntry>,
-    total_time_skipped: f32,
+    timing_info: TimingInfo,
+    total_time_skipped_rta: f32,
+    total_time_skipped_igt: f32,
+    skipping_cutscene: Option<TimingEntry>,
+    skip_time: Option<f32>,
+    fadeout_start: Option<Instant>,
 }
 
 impl CutsceneHandler {
@@ -28,7 +35,10 @@ impl CutsceneHandler {
         base_addr: &usize,
         handle: &ProcessHandle,
         blacklist_location: &String,
+        timing_info_path: &String,
     ) -> Option<CutsceneHandler> {
+        println!("Loading cutscene skipper handler...");
+
         Some(CutsceneHandler {
             prompt: TrackedMemory::<u8>::new(
                 0,
@@ -61,8 +71,13 @@ impl CutsceneHandler {
                 *base_addr,
             ),
             handle: *handle,
-            blacklist: get_blacklist(blacklist_location),
-            total_time_skipped: 0.0,
+            blacklist: Blacklist::from_path(blacklist_location, &String::from("cutscene blacklist")),
+            timing_info: TimingInfo::from_path(timing_info_path, &String::from("cutscene timing info")),
+            total_time_skipped_rta: 0.0,
+            total_time_skipped_igt: 0.0,
+            skipping_cutscene: None,
+            skip_time: None,
+            fadeout_start: None,
         })
     }
 
@@ -81,7 +96,7 @@ impl CutsceneHandler {
             return Ok(());
         }
 
-        if self.status.data == 5{
+        if self.status.data == 5 {
             // Already skipping, whether via this tool or regular skip
             return Ok(());
         }
@@ -113,28 +128,107 @@ impl CutsceneHandler {
             .into());
         }
 
+        let cutscene_info = self.timing_info.find(&self.id.data);
+        if cutscene_info.is_none() {
+            println!("No cutscene timing info for cutscene {}, not skipping!", self.id.data);
+            return Ok(())
+        }
+
+        let cutscene_info = cutscene_info.unwrap().clone();
+
+        let timing_threshold = 0.1;
+        if
+            (cutscene_info.in_game_time - cutscene_info.real_time).abs() > timing_threshold
+            && cutscene_info.in_game_time > timing_threshold
+        {
+            println!("Cutscene timing info is inconsistent between in game and real time for cutscene {}, not skipping! Report these ids along with which cutscene you were attempting to skip!", self.id.data);
+        }
+
+        self.start_fadeout(cutscene_info)?;
+        println!("Skipping...");
+
+        Ok(())
+    }
+
+    fn start_fadeout(&mut self, cutscene_info: TimingEntry) -> Result<(), Box<dyn Error>> {
         self.status.data = 5;
         if self.status.apply_to_game(self.handle).is_err() {
             return Err(CutsceneError::new("Failed to set cutscene state!").into());
         }
 
-        let time_skipped = self.length.data - self.timeline.data;
-        println!("Skipped cutscene. Saved {} seconds.", time_skipped);
-        self.total_time_skipped += time_skipped;
+        self.skipping_cutscene = Some(cutscene_info.clone());
+        self.skip_time = Some(self.timeline.data);
+        // For some reason the timeline time changes during the fadeout so we time it manually
+        self.fadeout_start = Some(Instant::now());
+
         Ok(())
+    }
+
+    fn is_fadeout_finished(&mut self) -> bool {
+        let valid_cutscene = || -> Result<(), Box<dyn Error>> {
+            self.prompt.fetch_from_game(self.handle)?;
+            self.status.fetch_from_game(self.handle)?;
+            self.timeline.fetch_from_game(self.handle)?;
+            self.length.fetch_from_game(self.handle)?;
+            self.id.fetch_from_game(self.handle)?;
+            Ok(())
+        }();
+
+        let cutscene_info = self.skipping_cutscene.as_ref().unwrap();
+
+        return valid_cutscene.is_err() || !cutscene_info.ids.contains(&self.id.data);
+    }
+
+    fn finish_fadeout(&mut self) {
+        let cutscene_info = self.skipping_cutscene.as_ref().unwrap();
+
+        let fadeout_time = Instant::now()
+            .duration_since(self.fadeout_start.unwrap())
+            .as_secs_f32();
+
+        let time_skipped_rta = (
+            cutscene_info.real_time
+            - self.skip_time.unwrap()
+            - fadeout_time
+        )
+            .max(0.0);
+
+        let time_skipped_igt = (
+            cutscene_info.in_game_time
+            - self.skip_time.unwrap()
+            - fadeout_time
+        )
+            .max(0.0);
+
+        println!("Skipped cutscene. Saved {} seconds RTA, {} seconds IGT.", time_skipped_rta, time_skipped_igt);
+
+        self.total_time_skipped_rta += time_skipped_rta;
+        self.total_time_skipped_igt += time_skipped_igt;
+
+        self.skipping_cutscene = None;
+        self.skip_time = None;
+        self.fadeout_start = None;
     }
 }
 
 impl Handler for CutsceneHandler {
     fn handle_tick(&mut self) -> Result<(), Box<dyn Error>> {
+        if self.skipping_cutscene.is_some() {
+            if self.is_fadeout_finished() {
+                self.finish_fadeout();
+            }
+
+        }
+
         Ok(())
     }
     fn handle_action(&mut self, action: Action) -> Result<(), Box<dyn Error>> {
         match action {
             Action::SkipCutscene {} => self.skip(),
             Action::ResetSkipCutsceneTracker {} => {
-                println!("Skipped a total of {} seconds", self.total_time_skipped);
-                self.total_time_skipped = 0.0;
+                println!("Skipped a total of {} seconds RTA, {} seconds IGT", self.total_time_skipped_rta, self.total_time_skipped_igt);
+                self.total_time_skipped_rta = 0.0;
+                self.total_time_skipped_igt = 0.0;
                 println!("Reset skip cutscene tracker");
                 Ok(())
             }
@@ -164,21 +258,12 @@ impl fmt::Display for CutsceneError {
 
 impl Error for CutsceneError {}
 
-#[derive(Debug, Clone, Deserialize)]
-pub struct Blacklist {}
 
-fn get_blacklist(blacklist_location: &String) -> HashMap<u32, BlacklistEntry> {
-    println!("Loading cutscene blacklist from {}", blacklist_location);
-    let url = Url::parse(blacklist_location).expect("Could not parse cutscene blacklist url");
-    let content = reqwest::blocking::get(url)
-        .expect("Could not retrieve cutscene blacklist url")
-        .text()
-        .unwrap();
-    return serde_json::from_str(&content)
-        .expect("Could not parse cutscene blacklist to expected format");
-}
+pub type Blacklist = HashMap<u32, BlacklistEntry>;
 
-#[derive(Debug, Clone, Deserialize)]
+impl ReadableFromPath for Blacklist {}
+
+#[derive(Default, Debug, Clone, Deserialize)]
 pub struct BlacklistEntry {
     pub skip_delay: f32,
 }

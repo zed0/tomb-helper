@@ -23,6 +23,8 @@ impl PositionHandler {
         base_addr: &usize,
         handle: &ProcessHandle,
     ) -> Option<PositionHandler> {
+        println!("Loading position handler...");
+
         Some(PositionHandler {
             active: false,
             position: TrackedPosition::new(
@@ -50,6 +52,8 @@ impl PositionHandler {
         base_addr: &usize,
         handle: &ProcessHandle,
     ) -> Option<PositionHandler> {
+        println!("Loading look at position handler...");
+
         Some(PositionHandler {
             active: false,
             position: TrackedPosition::new(

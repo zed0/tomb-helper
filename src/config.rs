@@ -49,6 +49,25 @@ fn default_cutscene_blacklist_file() -> String {
     "https://gist.githubusercontent.com/Atorizil/734a7649471f0fa0a2a9f92a167e294b/raw/Blacklist.json".to_string()
 }
 
+fn default_cutscene_timing_file() -> String {
+    "https://gist.githubusercontent.com/zed0/762a5790501af95189344834bc210616/raw/tomb-helper-timing-info.json".to_string()
+}
+
+fn default_cutscene_timing_file_output() -> String {
+    env::current_exe()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("tomb-helper-timing-info.json")
+        .to_str()
+        .unwrap()
+        .into()
+}
+
+fn default_livesplit_port() -> u32 {
+    return 16834;
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct Hotkey {
     pub key: KeyCode,
@@ -62,9 +81,30 @@ impl Hotkey {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub enum CutsceneTiming {
+    On {
+        #[serde(default = "default_cutscene_timing_file_output")]
+        timing_file: String,
+        #[serde(default = "default_livesplit_port")]
+        livesplit_port: u32,
+    },
+    Off {},
+}
+
+impl Default for CutsceneTiming {
+    fn default() -> Self {
+        CutsceneTiming::Off{}
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct Config {
     #[serde(default = "default_hotkeys")]
     pub hotkeys: Vec<Hotkey>,
     #[serde(default = "default_cutscene_blacklist_file")]
     pub cutscene_blacklist_file: String,
+    #[serde(default = "default_cutscene_timing_file")]
+    pub cutscene_timing_file: String,
+    #[serde(default)]
+    pub record_cutscene_timing: CutsceneTiming,
 }

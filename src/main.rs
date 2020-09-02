@@ -1,7 +1,8 @@
 use crate::action::Action;
-use crate::config::Hotkey;
-use crate::cutscene_handler::CutsceneHandler;
+use crate::config::{Hotkey, CutsceneTiming};
 use crate::handler::Handler;
+use crate::cutscene_handler::CutsceneHandler;
+use crate::cutscene_timing_generator_handler::CutsceneTimingGeneratorHandler;
 use crate::position_handler::PositionHandler;
 use itertools::Itertools;
 use livesplit_hotkey::Hook;
@@ -13,10 +14,13 @@ use std::sync::mpsc;
 mod action;
 mod config;
 mod cutscene_handler;
-mod handler;
+mod cutscene_timing_generator_handler;
 mod position_handler;
+mod handler;
 mod process_details;
 mod tracked_memory;
+mod cutscene_timing_info;
+mod readable_from_path;
 
 #[cfg(windows)]
 extern crate winapi;
@@ -38,15 +42,33 @@ fn main() {
     let base_addr = get_base_address(pid) as *const _ as usize;
     let mut handlers: Vec<Box<dyn Handler>> = vec![];
 
-    match CutsceneHandler::new(
-        &details.address_offsets,
-        &details.arch,
-        &base_addr,
-        &handle,
-        &config.cutscene_blacklist_file,
-    ) {
-        Some(h) => handlers.push(Box::new(h)),
-        None => println!("No support for cutscene handler in this game"),
+    match config.record_cutscene_timing {
+        CutsceneTiming::On { timing_file, livesplit_port } => {
+            match CutsceneTimingGeneratorHandler::new(
+                &details.address_offsets,
+                &details.arch,
+                &base_addr,
+                &handle,
+                &timing_file,
+                &livesplit_port,
+            ) {
+                Some(h) => handlers.push(Box::new(h)),
+                None => {},
+            }
+        },
+        CutsceneTiming::Off {} => {
+            match CutsceneHandler::new(
+                &details.address_offsets,
+                &details.arch,
+                &base_addr,
+                &handle,
+                &config.cutscene_blacklist_file,
+                &config.cutscene_timing_file,
+            ) {
+                Some(h) => handlers.push(Box::new(h)),
+                None => {},
+            }
+        },
     }
 
     match PositionHandler::new_position_handler(
@@ -56,7 +78,7 @@ fn main() {
         &handle,
     ) {
         Some(h) => handlers.push(Box::new(h)),
-        None => println!("No support for position handler in this game"),
+        None => {},
     }
 
     match PositionHandler::new_look_at_handler(
@@ -66,7 +88,7 @@ fn main() {
         &handle,
     ) {
         Some(h) => handlers.push(Box::new(h)),
-        None => println!("No support for look at position handler in this game"),
+        None => {},
     }
 
     let (tx, rx) = mpsc::channel();
