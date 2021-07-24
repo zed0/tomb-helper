@@ -11,6 +11,8 @@ pub fn known_process_details() -> Vec<ProcessDetails> {
                 (AddressType::XPosition, vec![0x00_F3_9E_18, 0x00]),
                 (AddressType::YPosition, vec![0x00_F3_9E_18, 0x04]),
                 (AddressType::ZPosition, vec![0x00_F3_9E_18, 0x08]),
+                (AddressType::CameraSin, vec![0x02_11_D6_98, 0x50]),
+                (AddressType::CameraCos, vec![0x02_11_D6_98, 0x54]),
             ]
             .iter()
             .cloned()
@@ -27,6 +29,8 @@ pub fn known_process_details() -> Vec<ProcessDetails> {
                 (AddressType::XLookAt, vec![0x01_5A_4F_88, 0x0140, 0x80]),
                 (AddressType::YLookAt, vec![0x01_5A_4F_88, 0x0140, 0x84]),
                 (AddressType::ZLookAt, vec![0x01_5A_4F_88, 0x0140, 0x88]),
+                (AddressType::CameraSin, vec![0x02_DA_22_20, 0x04_90]),
+                (AddressType::CameraCos, vec![0x02_DA_22_20, 0x04_94]),
             ]
             .iter()
             .cloned()
@@ -40,6 +44,14 @@ pub fn known_process_details() -> Vec<ProcessDetails> {
                 (AddressType::XPosition, vec![0x01_3D_5F_B8, 0x10]),
                 (AddressType::YPosition, vec![0x01_3D_5F_B8, 0x14]),
                 (AddressType::ZPosition, vec![0x01_3D_5F_B8, 0x18]),
+                (
+                    AddressType::CameraSin,
+                    vec![0x03_60_79_A0, 0x0C_60, 0x00, 0x60],
+                ),
+                (
+                    AddressType::CameraCos,
+                    vec![0x03_60_79_A0, 0x0C_60, 0x00, 0x64],
+                ),
                 (AddressType::CutscenePrompt, vec![0x01_41_B8_C0, 0x10]),
                 (AddressType::CutsceneStatus, vec![0x01_41_B8_C0, 0x129]),
                 (AddressType::CutsceneTimeline, vec![0x01_41_B8_C0, 0x60]),
@@ -64,6 +76,12 @@ pub enum AddressType {
     XLookAt,
     YLookAt,
     ZLookAt,
+    // TODO: Work out a more sensible way of representing the camera matrix
+    // Note: The easiest way to find these values is to search for camera XYZ values which form the
+    // last entries of the extrinsic camera matrix (https://ksimek.github.io/2012/08/22/extrinsic/)
+    // From there the first 2 entries of the matrix can be used as CameraSin and CameraCos
+    CameraSin,
+    CameraCos,
     CutscenePrompt,
     CutsceneStatus,
     CutsceneTimeline,

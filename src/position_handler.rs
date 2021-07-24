@@ -12,6 +12,7 @@ pub struct PositionHandler {
     active: bool,
     position: TrackedPosition,
     saved_position: TrackedPosition,
+    camera_rotation: Option<(TrackedMemory<f32>, TrackedMemory<f32>)>,
     handle: ProcessHandle,
     name: String,
 }
@@ -41,6 +42,16 @@ impl PositionHandler {
                 *arch,
                 *base_addr,
             ),
+            camera_rotation: match (
+                address_offsets.get(&AddressType::CameraSin),
+                address_offsets.get(&AddressType::CameraCos),
+            ) {
+                (Some(sin), Some(cos)) => Some((
+                    TrackedMemory::new(0.0, sin.clone(), *arch, *base_addr),
+                    TrackedMemory::new(0.0, cos.clone(), *arch, *base_addr),
+                )),
+                _ => None,
+            },
             handle: *handle,
             name: "position".to_string(),
         })
@@ -70,6 +81,7 @@ impl PositionHandler {
                 *arch,
                 *base_addr,
             ),
+            camera_rotation: None,
             handle: *handle,
             name: "look at position".to_string(),
         })
@@ -80,6 +92,13 @@ impl Handler for PositionHandler {
     fn handle_tick(&mut self) -> Result<(), Box<dyn Error>> {
         if self.active {
             self.position.apply_to_game(self.handle)?;
+            match &mut self.camera_rotation {
+                Some((sin, cos)) => {
+                    sin.fetch_from_game(self.handle)?;
+                    cos.fetch_from_game(self.handle)?;
+                }
+                _ => {}
+            }
         }
         Ok(())
     }
@@ -109,22 +128,46 @@ impl Handler for PositionHandler {
             }
             Action::Forward { distance } => {
                 if self.active {
-                    self.position.x.data += distance;
+                    match &self.camera_rotation {
+                        Some((sin, cos)) => {
+                            self.position.x.data -= distance * cos.data;
+                            self.position.y.data += distance * sin.data;
+                        }
+                        _ => self.position.x.data += distance,
+                    }
                 }
             }
             Action::Backward { distance } => {
                 if self.active {
-                    self.position.x.data -= distance;
+                    match &self.camera_rotation {
+                        Some((sin, cos)) => {
+                            self.position.x.data += distance * cos.data;
+                            self.position.y.data -= distance * sin.data;
+                        }
+                        _ => self.position.x.data -= distance,
+                    }
                 }
             }
             Action::Left { distance } => {
                 if self.active {
-                    self.position.y.data += distance;
+                    match &self.camera_rotation {
+                        Some((sin, cos)) => {
+                            self.position.x.data -= distance * sin.data;
+                            self.position.y.data -= distance * cos.data;
+                        }
+                        _ => self.position.y.data += distance,
+                    }
                 }
             }
             Action::Right { distance } => {
                 if self.active {
-                    self.position.y.data -= distance;
+                    match &self.camera_rotation {
+                        Some((sin, cos)) => {
+                            self.position.x.data += distance * sin.data;
+                            self.position.y.data += distance * cos.data;
+                        }
+                        _ => self.position.y.data -= distance,
+                    }
                 }
             }
             Action::Up { distance } => {
