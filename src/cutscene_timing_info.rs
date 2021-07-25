@@ -29,4 +29,6 @@ pub struct TimingEntry {
     pub ids: HashSet<u32>,
     pub real_time: f32,
     pub in_game_time: f32,
+    pub skippable_at_real_time: Option<f32>,
+    pub skippable_at_in_game_time: Option<f32>,
 }

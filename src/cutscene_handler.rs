@@ -186,17 +186,23 @@ impl CutsceneHandler {
             .duration_since(self.fadeout_start.unwrap())
             .as_secs_f32();
 
+        // Time after the prompt changes before the game will let you skip
+        // Timed by looking at when the values in Cheatengine change
+        let prompt_delay = 0.23;
+
         let time_skipped_rta = (
-            cutscene_info.real_time
-            - self.skip_time.unwrap()
-            - fadeout_time
+            match cutscene_info.skippable_at_real_time {
+                Some(skippable_at_real_time) => skippable_at_real_time - self.skip_time.unwrap() + prompt_delay,
+                _ => cutscene_info.real_time - self.skip_time.unwrap() - fadeout_time,
+            }
         )
             .max(0.0);
 
         let time_skipped_igt = (
-            cutscene_info.in_game_time
-            - self.skip_time.unwrap()
-            - fadeout_time
+            match cutscene_info.skippable_at_in_game_time {
+                Some(skippable_at_in_game_time) => skippable_at_in_game_time - self.skip_time.unwrap() + prompt_delay,
+                _ => cutscene_info.in_game_time - self.skip_time.unwrap() - fadeout_time,
+            }
         )
             .max(0.0);
 

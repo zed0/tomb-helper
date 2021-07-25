@@ -22,9 +22,12 @@ pub struct CutsceneTimingGeneratorHandler {
     current_start_real_time: Option<Instant>,
     current_timeline: Option<f32>,
     current_id_list: HashSet<u32>,
+    skip_game_time: Option<std::time::Duration>,
+    skip_real_time: Option<Instant>,
     livesplit_connection: TcpStream,
     timing_info_path: PathBuf,
     timing_info: TimingInfo,
+    prompt: TrackedMemory<u8>,
 }
 
 impl CutsceneTimingGeneratorHandler {
@@ -56,11 +59,19 @@ impl CutsceneTimingGeneratorHandler {
             current_start_real_time: None,
             current_timeline: None,
             current_id_list: HashSet::new(),
+            skip_game_time: None,
+            skip_real_time: None,
             livesplit_connection: TcpStream::connect(
                 format!("127.0.0.1:{}", *livesplit_port)
             ).unwrap(),
             timing_info_path: PathBuf::from(timing_info_path),
             timing_info: TimingInfo::from_path(timing_info_path, &String::from("cutscene timing info")),
+            prompt: TrackedMemory::<u8>::new(
+                0,
+                address_offsets.get(&AddressType::CutscenePrompt)?.clone(),
+                *arch,
+                *base_addr,
+            ),
         })
     }
 
@@ -117,10 +128,21 @@ impl CutsceneTimingGeneratorHandler {
         let end_real_time = Instant::now();
         let length_real_time = end_real_time.duration_since(self.current_start_real_time.unwrap());
 
+        let skippable_at_in_game_time = match self.skip_game_time {
+            Some(skip_game_time) => Some((skip_game_time - self.current_start_game_time.unwrap()).as_secs_f32()),
+            _ => None,
+        };
+        let skippable_at_real_time = match self.skip_real_time {
+            Some(skip_real_time) => Some(skip_real_time.duration_since(self.current_start_real_time.unwrap()).as_secs_f32()),
+            _ => None,
+        };
+
         let new_entry = TimingEntry{
             ids: self.current_id_list.clone(),
             real_time: length_real_time.as_secs_f32(),
             in_game_time: length_game_time.as_secs_f32(),
+            skippable_at_in_game_time: skippable_at_in_game_time,
+            skippable_at_real_time: skippable_at_real_time,
         };
 
         self.timing_info.cutscenes.retain(|e| e.ids != new_entry.ids);
@@ -129,10 +151,12 @@ impl CutsceneTimingGeneratorHandler {
         self.timing_info.write_to_file(&self.timing_info_path)?;
 
         println!(
-            "Wrote cutscene to file: ids: {:?}, duration: {:?}s IGT, {:?}s RTA, {:?} timeline length",
+            "Wrote cutscene to file: ids: {:?}, duration: {:?}s IGT, {:?}s RTA, skippable at {:?}s IGT, {:?}s RTA, {:?} timeline length",
             self.current_id_list,
             length_game_time.as_secs_f32(),
             length_real_time.as_secs_f32(),
+            skippable_at_in_game_time,
+            skippable_at_real_time,
             self.current_timeline.unwrap(),
         );
 
@@ -140,6 +164,8 @@ impl CutsceneTimingGeneratorHandler {
         self.current_id_list = HashSet::new();
         self.current_start_game_time = None;
         self.current_start_real_time = None;
+        self.skip_game_time = None;
+        self.skip_real_time = None;
         Ok(())
     }
 
@@ -173,6 +199,15 @@ impl CutsceneTimingGeneratorHandler {
             // Seems to change at camera changes and some other places.
             let inserted = self.current_id_list.insert(self.id.data);
             self.current_timeline = Some(self.timeline.data);
+
+            if self.skip_game_time.is_none() && self.skip_real_time.is_none() {
+                self.prompt.fetch_from_game(self.handle)?;
+                if self.prompt.data == 2 {
+                    self.skip_game_time = Some(self.get_livesplit_time()?);
+                    self.skip_real_time = Some(Instant::now());
+                    println!("skippable at: {:?} IGT, {:?} RTA", self.skip_game_time, self.skip_real_time);
+                }
+            }
 
             if inserted {
                 println!(

@@ -89,9 +89,8 @@ Generating a cutscene timing file can be done using tomb-helper:
 - Launch the game
 - Launch tomb-helper
 	- Check it says "Loading cutscene timing generation handler..." during the start up
-- Play through the entire game, making sure to watch all the cutscenes
+- Play through the entire game, making sure to watch all the cutscenes and press E repeatedly to make sure skip prompts show up
 	- Skipping cutscenes via tomb-helper will be disabled while generating the timing file
-	- Skipping cutscenes that can regularly be skipped shouldn't affect the timing results, but it may be useful to have the timing information for those cutscenes in future
 	- The recording file is saved after each cutscene, if your game crashes or you want to record in multiple sessions simply continue at a later date with the same recording file
 - Save the newly created file somewhere (upload it if you want others to be able to use it)
 - Change your `"cutscene_timing_file"` configuration option to the location you saved the created file
