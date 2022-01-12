@@ -4,7 +4,8 @@ use std::ptr::{null, null_mut};
 
 
 pub fn find_process(
-    possible_processes: Vec<ProcessDetails>
+    possible_processes: Vec<ProcessDetails>,
+    force_version: Option<String>,
 )
     -> Option<(
         Pid,
@@ -19,6 +20,11 @@ pub fn find_process(
         let pid = get_pid(&details.executable_name)?;
         let handle = pid.try_into_process_handle().ok()?;
         let base_addr = get_base_address(pid) as *const _ as usize;
+
+        if force_version == Some(details.version.clone()) {
+            println!("Warning: Forcing version to {}, some functions may not work as expected!", details.version);
+            return Some((pid, handle, base_addr, details.clone()));
+        }
 
         let version_in_memory = try_read_std_string_utf8(
             handle,

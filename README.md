@@ -36,6 +36,7 @@ The default configuration is:
 		{"key": "Space", "action": {"Up": {"distance": 100.0}}},
 		{"key": "C", "action": {"Down": {"distance": 100.0}}}
 	],
+	"force_version": null,
 	"cutscene_blacklist_file": "https://gist.githubusercontent.com/Atorizil/734a7649471f0fa0a2a9f92a167e294b/raw/Blacklist.json",
 	"cutscene_timing_file": "https://gist.githubusercontent.com/zed0/762a5790501af95189344834bc210616/raw/tomb-helper-timing-info.json",
 	"record_cutscene_timing": {"Off": {}}
@@ -61,6 +62,18 @@ Currently the available actions are:
 - `Down` (can take a distance, which defaults to `100.0`)
 
 The available keys are listed in the [livesplit_hotkey library documentation](https://docs.rs/livesplit-hotkey/0.5.0/livesplit_hotkey/linux/enum.KeyCode.html).
+
+## Forcing a version
+
+There is an experimental feature to force tomb-helper to use the memory offsets for a specific version of the game. This can be done by specifying the `force_version` key with the version you want. These are chosen from the [`process_details.rs` file](./src/process_details.rs) and must match the version in the config file **exactly**.
+
+For example
+```json
+{
+	"force_version": "v1.01.748.0"
+}
+```
+would force tomb-helper to use the offsets for v1.01.748.0 even if the detected version of the game was v1.01.743.0.
 
 ## Cutscene blacklist file
 

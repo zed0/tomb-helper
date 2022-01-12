@@ -27,7 +27,8 @@ extern crate winapi;
 fn main() {
     let config = config::get_config();
     let (pid, handle, base_addr, details) = find_process::find_process(
-        process_details::known_process_details()
+        process_details::known_process_details(),
+        config.force_version,
     )
     .expect("Could not find any known Tomb Raider process.");
 

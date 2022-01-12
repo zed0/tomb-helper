@@ -107,4 +107,6 @@ pub struct Config {
     pub cutscene_timing_file: String,
     #[serde(default)]
     pub record_cutscene_timing: CutsceneTiming,
+    #[serde(default)]
+    pub force_version: Option<String>,
 }
