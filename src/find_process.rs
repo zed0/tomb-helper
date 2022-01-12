@@ -131,3 +131,13 @@ pub fn try_read_std_string_utf8(
 
     String::from_utf8(bytes).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
 }
+
+#[cfg(not(windows))]
+pub fn get_base_address(_pid: Pid) -> *const u8 {
+    panic!("tomb-helper is only supported on Windows");
+}
+
+#[cfg(not(windows))]
+pub fn get_pid(_process_name: &str) -> Option<Pid> {
+    panic!("tomb-helper is only supported on Windows");
+}
