@@ -1188,7 +1188,7 @@ dependencies = [
 
 [[package]]
 name = "tomb-helper"
-version = "1.9.0"
+version = "1.9.1-alpha.0"
 dependencies = [
  "itertools",
  "libc",
