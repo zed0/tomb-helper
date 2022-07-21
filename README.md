@@ -9,6 +9,7 @@ Current features:
 - Move Lara directly
 - Skip cutscenes and record how much time was saved (in Shadow)
 - Supports Tomb Raider 2013, Rise of the Tomb Raider, and Shadow of the Tomb Raider
+- Connects and disconnects from games as they are started and stopped: useful in case of crashes!
 
 # Usage
 

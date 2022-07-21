@@ -1,13 +1,16 @@
 use crate::action::Action;
-use crate::config::{Hotkey, CutsceneTiming};
+use crate::config::{Hotkey, CutsceneTiming, Config};
 use crate::handler::Handler;
 use crate::cutscene_handler::CutsceneHandler;
 use crate::cutscene_timing_generator_handler::CutsceneTimingGeneratorHandler;
 use crate::position_handler::PositionHandler;
+use crate::process_details::ProcessDetails;
+use process_memory::Pid;
 use itertools::Itertools;
 use livesplit_hotkey::Hook;
 use livesplit_hotkey::KeyCode;
 use std::sync::mpsc;
+use std::{thread, time};
 
 mod action;
 mod config;
@@ -26,13 +29,27 @@ extern crate winapi;
 
 fn main() {
     let config = config::get_config();
-    let (pid, handle, base_addr, details) = find_process::find_process(
-        process_details::known_process_details(),
-        config.force_version,
-    )
-    .expect("Could not find any known Tomb Raider process.");
+    print_help(&config.hotkeys);
+    println!("Searching for Tomb Raider processes...");
+    loop {
+        find_process::find_process(
+            process_details::known_process_details(),
+            config.force_version.clone(),
+        )
+        .and_then(|(pid, handle, base_addr, details)| Some(connect(config.clone(), pid, handle, base_addr, details)));
 
-    println!("Found {} {} with PID {}", details.name, details.version, pid);
+        thread::sleep(time::Duration::from_millis(100));
+    }
+}
+
+fn connect(
+    config: Config,
+    pid: Pid,
+    handle: process_memory::ProcessHandle,
+    base_addr: usize,
+    details: ProcessDetails
+) {
+    println!("Connecting to {} {} with PID {}", details.name, details.version, pid);
 
     let mut handlers: Vec<Box<dyn Handler>> = vec![];
 
@@ -106,9 +123,13 @@ fn main() {
     }
 
     println!("Started!");
-    print_help(&config.hotkeys);
 
     loop {
+        if !find_process::is_process_running(pid) {
+            println!("Disconnected from {} {} with PID {}", details.name, details.version, pid);
+            return;
+        }
+
         let signal = rx.try_recv();
 
         match signal {

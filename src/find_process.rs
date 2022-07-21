@@ -1,7 +1,8 @@
 use crate::process_details::{ProcessDetails, AddressType};
 use process_memory::{Pid, TryIntoProcessHandle, DataMember, Memory, CopyAddress};
 use std::ptr::{null, null_mut};
-
+use winapi::um::winnt::SYNCHRONIZE;
+use winapi::shared::winerror::WAIT_TIMEOUT;
 
 pub fn find_process(
     possible_processes: Vec<ProcessDetails>,
@@ -122,6 +123,17 @@ pub fn get_pid(process_name: &str) -> Option<Pid> {
     None
 }
 
+#[cfg(windows)]
+pub fn is_process_running(pid: Pid) -> bool
+{
+    unsafe {
+        let process = winapi::um::processthreadsapi::OpenProcess(SYNCHRONIZE, 0, pid);
+        let result = winapi::um::synchapi::WaitForSingleObject(process, 0);
+        winapi::um::handleapi::CloseHandle(process);
+        return result == WAIT_TIMEOUT;
+    }
+}
+
 pub fn try_read_std_string_utf8(
     handle: process_memory::ProcessHandle,
     offsets: Vec<usize>,
@@ -145,5 +157,11 @@ pub fn get_base_address(_pid: Pid) -> *const u8 {
 
 #[cfg(not(windows))]
 pub fn get_pid(_process_name: &str) -> Option<Pid> {
+    panic!("tomb-helper is only supported on Windows");
+}
+
+#[cfg(not(windows))]
+pub fn is_process_running(_pid: Pid) -> bool
+{
     panic!("tomb-helper is only supported on Windows");
 }
