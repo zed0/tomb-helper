@@ -128,6 +128,37 @@ pub fn known_process_details() -> Vec<ProcessDetails> {
             .cloned()
             .collect(),
         ),
+        ProcessDetails::new(
+            "Shadow of the Tomb Raider",
+            "SOTTR.exe",
+            "v1.0 build 458.0_64",
+            Architecture::Arch64Bit,
+            vec![
+                (AddressType::Version, vec![0x03_6E_55_A8, 0x1_E0]),
+                (AddressType::XPosition, vec![0x01_46_90_B8, 0x10]),
+                (AddressType::YPosition, vec![0x01_46_90_B8, 0x14]),
+                (AddressType::ZPosition, vec![0x01_46_90_B8, 0x18]),
+                (
+                    AddressType::CameraSin,
+                    vec![0x03_6A_7A_00, 0x70],
+                ),
+                (
+                    AddressType::CameraCos,
+                    vec![0x03_6A_7A_00, 0x74],
+                ),
+                (AddressType::CutscenePrompt, vec![0x01_4A_F1_40, 0x10]),
+                (AddressType::CutsceneStatus, vec![0x01_4A_F1_40, 0x129]),
+                (AddressType::CutsceneTimeline, vec![0x01_4A_F1_40, 0x60]),
+                (AddressType::CutsceneLength, vec![0x01_4A_F1_20, 0x00, 0x20]),
+                (
+                    AddressType::CutsceneId,
+                    vec![0x03_6A_E1_30, 0x00, 0x120, 0x10, 0x334],
+                ),
+            ]
+            .iter()
+            .cloned()
+            .collect(),
+        ),
     ]
 }
 
