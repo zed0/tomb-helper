@@ -134,7 +134,7 @@ pub fn known_process_details() -> Vec<ProcessDetails> {
             "v1.0 build 458.0_64",
             Architecture::Arch64Bit,
             vec![
-                (AddressType::Version, vec![0x03_6E_55_A8, 0x1_E0]),
+                (AddressType::Version, vec![0x03_6C_1B_60, 0x108, 0x30, 0x30]),
                 (AddressType::XPosition, vec![0x01_46_90_B8, 0x10]),
                 (AddressType::YPosition, vec![0x01_46_90_B8, 0x14]),
                 (AddressType::ZPosition, vec![0x01_46_90_B8, 0x18]),
