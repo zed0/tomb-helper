@@ -1,5 +1,5 @@
 # Tomb-helper
-[![GitHub Workflow Status](https://img.shields.io/github/workflow/status/zed0/tomb-helper/Rust)](https://actions-badge.atrox.dev/zed0/tomb-helper/goto)
+[![GitHub Workflow Status](https://img.shields.io/github/actions/workflow/status/zed0/tomb-helper/rust.yml?branch=master)](https://actions-badge.atrox.dev/zed0/tomb-helper/goto)
 [![GitHub release (latest SemVer)](https://img.shields.io/github/v/release/zed0/tomb-helper?sort=semver)](https://github.com/zed0/tomb-helper/releases/latest)
 
 A speedrun helper for the Tomb Raider reboot series
