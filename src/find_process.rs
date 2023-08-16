@@ -1,29 +1,32 @@
-use crate::process_details::{ProcessDetails, AddressType};
-use process_memory::{Pid, TryIntoProcessHandle, DataMember, Memory, CopyAddress};
+use crate::process_details::{AddressType, ProcessDetails};
+use process_memory::{CopyAddress, DataMember, Memory, Pid, TryIntoProcessHandle};
 use std::ptr::{null, null_mut};
-use winapi::um::winnt::SYNCHRONIZE;
 use winapi::shared::winerror::WAIT_TIMEOUT;
+use winapi::um::winnt::SYNCHRONIZE;
 
 pub fn find_process(
     possible_processes: Vec<ProcessDetails>,
     force_version: Option<String>,
-)
-    -> Option<(
-        Pid,
-        process_memory::ProcessHandle,
-        usize,
-        ProcessDetails
-    )>
-{
-    possible_processes
-    .iter()
-    .find_map(|details| {
+) -> Option<(Pid, process_memory::ProcessHandle, usize, ProcessDetails)> {
+    possible_processes.iter().find_map(|details| {
         let pid = get_pid(&details.executable_name)?;
         let handle = pid.try_into_process_handle().ok()?;
         let base_addr = get_base_address(pid) as *const _ as usize;
 
         if force_version == Some(details.version.clone()) {
-            println!("Warning: Forcing version to {}, some functions may not work as expected!", details.version);
+            println!(
+                "Warning: Forcing version to {}, some functions may not work as expected!",
+                details.version
+            );
+            return Some((pid, handle, base_addr, details.clone()));
+        }
+
+        if let Some(image_size) = details.image_size {
+            let a = get_image_size(handle, base_addr).ok()?;
+            if image_size != a {
+                return None;
+            }
+
             return Some((pid, handle, base_addr, details.clone()));
         }
 
@@ -32,7 +35,8 @@ pub fn find_process(
             details.address_offsets.get(&AddressType::Version)?.clone(),
             base_addr,
             details.version.len(),
-        ).ok()?;
+        )
+        .ok()?;
 
         if version_in_memory != details.version {
             None
@@ -124,14 +128,28 @@ pub fn get_pid(process_name: &str) -> Option<Pid> {
 }
 
 #[cfg(windows)]
-pub fn is_process_running(pid: Pid) -> bool
-{
+pub fn is_process_running(pid: Pid) -> bool {
     unsafe {
         let process = winapi::um::processthreadsapi::OpenProcess(SYNCHRONIZE, 0, pid);
         let result = winapi::um::synchapi::WaitForSingleObject(process, 0);
         winapi::um::handleapi::CloseHandle(process);
         return result == WAIT_TIMEOUT;
     }
+}
+
+pub fn get_image_size(
+    handle: process_memory::ProcessHandle,
+    base_addr: usize,
+) -> Result<usize, std::io::Error> {
+    let mut image_optional_header_offset_bytes = [0_u8; 4];
+    handle.copy_address(base_addr + 0x3C, &mut image_optional_header_offset_bytes)?;
+    let image_optional_header_offset = u32::from_le_bytes(image_optional_header_offset_bytes) as usize;
+
+    let mut image_size_bytes = [0_u8; 4];
+    handle.copy_address(base_addr + image_optional_header_offset + 0x50, &mut image_size_bytes)?;
+    let image_size = u32::from_le_bytes(image_size_bytes) as usize;
+
+    Ok(image_size)
 }
 
 pub fn try_read_std_string_utf8(
@@ -161,7 +179,6 @@ pub fn get_pid(_process_name: &str) -> Option<Pid> {
 }
 
 #[cfg(not(windows))]
-pub fn is_process_running(_pid: Pid) -> bool
-{
+pub fn is_process_running(_pid: Pid) -> bool {
     panic!("tomb-helper is only supported on Windows");
 }
