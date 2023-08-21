@@ -115,6 +115,24 @@ pub fn known_process_details() -> Vec<ProcessDetails> {
             .collect(),
         ),
         ProcessDetails::new(
+            "Rise of the Tomb Raider",
+            "ROTTR.exe",
+            "(Epic Games) v1.0 build 1027.0_64",
+            Architecture::Arch64Bit,
+            Some(57122816),
+            vec![
+                (AddressType::Version, vec![0x02_CF_88_E8, 0x1F8]),
+                (AddressType::XPosition, vec![0x01_0E_6D_D8, 0x10]),
+                (AddressType::YPosition, vec![0x01_0E_6D_D8, 0x14]),
+                (AddressType::ZPosition, vec![0x01_0E_6D_D8, 0x18]),
+                (AddressType::CameraSin, vec![0x02_CA_8C_90, 0x4E0]),
+                (AddressType::CameraCos, vec![0x02_CA_8C_90, 0x4E4]),
+            ]
+            .iter()
+            .cloned()
+            .collect(),
+        ),
+        ProcessDetails::new(
             "Shadow of the Tomb Raider",
             "SOTTR.exe",
             "v1.0 build 234.1_64",
