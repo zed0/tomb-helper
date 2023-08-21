@@ -99,9 +99,9 @@ pub fn known_process_details() -> Vec<ProcessDetails> {
         ProcessDetails::new(
             "Rise of the Tomb Raider",
             "ROTTR.exe",
-            "v1.0 build 0.0_64",
+            "(Steam) v1.0 build 0.0_64",
             Architecture::Arch64Bit,
-            None,
+            Some(58654720),
             vec![
                 (AddressType::Version, vec![0x02_E7_76_58, 0x1E0]),
                 (AddressType::XPosition, vec![0x01_0F_B8_C8, 0x10]),
