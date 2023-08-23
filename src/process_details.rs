@@ -6,9 +6,11 @@ pub fn known_process_details() -> Vec<ProcessDetails> {
         ProcessDetails::new(
             "Tomb Raider 2013",
             "TombRaider.exe",
-            "v1.01.748.0",
+            VersionIdentifier {
+                version: String::from("v1.01.748.0"),
+                image_size: None,
+            },
             Architecture::Arch32Bit,
-            None,
             vec![
                 (AddressType::Version, vec![0x01_0E_65_98]),
                 (AddressType::XPosition, vec![0x00_F3_9E_18, 0x00]),
@@ -24,9 +26,11 @@ pub fn known_process_details() -> Vec<ProcessDetails> {
         ProcessDetails::new(
             "Tomb Raider 2013",
             "TombRaider.exe",
-            "v1.1 build 838.0_32",
+            VersionIdentifier {
+                version: String::from("v1.1 build 838.0_32"),
+                image_size: None,
+            },
             Architecture::Arch32Bit,
-            None,
             vec![
                 (AddressType::Version, vec![0x01_DD_BB_F4, 0xF0]),
                 (AddressType::XPosition, vec![0x00_A7_88_F0, 0x00]),
@@ -42,9 +46,11 @@ pub fn known_process_details() -> Vec<ProcessDetails> {
         ProcessDetails::new(
             "Tomb Raider 2013",
             "TombRaider.exe",
-            "(Steam) v1.01.0.0",
+            VersionIdentifier {
+                version: String::from("(Steam) v1.01.0.0"),
+                image_size: Some(38543360),
+            },
             Architecture::Arch32Bit,
-            Some(38543360),
             vec![
                 (AddressType::Version, vec![0x01_07_C8_98]),
                 (AddressType::XPosition, vec![0x00_A7_88_F0, 0x00]),
@@ -60,9 +66,11 @@ pub fn known_process_details() -> Vec<ProcessDetails> {
         ProcessDetails::new(
             "Tomb Raider 2013",
             "TombRaider.exe",
-            "(Epic Games) v1.01.0.0",
+            VersionIdentifier {
+                version: String::from("(Epic Games) v1.01.0.0"),
+                image_size: Some(38535168),
+            },
             Architecture::Arch32Bit,
-            Some(38535168),
             vec![
                 (AddressType::Version, vec![0x01_07_B3_D8]),
                 (AddressType::XPosition, vec![0x00_A7_76_60, 0x00]),
@@ -78,9 +86,11 @@ pub fn known_process_details() -> Vec<ProcessDetails> {
         ProcessDetails::new(
             "Rise of the Tomb Raider",
             "ROTTR.exe",
-            "v1.0 build 820.0_64",
+            VersionIdentifier {
+                version: String::from("v1.0 build 820.0_64"),
+                image_size: None,
+            },
             Architecture::Arch64Bit,
-            None,
             vec![
                 (AddressType::Version, vec![0x01_06_6B_80, 0x90, 0x0238, 0x0]),
                 (AddressType::XPosition, vec![0x01_08_2A_B8, 0x10]),
@@ -99,9 +109,11 @@ pub fn known_process_details() -> Vec<ProcessDetails> {
         ProcessDetails::new(
             "Rise of the Tomb Raider",
             "ROTTR.exe",
-            "v1.0 build 1027.0_64",
+            VersionIdentifier {
+                version: String::from("v1.0 build 1027.0_64"),
+                image_size: None,
+            },
             Architecture::Arch64Bit,
-            None,
             vec![
                 (AddressType::Version, vec![0x02_E7_85_F8, 0x1E0]),
                 (AddressType::XPosition, vec![0x01_0F_C8_C8, 0x10]),
@@ -117,9 +129,11 @@ pub fn known_process_details() -> Vec<ProcessDetails> {
         ProcessDetails::new(
             "Rise of the Tomb Raider",
             "ROTTR.exe",
-            "(Steam) v1.0 build 0.0_64",
+            VersionIdentifier {
+                version: String::from("(Steam) v1.0 build 0.0_64"),
+                image_size: Some(58654720),
+            },
             Architecture::Arch64Bit,
-            Some(58654720),
             vec![
                 (AddressType::Version, vec![0x02_E7_76_58, 0x1E0]),
                 (AddressType::XPosition, vec![0x01_0F_B8_C8, 0x10]),
@@ -135,9 +149,11 @@ pub fn known_process_details() -> Vec<ProcessDetails> {
         ProcessDetails::new(
             "Rise of the Tomb Raider",
             "ROTTR.exe",
-            "(Epic Games) v1.0 build 1027.0_64",
+            VersionIdentifier {
+                version: String::from("(Epic Games) v1.0 build 1027.0_64"),
+                image_size: Some(57122816),
+            },
             Architecture::Arch64Bit,
-            Some(57122816),
             vec![
                 (AddressType::Version, vec![0x02_CF_88_E8, 0x1F8]),
                 (AddressType::XPosition, vec![0x01_0E_6D_D8, 0x10]),
@@ -153,9 +169,11 @@ pub fn known_process_details() -> Vec<ProcessDetails> {
         ProcessDetails::new(
             "Shadow of the Tomb Raider",
             "SOTTR.exe",
-            "v1.0 build 234.1_64",
+            VersionIdentifier {
+                version: String::from("v1.0 build 234.1_64"),
+                image_size: None,
+            },
             Architecture::Arch64Bit,
-            None,
             vec![
                 (AddressType::Version, vec![0x03_62_1B_00, 0xD8, 0x0B70]),
                 (AddressType::XPosition, vec![0x01_3D_5F_B8, 0x10]),
@@ -185,9 +203,11 @@ pub fn known_process_details() -> Vec<ProcessDetails> {
         ProcessDetails::new(
             "Shadow of the Tomb Raider",
             "SOTTR.exe",
-            "v1.0 build 298.0_64",
+            VersionIdentifier {
+                version: String::from("v1.0 build 298.0_64"),
+                image_size: None,
+            },
             Architecture::Arch64Bit,
-            None,
             vec![
                 (AddressType::Version, vec![0x03_6B_7B_B0, 0xD8, 0x0B60]),
                 (AddressType::XPosition, vec![0x02_FF_34_70]),
@@ -212,9 +232,11 @@ pub fn known_process_details() -> Vec<ProcessDetails> {
         ProcessDetails::new(
             "Shadow of the Tomb Raider",
             "SOTTR.exe",
-            "v1.0 build 458.0_64",
+            VersionIdentifier {
+                version: String::from("v1.0 build 458.0_64"),
+                image_size: None,
+            },
             Architecture::Arch64Bit,
-            None,
             vec![
                 (AddressType::Version, vec![0x03_6C_1B_60, 0x108, 0x30, 0x30]),
                 (AddressType::XPosition, vec![0x01_46_90_B8, 0x10]),
@@ -238,9 +260,11 @@ pub fn known_process_details() -> Vec<ProcessDetails> {
         ProcessDetails::new(
             "Shadow of the Tomb Raider",
             "SOTTR.exe",
-            "v1.0 build 489.0_64",
+            VersionIdentifier {
+                version: String::from("v1.0 build 489.0_64"),
+                image_size: None,
+            },
             Architecture::Arch64Bit,
-            None,
             vec![
                 (AddressType::Version, vec![0x03_6C_5B_40, 0x108, 0x258, 0x0]),
                 (AddressType::XPosition, vec![0x01_46_D0_B8, 0x10]),
@@ -264,9 +288,11 @@ pub fn known_process_details() -> Vec<ProcessDetails> {
         ProcessDetails::new(
             "Shadow of the Tomb Raider",
             "SOTTR.exe",
-            "(Epic Games) v1.0 build 492.0_64",
+            VersionIdentifier {
+                version: String::from("(Epic Games) v1.0 build 492.0_64"),
+                image_size: Some(72794112),
+            },
             Architecture::Arch64Bit,
-            Some(72794112),
             vec![
                 (AddressType::Version, vec![0x03_51_79_A0, 0x108, 0x258, 0x0]),
                 (AddressType::XPosition, vec![0x01_45_1F_78, 0x10]),
@@ -276,7 +302,10 @@ pub fn known_process_details() -> Vec<ProcessDetails> {
                 (AddressType::CutsceneStatus, vec![0x01_49_7A_C0, 0x129]),
                 (AddressType::CutsceneTimeline, vec![0x01_49_7A_C0, 0x60]),
                 (AddressType::CutsceneLength, vec![0x01_49_7A_A0, 0x00, 0x20]),
-                (AddressType::CutsceneId, vec![0x03_50_3F_78, 0x0, 0xB78, 0x574],),
+                (
+                    AddressType::CutsceneId,
+                    vec![0x03_50_3F_78, 0x0, 0xB78, 0x574],
+                ),
             ]
             .iter()
             .cloned()
@@ -285,9 +314,11 @@ pub fn known_process_details() -> Vec<ProcessDetails> {
         ProcessDetails::new(
             "Shadow of the Tomb Raider",
             "SOTTR.exe",
-            "(Steam) v1.0 build 492.0_64",
+            VersionIdentifier {
+                version: String::from("(Steam) v1.0 build 492.0_64"),
+                image_size: Some(73662464),
+            },
             Architecture::Arch64Bit,
-            Some(73662464),
             vec![
                 (AddressType::Version, vec![0x03_6C_5B_40, 0x108, 0x258, 0x0]),
                 (AddressType::XPosition, vec![0x01_46_D0_B8, 0x10]),
@@ -297,7 +328,10 @@ pub fn known_process_details() -> Vec<ProcessDetails> {
                 (AddressType::CutsceneStatus, vec![0x01_4B_31_40, 0x129]),
                 (AddressType::CutsceneTimeline, vec![0x01_4B_31_40, 0x60]),
                 (AddressType::CutsceneLength, vec![0x01_4B_31_20, 0x00, 0x20]),
-                (AddressType::CutsceneId, vec![0x03_6B_21_18, 0x0, 0xB78, 0x574]),
+                (
+                    AddressType::CutsceneId,
+                    vec![0x03_6B_21_18, 0x0, 0xB78, 0x574],
+                ),
             ]
             .iter()
             .cloned()
@@ -331,14 +365,20 @@ pub enum AddressType {
 pub type AddressOffsets = HashMap<AddressType, Vec<usize>>;
 
 #[derive(Debug, Clone)]
+pub struct VersionIdentifier {
+    // Version string
+    pub version: String,
+    // Size of the image in memory. Used to differentiate between Steam and Epic Games versions since they share the same version string
+    // https://learn.microsoft.com/en-us/windows/win32/debug/pe-format#optional-header-windows-specific-fields-image-only
+    pub image_size: Option<usize>,
+}
+
+#[derive(Debug, Clone)]
 pub struct ProcessDetails {
     pub name: String,
     pub executable_name: String,
-    pub version: String,
+    pub version: VersionIdentifier,
     pub arch: Architecture,
-    // Size of the image in memory. Used to differentiate between Steam and Epic Games versions since they share the same version
-    // https://learn.microsoft.com/en-us/windows/win32/debug/pe-format#optional-header-windows-specific-fields-image-only
-    pub image_size: Option<usize>,
     pub address_offsets: AddressOffsets,
 }
 
@@ -346,17 +386,15 @@ impl ProcessDetails {
     fn new(
         name: &str,
         executable_name: &str,
-        version: &str,
+        version: VersionIdentifier,
         arch: Architecture,
-        image_size: Option<usize>,
         address_offsets: AddressOffsets,
     ) -> ProcessDetails {
         ProcessDetails {
             name: String::from(name),
             executable_name: String::from(executable_name),
-            version: String::from(version),
+            version,
             arch,
-            image_size,
             address_offsets,
         }
     }
