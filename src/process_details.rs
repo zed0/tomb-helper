@@ -42,9 +42,9 @@ pub fn known_process_details() -> Vec<ProcessDetails> {
         ProcessDetails::new(
             "Tomb Raider 2013",
             "TombRaider.exe",
-            "v1.01.0.0",
+            "(Steam) v1.01.0.0",
             Architecture::Arch32Bit,
-            None,
+            Some(38543360),
             vec![
                 (AddressType::Version, vec![0x01_07_C8_98]),
                 (AddressType::XPosition, vec![0x00_A7_88_F0, 0x00]),
@@ -52,6 +52,24 @@ pub fn known_process_details() -> Vec<ProcessDetails> {
                 (AddressType::ZPosition, vec![0x00_A7_88_F0, 0x08]),
                 (AddressType::CameraSin, vec![0x00_15_0C_8C, 0x4_C4]),
                 (AddressType::CameraCos, vec![0x00_15_0C_8C, 0x4_C8]),
+            ]
+            .iter()
+            .cloned()
+            .collect(),
+        ),
+        ProcessDetails::new(
+            "Tomb Raider 2013",
+            "TombRaider.exe",
+            "(Epic Games) v1.01.0.0",
+            Architecture::Arch32Bit,
+            Some(38535168),
+            vec![
+                (AddressType::Version, vec![0x01_07_B3_D8]),
+                (AddressType::XPosition, vec![0x00_A7_76_60, 0x00]),
+                (AddressType::YPosition, vec![0x00_A7_76_60, 0x04]),
+                (AddressType::ZPosition, vec![0x00_A7_76_60, 0x08]),
+                (AddressType::CameraSin, vec![0x02_0C_B4_A0, 0x460]),
+                (AddressType::CameraCos, vec![0x02_0C_B4_A0, 0x464]),
             ]
             .iter()
             .cloned()
