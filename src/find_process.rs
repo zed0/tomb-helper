@@ -13,15 +13,16 @@ pub fn find_process(
         let handle = pid.try_into_process_handle().ok()?;
         let base_addr = get_base_address(pid) as *const _ as usize;
 
-        if force_version == Some(details.version.clone()) {
+        if force_version == Some(details.version.version.clone()) {
             println!(
                 "Warning: Forcing version to {}, some functions may not work as expected!",
-                details.version
+                details.version.version
             );
             return Some((pid, handle, base_addr, details.clone()));
         }
 
-        if let Some(image_size) = details.image_size {
+        // Try using the image size first, then the version string
+        if let Some(image_size) = details.version.image_size {
             let a = get_image_size(handle, base_addr).ok()?;
             if image_size != a {
                 return None;
@@ -34,11 +35,11 @@ pub fn find_process(
             handle,
             details.address_offsets.get(&AddressType::Version)?.clone(),
             base_addr,
-            details.version.len(),
+            details.version.version.len(),
         )
         .ok()?;
 
-        if version_in_memory != details.version {
+        if version_in_memory != details.version.version {
             None
         } else {
             Some((pid, handle, base_addr, details.clone()))

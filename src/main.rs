@@ -49,7 +49,7 @@ fn connect(
     base_addr: usize,
     details: ProcessDetails
 ) {
-    println!("Connecting to {} {} with PID {}", details.name, details.version, pid);
+    println!("Connecting to {} {} with PID {}", details.name, details.version.version, pid);
 
     let mut handlers: Vec<Box<dyn Handler>> = vec![];
 
@@ -126,7 +126,7 @@ fn connect(
 
     loop {
         if !find_process::is_process_running(pid) {
-            println!("Disconnected from {} {} with PID {}", details.name, details.version, pid);
+            println!("Disconnected from {} {} with PID {}", details.name, details.version.version, pid);
             return;
         }
 
