@@ -18,7 +18,14 @@ serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 reqwest = { version = "0.11", features = ["blocking", "json"] }
 itertools = "0.9"
+hudhook = "0.9"
+shared_memory = "0.12.4"
+log-panics = { version = "2.1.0", features = ["with-backtrace"] }
+simple-logging = "2.0.2"
+log = "0.4.27"
+tracing-subscriber = "0.3.19"
 signal-hook = "0.3.18"
+nalgebra = "0.34.0"
 iced-x86 = { version = "1", default-features = false, features = ["std", "decoder", "instr_info", "intel"] }
 rayon = "1"
 
@@ -28,3 +35,18 @@ winapi = { version = "0.3", features = ["tlhelp32", "synchapi"] }
 [target.'cfg(windows)'.dependencies]
 winapi = { version = "0.3", features = ["winnt", "memoryapi", "minwindef", "processthreadsapi", "synchapi", "debugapi", "winbase", "minwinbase", "handleapi", "winerror", "errhandlingapi"] }
 win32-error = "0.9.0"
+
+[[bin]]
+name = "tomb-helper"
+path = "src/main.rs"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+name = "tomb_helper_ui"
+
+[profile.dev]
+lto = "thin"
+
+[patch.'crates-io']
+# imgui = { git = "https://github.com/imgui-rs/imgui-rs", rev = "cb8beeb" }
+hudhook = { path = "../hudhook" }

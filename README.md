@@ -29,6 +29,7 @@ The default configuration is:
 		{"key": "F6", "action": {"StorePosition": {}}},
 		{"key": "F7", "action": {"RestorePosition": {}}},
 		{"key": "F8", "action": {"ResetSkipCutsceneTracker": {}}},
+		{"key": "F9", "action": {"ToggleUI": {}}},
 		{"key": "Space", "action": {"SkipCutscene": {}}},
 		{"key": "W", "action": {"Forward": {"distance": 100.0}}},
 		{"key": "S", "action": {"Backward": {"distance": 100.0}}},
@@ -55,6 +56,7 @@ Currently the available actions are:
 - `RestorePosition`
 - `SkipCutscene`
 - `ResetSkipCutsceneTracker` (reset the total amount of time of cutscenes skipped, prints out the previous total, suggest binding this to the same key you use to reset livesplit)
+- `ToggleUI` (inject or remove the in-game overlay; experimental, DirectX 12 only)
 - `Forward` (can take a distance, which defaults to `100.0`)
 - `Backward` (can take a distance, which defaults to `100.0`)
 - `Left` (can take a distance, which defaults to `100.0`)

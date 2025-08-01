@@ -4,12 +4,22 @@ Speedrun helper for the Tomb Raider reboot trilogy (TR2013, ROTTR, SOTTR). Windo
 attaches to the running game, reads/writes its memory via pointer chains, and reacts to global hotkeys.
 User docs (hotkeys, config, cutscene timing generation) live in `README.md`.
 
-## Build
+## Build outputs (two crates from one package — see `Cargo.toml`)
 
-- Single binary `tomb-helper` (`src/main.rs` → `tomb-helper.exe`): finds the game, runs handlers, listens to hotkeys.
+| Target | Entry | Output | Purpose |
+|---|---|---|---|
+| bin `tomb-helper` | `src/main.rs` | `tomb-helper.exe` | Main external process: finds game, runs handlers, listens to hotkeys |
+| lib `tomb_helper_ui` (cdylib) | `src/lib.rs` | `tomb_helper_ui.dll` | ImGui overlay injected *into* the game (DX12 via `hudhook`) |
+
+- The bin and lib share `src/ui_ipc_data.rs` and `src/position.rs` by each declaring them with `mod` —
+  they're compiled into both, so `UiData` must stay `#[repr(C)]` with identical layout on both sides.
+- `hudhook` (0.9.x) is patched to a local checkout at `../hudhook` (`[patch.'crates-io']`), which is
+  upstream `main` plus a local `Process::by_pid()` in `src/inject.rs` (not upstream; used by
+  `OverlayHandler`). Builds need that sibling directory. The patch's version must match the
+  `hudhook = "..."` requirement or cargo silently ignores it and uses crates.io.
 - CI: `.github/workflows/rust.yml` (build + test on push/PR to master), `main.yml` (release on `v*` tag,
   uploads only `tomb-helper.exe`). Versioning via `cargo-release`.
-- `.cargo/config.toml` holds the `crt-static` rustflags (static CRT so the exe runs standalone).
+- `.cargo/config.toml` holds the `crt-static` rustflags (static CRT so the exe/dll run standalone).
   It must stay under `.cargo/` — cargo ignores a `config.toml` at the repo root.
 
 ## Runtime flow (`src/main.rs`)
@@ -17,6 +27,7 @@ User docs (hotkeys, config, cutscene timing generation) live in `README.md`.
 1. `main()` hands off to `derive::run` if given any CLI args; otherwise loads config and offsets (`OffsetsSource`), prints hotkeys, then polls every 100ms with `find_process::find_process(...)`, reloading the offsets when the file changes.
 2. On a match, `connect()` builds a `Vec<Box<dyn Handler>>` (`create_handlers`):
    - `CutsceneTimingGeneratorHandler` **or** `CutsceneHandler` (chosen by `config.record_cutscene_timing`)
+   - `OverlayHandler`
    - `PositionHandler::new_position_handler` (Lara position) and `::new_look_at_handler` (ROTTR look-at)
    - Each constructor returns `None` if the game version lacks a required `AddressType`, so features
      silently disappear per-version.
@@ -47,12 +58,15 @@ User docs (hotkeys, config, cutscene timing generation) live in `README.md`.
 | `src/find_process.rs` | Win32 process/module lookup (`get_pid`, `get_base_address`, `is_process_running`), version detection (image size first, else reads version string from memory), `force_version` override |
 | `src/tracked_memory.rs` | `TrackedMemory<T>`: cached value + pointer-chain offsets; `fetch_from_game` / `apply_to_game`. First offset is relative to module base |
 | `src/tracked_position.rs` | `TrackedPosition`: three `TrackedMemory<f32>` (x/y/z), `to_position()` |
-| `src/position.rs` | Plain `#[repr(C)] Position {x,y,z}` |
+| `src/position.rs` | Plain `#[repr(C)] Position {x,y,z}` (shared with the DLL) |
 | `src/position_handler.rs` | Store/restore position, toggle "active" (freezes position by re-writing it every tick), camera-relative WASD/up/down movement using `CameraSin`/`CameraCos` |
 | `src/cutscene_handler.rs` | Cutscene skipping (SOTTR): checks prompt/status/timeline vs. blacklist delay, sets status=5 to skip, tracks RTA/IGT saved using timing info. Also `Blacklist` type |
 | `src/cutscene_timing_info.rs` | `TimingInfo` / `TimingEntry` JSON format (cutscene ids → durations, skippable-at times) |
 | `src/cutscene_timing_generator_handler.rs` | Records cutscene timings by watching memory + querying LiveSplit Server over TCP (`getcurrenttime`); writes the timing file after each cutscene |
 | `src/readable_from_path.rs` | `ReadableFromPath` trait: load JSON from a local path or URL (blocking reqwest), default on failure |
+| `src/overlay_handler.rs` | **WIP.** On `ToggleUI` injects `tomb_helper_ui.dll` into the game (`hudhook::inject`), streams position + camera matrices into shared memory each tick; sets `should_exit` to eject on toggle-off/drop. `TrackedCameraMatrix` (16 floats). Trigger position is currently hardcoded |
+| `src/ui_ipc_data.rs` | Shared-memory IPC (`shared_memory` crate, os_id `"TombHelperIPC"`): `UiData`, lock-free `UiDoubleBuffer` (`set_next`/`current`), `SharedMemoryManager` (exe is owner) |
+| `src/lib.rs` | **WIP.** Injected overlay: `TombHelperHud` implements `ImguiRenderLoop`; shows position window, projects triggers to screen via `world_to_screen` (nalgebra) — currently experimenting with many candidate intrinsics matrices and row/column-major. Calls `eject()` when `should_exit` is set |
 
 ## Common changes
 
@@ -66,6 +80,9 @@ User docs (hotkeys, config, cutscene timing generation) live in `README.md`.
   handler's `handle_action`, optionally add a default in `default_hotkeys()` (`src/config.rs`), and
   document it in `README.md`.
 - **Add a new feature module:** implement `Handler`, add `mod` in `main.rs`, construct it in `connect()`.
+- **Send more data to the overlay:** add a field to `UiData` (`src/ui_ipc_data.rs`), fill it in
+  `OverlayHandler::handle_tick`, read it in `TombHelperHud::render` (`src/lib.rs`). Both binaries must be
+  rebuilt together.
 
 ## Gotchas
 
