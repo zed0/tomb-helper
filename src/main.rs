@@ -3,6 +3,7 @@ use crate::config::{Hotkey, CutsceneTiming, Config};
 use crate::handler::Handler;
 use crate::cutscene_handler::CutsceneHandler;
 use crate::cutscene_timing_generator_handler::CutsceneTimingGeneratorHandler;
+use crate::overlay_handler::OverlayHandler;
 use crate::offsets_file::OffsetsSource;
 use crate::position_handler::PositionHandler;
 use crate::process_details::ProcessDetails;
@@ -26,6 +27,7 @@ mod derive;
 mod pe_image;
 mod position_handler;
 mod handler;
+mod overlay_handler;
 mod position;
 mod process_details;
 mod find_process;
@@ -36,6 +38,7 @@ mod witness;
 mod tracked_position;
 mod cutscene_timing_info;
 mod readable_from_path;
+mod ui_ipc_data;
 
 #[cfg(windows)]
 extern crate winapi;
@@ -97,6 +100,7 @@ fn load_offsets(offsets: &mut OffsetsSource, current: Vec<ProcessDetails>) -> Ve
 
 fn create_handlers(
     config: &Config,
+    pid: Pid,
     handle: process_memory::ProcessHandle,
     base_addr: usize,
     details: &ProcessDetails,
@@ -130,6 +134,17 @@ fn create_handlers(
                 None => {},
             }
         },
+    }
+
+    match OverlayHandler::new_overlay_handler(
+        &details.address_offsets,
+        &details.arch,
+        &base_addr,
+        &handle,
+        &pid
+    ) {
+        Some(h) => handlers.push(Box::new(h)),
+        None => {},
     }
 
     match PositionHandler::new_position_handler(
@@ -167,7 +182,7 @@ fn connect(
 ) {
     println!("Connecting to {} {} with PID {}", details.name, details.version.version, pid);
 
-    let mut handlers = create_handlers(config, handle, base_addr, &details);
+    let mut handlers = create_handlers(config, pid, handle, base_addr, &details);
 
     let (tx, rx) = mpsc::channel();
 
@@ -214,10 +229,10 @@ fn connect(
                         if new_details.version.version != details.version.version
                             || new_details.address_offsets != details.address_offsets
                         {
-                            // Drop the old handlers before creating their replacements
+                            // Drop the old handlers first, so e.g. the overlay is ejected before it's re-injected
                             handlers.clear();
                             details = new_details;
-                            handlers = create_handlers(config, handle, base_addr, &details);
+                            handlers = create_handlers(config, pid, handle, base_addr, &details);
                             println!("Reloaded offsets for {} {}", details.name, details.version.version);
                         }
                     }

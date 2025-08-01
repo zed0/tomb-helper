@@ -35,4 +35,5 @@ pub enum Action {
         #[serde(default = "default_distance")]
         distance: f32,
     },
+    ToggleUI {},
 }
