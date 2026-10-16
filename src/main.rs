@@ -9,8 +9,11 @@ use process_memory::Pid;
 use itertools::Itertools;
 use livesplit_hotkey::Hook;
 use livesplit_hotkey::KeyCode;
-use std::sync::mpsc;
+use std::sync::{Arc, mpsc};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::{thread, time};
+use signal_hook::consts::SIGINT;
+use signal_hook::flag;
 
 mod action;
 mod config;
@@ -30,15 +33,23 @@ mod readable_from_path;
 extern crate winapi;
 
 fn main() {
+    let term = Arc::new(AtomicBool::new(false));
+
+    flag::register(SIGINT, Arc::clone(&term)).expect("Could not register SIGINT handler");
     let config = config::get_config();
     print_help(&config.hotkeys);
     println!("Searching for Tomb Raider processes...");
     loop {
+        if term.load(Ordering::Relaxed) {
+            println!("Exiting");
+            break;
+        }
+
         find_process::find_process(
             process_details::known_process_details(),
             config.force_version.clone(),
         )
-        .and_then(|(pid, handle, base_addr, details)| Some(connect(config.clone(), pid, handle, base_addr, details)));
+        .and_then(|(pid, handle, base_addr, details)| Some(connect(config.clone(), pid, handle, base_addr, details, &term)));
 
         thread::sleep(time::Duration::from_millis(100));
     }
@@ -49,7 +60,8 @@ fn connect(
     pid: Pid,
     handle: process_memory::ProcessHandle,
     base_addr: usize,
-    details: ProcessDetails
+    details: ProcessDetails,
+    term: &Arc<AtomicBool>,
 ) {
     println!("Connecting to {} {} with PID {}", details.name, details.version.version, pid);
 
@@ -127,6 +139,10 @@ fn connect(
     println!("Started!");
 
     loop {
+        if term.load(Ordering::Relaxed) {
+            return;
+        }
+
         if !find_process::is_process_running(pid) {
             println!("Disconnected from {} {} with PID {}", details.name, details.version.version, pid);
             return;
