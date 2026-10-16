@@ -2,10 +2,9 @@ use crate::action::Action;
 use crate::handler::Handler;
 use crate::process_details::{AddressOffsets, AddressType};
 use crate::tracked_memory::TrackedMemory;
+use crate::tracked_position::TrackedPosition;
 use process_memory::{Architecture, ProcessHandle};
 use std::error::Error;
-use std::fmt;
-use std::io;
 
 #[derive(Debug, Clone)]
 pub struct PositionHandler {
@@ -183,48 +182,5 @@ impl Handler for PositionHandler {
             _ => (),
         }
         Ok(())
-    }
-}
-
-#[derive(Debug, Clone)]
-struct TrackedPosition {
-    x: TrackedMemory<f32>,
-    y: TrackedMemory<f32>,
-    z: TrackedMemory<f32>,
-}
-
-impl TrackedPosition {
-    fn fetch_from_game(&mut self, handle: ProcessHandle) -> io::Result<()> {
-        self.x.fetch_from_game(handle)?;
-        self.y.fetch_from_game(handle)?;
-        self.z.fetch_from_game(handle)?;
-        Ok(())
-    }
-
-    fn apply_to_game(&mut self, handle: ProcessHandle) -> io::Result<()> {
-        self.x.apply_to_game(handle)?;
-        self.y.apply_to_game(handle)?;
-        self.z.apply_to_game(handle)?;
-        Ok(())
-    }
-
-    fn new(
-        x_offsets: Vec<usize>,
-        y_offsets: Vec<usize>,
-        z_offsets: Vec<usize>,
-        arch: Architecture,
-        base_addr: usize,
-    ) -> TrackedPosition {
-        TrackedPosition {
-            x: TrackedMemory::new(0.0, x_offsets, arch, base_addr),
-            y: TrackedMemory::new(0.0, y_offsets, arch, base_addr),
-            z: TrackedMemory::new(0.0, z_offsets, arch, base_addr),
-        }
-    }
-}
-
-impl fmt::Display for TrackedPosition {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "({}, {}, {})", self.x.data, self.y.data, self.z.data)
     }
 }
