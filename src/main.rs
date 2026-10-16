@@ -18,9 +18,11 @@ mod cutscene_handler;
 mod cutscene_timing_generator_handler;
 mod position_handler;
 mod handler;
+mod position;
 mod process_details;
 mod find_process;
 mod tracked_memory;
+mod tracked_position;
 mod cutscene_timing_info;
 mod readable_from_path;
 
