@@ -18,6 +18,7 @@ serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 reqwest = { version = "0.11", features = ["blocking", "json"] }
 itertools = "0.9"
+signal-hook = "0.3.18"
 
 [target.'cfg(windows)'.dev-dependencies]
 winapi = { version = "0.3", features = ["tlhelp32", "synchapi"] }
