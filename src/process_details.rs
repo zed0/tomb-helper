@@ -27,6 +27,8 @@ pub enum AddressType {
     InstanceArray,
     // Lara's instance record (resolves to its address, not a value)
     PlayerInstance,
+    // Count and records of the ground probes the game casts for Lara, see `collision::read_probes`
+    PlayerProbes,
     CutscenePrompt,
     CutsceneStatus,
     CutsceneTimeline,

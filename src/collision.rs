@@ -1,6 +1,6 @@
 use crate::object_list::{INSTANCE_COMPONENTS, INSTANCE_TRANSFORM};
 use crate::position::Position;
-use crate::ui_ipc_data::Capsule;
+use crate::ui_ipc_data::{Capsule, Probe};
 use nalgebra::{Quaternion, UnitQuaternion, Vector3};
 use process_memory::{CopyAddress, ProcessHandle};
 use std::convert::TryInto;
@@ -108,6 +108,49 @@ pub fn place_capsules(
             }
         })
         .collect())
+}
+
+// The ground probes the game casts for Lara: one per foot (knee height to below the foot) and one for
+// her body (above her head to below her feet). A static count followed by records at PROBES_RECORDS.
+const PROBES_RECORDS: usize = 0x70;
+const PROBE_SIZE: usize = 0x60;
+const PROBE_HIT: usize = 0x10; // Can be stale, see `place_probes`
+const PROBE_START: usize = 0x20;
+const PROBE_END: usize = 0x30;
+const MAX_PROBES: usize = 8;
+// Hits further than this from their probe are left over from an earlier cast
+const PROBE_HIT_TOLERANCE: f32 = 10.0;
+
+pub fn read_probes(handle: ProcessHandle, probes_address: usize) -> io::Result<Vec<Probe>> {
+    let mut bytes = vec![0u8; PROBES_RECORDS + MAX_PROBES * PROBE_SIZE];
+    handle.copy_address(probes_address, &mut bytes)?;
+    let count = (u32::from_le_bytes(bytes[..4].try_into().unwrap()) as usize).min(MAX_PROBES);
+    Ok(bytes[PROBES_RECORDS..]
+        .chunks_exact(PROBE_SIZE)
+        .take(count)
+        .map(|record| {
+            let start = vector_at(record, PROBE_START);
+            let end = vector_at(record, PROBE_END);
+            let hit = vector_at(record, PROBE_HIT);
+            let has_hit = distance_to_segment(&hit, &start, &end) <= PROBE_HIT_TOLERANCE;
+            Probe {
+                start: to_position(&start),
+                end: to_position(&end),
+                hit: to_position(&hit),
+                has_hit,
+            }
+        })
+        .collect())
+}
+
+fn distance_to_segment(point: &Vector3<f32>, start: &Vector3<f32>, end: &Vector3<f32>) -> f32 {
+    let line = end - start;
+    let t = ((point - start).dot(&line) / line.norm_squared().max(1e-6)).clamp(0.0, 1.0);
+    (point - (start + line * t)).norm()
+}
+
+fn to_position(vector: &Vector3<f32>) -> Position {
+    Position { x: vector.x, y: vector.y, z: vector.z }
 }
 
 // `point * matrix` for a row-major matrix of row vectors, like the game's
