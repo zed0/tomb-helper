@@ -111,7 +111,7 @@ fn default_object_box_size() -> f32 {
     50.0
 }
 
-fn default_lara_box() -> bool {
+fn default_lara_collision() -> bool {
     true
 }
 
@@ -126,8 +126,9 @@ pub struct OverlayConfig {
     // Half width of the box drawn around objects that don't have a model
     #[serde(default = "default_object_box_size")]
     pub object_box_size: f32,
-    #[serde(default = "default_lara_box")]
-    pub lara_box: bool,
+    // Draw Lara's hit capsules
+    #[serde(default = "default_lara_collision")]
+    pub lara_collision: bool,
 }
 
 impl Default for OverlayConfig {

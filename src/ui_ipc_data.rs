@@ -4,6 +4,7 @@ use shared_memory::{Shmem, ShmemConf, ShmemError};
 use crate::position::Position;
 
 pub const MAX_OBJECTS: usize = 64;
+pub const MAX_CAPSULES: usize = 32;
 pub const OBJECT_NAME_LENGTH: usize = 64;
 
 #[repr(u32)]
@@ -36,6 +37,15 @@ impl ObjectBox {
     }
 }
 
+// World space ends of the cylinder part, and its radius
+#[repr(C)]
+#[derive(Copy, Clone, Debug)]
+pub struct Capsule {
+    pub a: Position,
+    pub b: Position,
+    pub radius: f32,
+}
+
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
 pub struct UiData {
@@ -47,6 +57,9 @@ pub struct UiData {
     pub camera_projection: [f32; 16],
     pub object_count: usize,
     pub objects: [ObjectBox; MAX_OBJECTS],
+    // Lara's collision
+    pub capsule_count: usize,
+    pub capsules: [Capsule; MAX_CAPSULES],
 }
 
 #[repr(C)]

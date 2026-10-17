@@ -12,14 +12,14 @@ const INSTANCE_HEADER: usize = 0x0; // 2 for every slot in the array, 0 after th
 const INSTANCE_POSITION: usize = 0x10;
 const INSTANCE_ROTATION: usize = 0x30; // Euler angles in radians, applied as Rx * Ry * Rz
 const INSTANCE_PLACEMENT: usize = 0x78; // -> placement record, null for spawned instances
-const INSTANCE_TRANSFORM: usize = 0xE0; // -> cdc::TransformComponent, null for unused slots
+pub const INSTANCE_TRANSFORM: usize = 0xE0; // -> cdc::TransformComponent, null for unused slots
 const PLACEMENT_NAME: usize = 0x48; // -> e.g. "fx_fire_campfire_prelight1-neberle2"
 const PLACEMENT_FULL_NAME: usize = 0x50; // -> e.g. "campsite_base_trx.fx_fire_campfire-neberle7"
 const TRANSFORM_MATRIX: usize = 0x30; // Row-major 4x4 object-to-world matrix, not always up to date
 
 // Object space bounds come from the render model's mesh: instance -> component table -> DrawableComponent
 // -> InstanceDrawable -> CommonRenderModelInstance -> CommonRenderModel -> Mesh
-const INSTANCE_COMPONENTS: usize = 0xD8;
+pub const INSTANCE_COMPONENTS: usize = 0xD8;
 const COMPONENTS_DRAWABLE: usize = 0x40; // The table has a fixed slot per component type
 const DRAWABLE_INSTANCE_DRAWABLE: usize = 0x98; // Null for instances that aren't drawn (triggers, markers, ...)
 const INSTANCE_DRAWABLE_MODEL_INSTANCE: usize = 0xC8;
