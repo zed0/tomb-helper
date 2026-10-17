@@ -25,6 +25,8 @@ pub enum AddressType {
     CameraLens,
     // Static array of 0x120 byte instance (game object) records, see `object_list`
     InstanceArray,
+    // Lara's instance record (resolves to its address, not a value)
+    PlayerInstance,
     CutscenePrompt,
     CutsceneStatus,
     CutsceneTimeline,

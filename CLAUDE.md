@@ -65,7 +65,7 @@ User docs (hotkeys, config, cutscene timing generation) live in `README.md`.
 | `src/cutscene_timing_generator_handler.rs` | Records cutscene timings by watching memory + querying LiveSplit Server over TCP (`getcurrenttime`); writes the timing file after each cutscene |
 | `src/readable_from_path.rs` | `ReadableFromPath` trait: load JSON from a local path or URL (blocking reqwest), default on failure |
 | `src/overlay_handler.rs` | **WIP.** On `ToggleUI` injects `tomb_helper_ui.dll` into the game (`hudhook::inject`), streams position, `CameraView`, a projection built from `CameraLens` and the transforms of objects matching `config.overlay` filters (rescanned every second) into shared memory each tick; sets `should_exit` to eject on toggle-off/drop. `TrackedCameraMatrix` (16 floats) |
-| `src/object_list.rs` | Reads the game's static instance array (`InstanceArray`, 0x120 byte records until a zero header): position, placement names, `cdc::TransformComponent` world matrix. Layout offsets are constants found in ROTTR Steam |
+| `src/object_list.rs` | Reads the game's static instance array (`InstanceArray`, 0x120 byte records until a zero header): position, placement names, world matrix (built from the instance's position + Rx*Ry*Rz Euler rotation, with only the scale from `cdc::TransformComponent`, which goes stale for Lara), and model bounds (`read_bounds`: component table -> DrawableComponent -> InstanceDrawable -> CommonRenderModelInstance -> CommonRenderModel -> `Mesh` header min/max). Layout offsets are constants found in ROTTR Steam |
 | `src/ui_ipc_data.rs` | Shared-memory IPC (`shared_memory` crate, os_id `"TombHelperIPC"`): `UiData`, lock-free `UiDoubleBuffer` (`set_next`/`current`), `SharedMemoryManager` (exe is owner) |
 | `src/lib.rs` | **WIP.** Injected overlay: `TombHelperHud` implements `ImguiRenderLoop`; shows position window, draws a near-plane-clipped wireframe box + name per `ObjectBox` and a circle at Lara. Calls `eject()` when `should_exit` is set |
 
@@ -95,7 +95,9 @@ User docs (hotkeys, config, cutscene timing generation) live in `README.md`.
   first row), +0xF0 projection (swapped for a narrower fov pass for ~1ms of every frame, so the overlay builds its own
   from +0x30/+0x48), +0x520 world-to-view. Matrices are row-major for row vectors and view space y
   points down the screen. World is Z up.
-- Real per-object bounds haven't been found yet (`SceneEntity` holds some AABBs, but at type-dependent offsets).
+- Model bounds are in each `Mesh` resource header ("Mesh" magic, +0x10 sphere centre, +0x20/+0x30 box min/max,
+  +0x50 sphere radius); terrain meshes are in world space, others in object space. Instances that aren't drawn
+  (triggers etc.) have no `InstanceDrawable`. Lara's instance is `PlayerInstance` (`Player+0x31A8`).
 
 ## Gotchas
 

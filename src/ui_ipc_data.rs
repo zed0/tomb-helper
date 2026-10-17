@@ -6,6 +6,16 @@ use crate::position::Position;
 pub const MAX_OBJECTS: usize = 64;
 pub const OBJECT_NAME_LENGTH: usize = 64;
 
+#[repr(u32)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum BoxKind {
+    // The object has no model, so the box is just `object_box_size`
+    Estimated,
+    // The bounds of the object's model
+    Model,
+    Lara,
+}
+
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
 pub struct ObjectBox {
@@ -14,6 +24,7 @@ pub struct ObjectBox {
     // Box corners in object space
     pub min: Position,
     pub max: Position,
+    pub kind: BoxKind,
     // Nul padded placement name
     pub name: [u8; OBJECT_NAME_LENGTH],
 }

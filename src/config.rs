@@ -111,6 +111,10 @@ fn default_object_box_size() -> f32 {
     50.0
 }
 
+fn default_lara_box() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct OverlayConfig {
     // Objects whose placement name contains any of these (case insensitive) get a box. "" matches everything.
@@ -119,9 +123,11 @@ pub struct OverlayConfig {
     // Only objects within this distance of Lara are shown
     #[serde(default = "default_object_radius")]
     pub object_radius: f32,
-    // Half width of the box drawn around each object (the real bounds aren't known yet)
+    // Half width of the box drawn around objects that don't have a model
     #[serde(default = "default_object_box_size")]
     pub object_box_size: f32,
+    #[serde(default = "default_lara_box")]
+    pub lara_box: bool,
 }
 
 impl Default for OverlayConfig {

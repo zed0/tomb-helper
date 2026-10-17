@@ -1,7 +1,7 @@
 use imgui::*;
 use hudhook::*;
 use hudhook::hooks::dx12::ImguiDx12Hooks;
-use crate::ui_ipc_data::{ObjectBox, SharedMemoryManager, UiData};
+use crate::ui_ipc_data::{BoxKind, ObjectBox, SharedMemoryManager, UiData};
 use crate::tracing::{error, warn};
 
 mod ui_ipc_data;
@@ -12,7 +12,8 @@ use nalgebra::{Matrix4, Vector3, Vector4};
 // Points closer to the camera plane than this (in clip space w) are clipped off
 const NEAR_CLIP_W: f32 = 1.0;
 
-const BOX_COLOUR: [f32; 4] = [0.0, 1.0, 0.0, 1.0];
+const MODEL_COLOUR: [f32; 4] = [0.0, 1.0, 0.0, 1.0];
+const ESTIMATED_COLOUR: [f32; 4] = [1.0, 1.0, 0.0, 1.0];
 const LARA_COLOUR: [f32; 4] = [1.0, 0.0, 1.0, 1.0];
 
 // The game stores matrices row-major for row vectors (`v * M`). Reading the same floats column-major
@@ -65,6 +66,11 @@ impl Projector {
 }
 
 fn draw_box(draw_list: &DrawListMut, projector: &Projector, object: &ObjectBox) {
+    let colour = match object.kind {
+        BoxKind::Model => MODEL_COLOUR,
+        BoxKind::Estimated => ESTIMATED_COLOUR,
+        BoxKind::Lara => LARA_COLOUR,
+    };
     let model = game_matrix(&object.transform);
     let (min, max) = (object.min, object.max);
     // Corner i uses max for each axis whose bit is set in i
@@ -83,7 +89,7 @@ fn draw_box(draw_list: &DrawListMut, projector: &Projector, object: &ObjectBox) 
         for axis in [1, 2, 4] {
             if a & axis == 0 {
                 if let Some((from, to)) = projector.project_line(corners[a], corners[a | axis]) {
-                    draw_list.add_line(from, to, BOX_COLOUR).thickness(1.5).build();
+                    draw_list.add_line(from, to, colour).thickness(1.5).build();
                 }
             }
         }
@@ -91,7 +97,7 @@ fn draw_box(draw_list: &DrawListMut, projector: &Projector, object: &ObjectBox) 
 
     let top = (corners[4] + corners[5] + corners[6] + corners[7]) / 4.0;
     if top.w >= NEAR_CLIP_W {
-        draw_list.add_text(projector.to_screen(top), BOX_COLOUR, object.name());
+        draw_list.add_text(projector.to_screen(top), colour, object.name());
     }
 }
 
