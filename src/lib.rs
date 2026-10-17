@@ -1,7 +1,7 @@
 use imgui::*;
 use hudhook::*;
 use hudhook::hooks::dx12::ImguiDx12Hooks;
-use crate::ui_ipc_data::{BoxKind, ObjectBox, SharedMemoryManager, UiData};
+use crate::ui_ipc_data::{BoxKind, Capsule, ObjectBox, SharedMemoryManager, UiData};
 use crate::tracing::{error, warn};
 
 mod ui_ipc_data;
@@ -11,6 +11,8 @@ use nalgebra::{Matrix4, Vector3, Vector4};
 
 // Points closer to the camera plane than this (in clip space w) are clipped off
 const NEAR_CLIP_W: f32 = 1.0;
+// Lines per circle when drawing capsules
+const CAPSULE_SEGMENTS: usize = 16;
 
 const MODEL_COLOUR: [f32; 4] = [0.0, 1.0, 0.0, 1.0];
 const ESTIMATED_COLOUR: [f32; 4] = [1.0, 1.0, 0.0, 1.0];
@@ -101,6 +103,44 @@ fn draw_box(draw_list: &DrawListMut, projector: &Projector, object: &ObjectBox) 
     }
 }
 
+fn draw_world_line(draw_list: &DrawListMut, projector: &Projector, a: Vector3<f32>, b: Vector3<f32>, colour: [f32; 4]) {
+    let identity = Matrix4::identity();
+    if let Some((from, to)) = projector.project_line(projector.to_clip(&identity, a), projector.to_clip(&identity, b)) {
+        draw_list.add_line(from, to, colour).thickness(1.5).build();
+    }
+}
+
+fn draw_capsule(draw_list: &DrawListMut, projector: &Projector, capsule: &Capsule, colour: [f32; 4]) {
+    let a = Vector3::new(capsule.a.x, capsule.a.y, capsule.a.z);
+    let b = Vector3::new(capsule.b.x, capsule.b.y, capsule.b.z);
+    let radius = capsule.radius;
+    let axis = (b - a).try_normalize(1e-4).unwrap_or_else(Vector3::z);
+    let u = axis.cross(&if axis.x.abs() < 0.9 { Vector3::x() } else { Vector3::y() }).normalize();
+    let v = axis.cross(&u);
+    let angle = |i: usize| i as f32 * std::f32::consts::TAU / CAPSULE_SEGMENTS as f32;
+
+    // A ring round each end of the cylinder, joined by four lines
+    let ring = |centre: Vector3<f32>, t: f32| centre + (u * t.cos() + v * t.sin()) * radius;
+    for i in 0..CAPSULE_SEGMENTS {
+        for end in [a, b] {
+            draw_world_line(draw_list, projector, ring(end, angle(i)), ring(end, angle(i + 1)), colour);
+        }
+    }
+    for i in (0..CAPSULE_SEGMENTS).step_by(CAPSULE_SEGMENTS / 4) {
+        draw_world_line(draw_list, projector, ring(a, angle(i)), ring(b, angle(i)), colour);
+    }
+
+    // Two half circles over each cap
+    for (end, outwards) in [(a, -axis), (b, axis)] {
+        for side in [u, v] {
+            let cap = |t: f32| end + (side * t.cos() + outwards * t.sin()) * radius;
+            for i in 0..CAPSULE_SEGMENTS / 2 {
+                draw_world_line(draw_list, projector, cap(angle(i)), cap(angle(i + 1)), colour);
+            }
+        }
+    }
+}
+
 struct TombHelperHud {
     ui_memory_manager: SharedMemoryManager,
     // Last complete copy, used when the exe was mid write
@@ -171,6 +211,9 @@ impl ImguiRenderLoop for TombHelperHud {
         let draw_list = ui.get_background_draw_list();
         for object in &ui_data.objects[..object_count] {
             draw_box(&draw_list, &projector, object);
+        }
+        for capsule in &ui_data.capsules[..ui_data.capsule_count.min(ui_data.capsules.len())] {
+            draw_capsule(&draw_list, &projector, capsule, LARA_COLOUR);
         }
 
         let lara = Vector3::new(ui_data.position.x, ui_data.position.y, ui_data.position.z);

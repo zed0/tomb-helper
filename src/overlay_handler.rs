@@ -1,3 +1,4 @@
+use crate::collision::{self, CapsuleShape};
 use crate::config::OverlayConfig;
 use crate::object_list::{self, Instance, ObjectList};
 use crate::position::Position;
@@ -11,7 +12,7 @@ use std::{env, fmt, io, time};
 use std::error::Error;
 use hudhook::inject::Process;
 use process_memory::{Architecture, CopyAddress, DataMember, Memory, Pid, ProcessHandle};
-use crate::ui_ipc_data::{BoxKind, ObjectBox, SharedMemoryManager, MAX_OBJECTS, OBJECT_NAME_LENGTH};
+use crate::ui_ipc_data::{BoxKind, ObjectBox, SharedMemoryManager, MAX_CAPSULES, MAX_OBJECTS, OBJECT_NAME_LENGTH};
 
 // How often to rescan the instance array for objects matching the filters
 const OBJECT_REFRESH_INTERVAL: time::Duration = time::Duration::from_secs(1);
@@ -30,6 +31,8 @@ pub struct OverlayHandler {
     player_instance_offsets: Option<Vec<usize>>,
     object_list: Option<ObjectList>,
     objects: Vec<(Instance, BoxKind)>,
+    // Lara's instance and her capsules in bone space
+    lara: Option<(usize, Vec<CapsuleShape>)>,
     last_object_refresh: Option<time::Instant>,
     ui_memory_manager: SharedMemoryManager,
 }
@@ -82,6 +85,7 @@ impl OverlayHandler {
             player_instance_offsets: address_offsets.get(&AddressType::PlayerInstance).cloned(),
             object_list: None,
             objects: vec![],
+            lara: None,
             last_object_refresh: None,
             ui_memory_manager,
         })
@@ -119,18 +123,25 @@ impl OverlayHandler {
         objects.sort_by(|a, b| distance(&a.position).total_cmp(&distance(&b.position)));
 
         let mut boxes = vec![];
-        if let (true, Some(offsets)) = (self.config.lara_box, &self.player_instance_offsets) {
+        self.lara = None;
+        if let (true, Some(offsets)) = (self.config.lara_collision, &self.player_instance_offsets) {
             let address = self.resolve(offsets)?;
-            boxes.push((
-                Instance {
-                    address,
-                    position: object_list::read_position(self.handle, address)?,
-                    name: "Lara".to_string(),
-                    full_name: String::new(),
-                    bounds: None,
-                },
-                BoxKind::Lara,
-            ));
+            let shapes = collision::read_capsule_shapes(self.handle, address)?;
+            if shapes.is_empty() {
+                // Better than nothing
+                boxes.push((
+                    Instance {
+                        address,
+                        position: object_list::read_position(self.handle, address)?,
+                        name: "Lara".to_string(),
+                        full_name: String::new(),
+                        bounds: None,
+                    },
+                    BoxKind::Lara,
+                ));
+            } else {
+                self.lara = Some((address, shapes));
+            }
         }
         boxes.extend(objects.into_iter().map(|o| (o, BoxKind::Model)));
         boxes.truncate(MAX_OBJECTS);
@@ -209,6 +220,15 @@ impl Handler for OverlayHandler {
             count += 1;
         }
         val.object_count = count;
+
+        val.capsule_count = 0;
+        if let Some((address, shapes)) = &self.lara {
+            let capsules = collision::place_capsules(self.handle, *address, shapes)?;
+            for (slot, capsule) in val.capsules.iter_mut().zip(capsules.iter().take(MAX_CAPSULES)) {
+                *slot = *capsule;
+            }
+            val.capsule_count = capsules.len().min(MAX_CAPSULES);
+        }
         manager.set_next(val);
         Ok(())
     }

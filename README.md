@@ -42,7 +42,7 @@ The default configuration is:
 	"cutscene_blacklist_file": "https://gist.githubusercontent.com/Atorizil/734a7649471f0fa0a2a9f92a167e294b/raw/Blacklist.json",
 	"cutscene_timing_file": "https://gist.githubusercontent.com/zed0/762a5790501af95189344834bc210616/raw/tomb-helper-timing-info.json",
 	"record_cutscene_timing": {"Off": {}},
-	"overlay": {"object_filters": ["campsite_base_trx-"], "object_radius": 5000.0, "object_box_size": 50.0, "lara_box": true}
+	"overlay": {"object_filters": ["campsite_base_trx-"], "object_radius": 5000.0, "object_box_size": 50.0, "lara_collision": true}
 }
 ```
 
@@ -109,7 +109,7 @@ It currently needs the `CameraView`, `CameraLens` and `InstanceArray` (and `Play
 - `object_filters`: objects whose name contains any of these (case insensitive) get a box, `[""]` shows everything. The default, `campsite_base_trx-`, matches each base camp (at its campfire)
 - `object_radius`: only objects this close to Lara are shown (the closest 64 are drawn)
 - `object_box_size`: objects with a model get a green box showing its bounds, the rest (triggers, markers, ...) get a yellow box this size (half width)
-- `lara_box`: also draw Lara's model bounds (in magenta)
+- `lara_collision`: also draw Lara's hit capsules (in magenta), which follow her pose
 
 ## Forcing a version
 
