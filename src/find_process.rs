@@ -138,6 +138,18 @@ pub fn is_process_running(pid: Pid) -> bool {
     }
 }
 
+#[cfg(windows)]
+pub fn close_handle(handle: process_memory::ProcessHandle) {
+    unsafe {
+        winapi::um::handleapi::CloseHandle(handle);
+    }
+}
+
+#[cfg(not(windows))]
+pub fn close_handle(_handle: process_memory::ProcessHandle) {
+    panic!("tomb-helper is only supported on Windows");
+}
+
 pub fn get_image_size(
     handle: process_memory::ProcessHandle,
     base_addr: usize,

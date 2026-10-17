@@ -5,7 +5,8 @@
 
 use crate::derive::format_offsets;
 use crate::find_process;
-use crate::process_details::{known_process_details, AddressType};
+use crate::offsets_file::{known_process_details, to_json, Hex};
+use crate::process_details::AddressType;
 use iced_x86::{Decoder, DecoderOptions, Formatter, Instruction, IntelFormatter, OpKind, Register};
 use process_memory::{CopyAddress, DataMember, Memory, Pid, ProcessHandle, TryIntoProcessHandle};
 use std::collections::{BTreeMap, HashMap};
@@ -308,7 +309,7 @@ pub fn watch(names: &[&str], version: Option<String>, seconds: u64, delay: u64) 
 
     let hits = record(pid, handle, base_addr, &addresses, seconds)?;
 
-    let mut lines = vec![];
+    let mut witnesses: BTreeMap<AddressType, Vec<Hex>> = BTreeMap::new();
     for ((address_type, address), hits) in watched.iter().zip(&hits) {
         let last_offset = *details.address_offsets[address_type].last().unwrap() as i64;
         println!("{:?} at {:#X}:", address_type, address);
@@ -330,21 +331,16 @@ pub fn watch(names: &[&str], version: Option<String>, seconds: u64, delay: u64) 
         best.sort_by_key(|(rva, hit)| (hit.displacement != last_offset, std::cmp::Reverse(hit.count), **rva));
         best.truncate(MAX_WITNESSES);
         if !best.is_empty() {
-            let rvas: Vec<String> = best.iter().map(|(rva, _)| format!("{:#X}", rva)).collect();
-            lines.push(format!("        (AddressType::{:?}, vec![{}]),", address_type, rvas.join(", ")));
+            witnesses.insert(*address_type, best.iter().map(|(rva, _)| Hex(**rva)).collect());
         }
     }
-    if !lines.is_empty() {
+    if !witnesses.is_empty() {
         println!(
-            "\n// Instructions that access each value, for `derive` to match in new versions. Add to the\n\
-             // {} entry (merging with any existing witnesses):",
+            "\n// Instructions that access each value, for `derive` to match in new versions. Add these to\n\
+             // the \"witnesses\" of {} in the offsets file:",
             details.version.version
         );
-        println!(".with_witnesses(vec![");
-        for line in lines {
-            println!("{}", line);
-        }
-        println!("])");
+        println!("\"witnesses\": {}", to_json(&witnesses));
     }
     Ok(())
 }

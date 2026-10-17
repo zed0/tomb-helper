@@ -5,7 +5,8 @@ use crate::code_trace::{Access, CallResolver, Tracer};
 use crate::derive::{format_offsets, print_entry, References};
 use crate::find_process;
 use crate::pe_image::PeImage;
-use crate::process_details::{known_process_details, AddressType, ProcessDetails};
+use crate::offsets_file::known_process_details;
+use crate::process_details::{AddressType, ProcessDetails};
 use process_memory::{Architecture, CopyAddress, Pid, ProcessHandle};
 use rayon::prelude::*;
 use std::collections::HashMap;
@@ -263,10 +264,11 @@ pub fn find_code_chains(version: Option<String>) -> Result<(), String> {
     }
 
     println!(
-        "\n// Code chains for {} {}. Check them with `tomb-helper probe` after reloading.",
+        "\n// Code chains for {} {}, to replace its entry in the offsets file. Check them with\n\
+         // `tomb-helper probe` after restarting the game.",
         details.name, details.version.version
     );
-    print_entry(&details, &image, &details.version.version, &lines);
+    print_entry(&details, &image, &details.version.version, &lines, &details.witnesses);
     Ok(())
 }
 

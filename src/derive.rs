@@ -15,9 +15,11 @@
 use crate::chains;
 use crate::code_trace::{Access, Tracer};
 use crate::find_process;
+use crate::offsets_file::{to_json, Hex, OffsetsFile, OffsetsSource, VersionEntry};
 use crate::pe_image::PeImage;
 use crate::witness;
-use crate::process_details::{known_process_details, AddressType, ProcessDetails};
+use crate::offsets_file::known_process_details;
+use crate::process_details::{AddressType, ProcessDetails};
 use process_memory::Architecture;
 use rayon::prelude::*;
 use std::collections::{BTreeMap, HashMap};
@@ -38,6 +40,10 @@ const SPANS: [usize; 2] = [0x40, 0x400];
 const USAGE: &str = "\
 Usage:
   tomb-helper                         Run normally
+  tomb-helper export-offsets [<out.json>]
+      Write the offsets tomb-helper is using to a file to edit. By default this is
+      tomb-helper-offsets.json next to the exe, which tomb-helper then uses instead of its built in
+      offsets, and reloads whenever it changes.
   tomb-helper dump [<out.bin>]        Save the running game's unpacked image for later use
   tomb-helper derive <from> <to> [--from-version <version>]
       Derive the offsets for <to> using the known offsets for <from>.
@@ -82,6 +88,8 @@ pub fn run(args: &[String]) -> Result<(), String> {
     match positional.as_slice() {
         ["watch-raw", pid, address] => crate::watch::watch_raw(pid, address, seconds),
         ["watch", names @ ..] => crate::watch::watch(names, version, seconds, delay),
+        ["export-offsets"] => export_offsets(None),
+        ["export-offsets", out] => export_offsets(Some(out)),
         ["dump"] => dump(None),
         ["dump", out] => dump(Some(out)),
         ["derive", from, to] => derive(from, to, version.as_deref()),
@@ -90,6 +98,23 @@ pub fn run(args: &[String]) -> Result<(), String> {
         ["trace", image, address] => trace(image, address),
         _ => Err(USAGE.to_string()),
     }
+}
+
+fn export_offsets(out: Option<&str>) -> Result<(), String> {
+    let path = match out {
+        Some(out) => Path::new(out).to_path_buf(),
+        None => OffsetsSource::new().path,
+    };
+    if path.exists() {
+        return Err(format!("{:?} already exists, not overwriting it", path));
+    }
+    let file = OffsetsFile {
+        versions: known_process_details().iter().map(VersionEntry::from_details).collect(),
+    };
+    std::fs::write(&path, to_json(&file) + "
+").map_err(|e| format!("Could not write {:?}: {}", path, e))?;
+    println!("Wrote {} versions to {:?}", file.versions.len(), path);
+    Ok(())
 }
 
 fn running_game() -> Result<(PeImage, String), String> {
@@ -571,42 +596,45 @@ fn describe(sources: &[LevelSource]) -> String {
         .join(", ")
 }
 
+/// Prints a version entry for the offsets file. Offsets that aren't `sure` go under `unverified`,
+/// which tomb-helper ignores, so they can be checked before being moved into `offsets`.
 pub fn print_entry(
     details: &ProcessDetails,
     image: &PeImage,
     version: &str,
     lines: &[(AddressType, Option<Vec<usize>>, bool, String)],
+    witnesses: &HashMap<AddressType, Vec<usize>>,
 ) {
-    println!("ProcessDetails::new(");
-    println!("    \"{}\",", details.name);
-    println!("    \"{}\",", details.executable_name);
-    println!("    VersionIdentifier {{");
-    println!("        version: String::from(\"{}\"),", version);
-    println!("        image_size: Some({}),", image.size_of_image());
-    println!("    }},");
-    println!(
-        "    Architecture::{},",
-        if image.is_64 { "Arch64Bit" } else { "Arch32Bit" }
-    );
-    println!("    vec![");
     for (address_type, chain, sure, note) in lines {
-        let note = if note.is_empty() { String::new() } else { format!(" // {}", note) };
-        match chain {
-            Some(chain) => println!(
-                "        {}(AddressType::{:?}, {}),{}",
-                if *sure { "" } else { "// UNSURE " },
-                address_type,
-                format_offsets(chain),
-                note,
-            ),
-            None => println!("        // (AddressType::{:?}, not found),{}", address_type, note),
-        }
+        println!(
+            "//   {:<17} {}{}",
+            format!("{:?}", address_type),
+            match (chain, sure) {
+                (None, _) => "[NOT FOUND] ",
+                (Some(_), false) => "[UNSURE] ",
+                _ => "",
+            },
+            note
+        );
     }
-    println!("    ]");
-    println!("    .iter()");
-    println!("    .cloned()");
-    println!("    .collect(),");
-    println!("),");
+    let hex = |chain: &Vec<usize>| chain.iter().map(|o| Hex(*o)).collect::<Vec<Hex>>();
+    let entry = VersionEntry {
+        game: details.name.clone(),
+        executable: details.executable_name.clone(),
+        version: version.to_string(),
+        image_size: Some(image.size_of_image()),
+        bits: if image.is_64 { 64 } else { 32 },
+        offsets: lines
+            .iter()
+            .filter_map(|(t, chain, sure, _)| chain.as_ref().filter(|_| *sure).map(|c| (*t, hex(c))))
+            .collect(),
+        witnesses: witnesses.iter().map(|(t, w)| (*t, hex(w))).collect(),
+        unverified: lines
+            .iter()
+            .filter_map(|(t, chain, sure, _)| chain.as_ref().filter(|_| !*sure).map(|c| (*t, hex(c))))
+            .collect(),
+    };
+    println!("{}", to_json(&entry));
 }
 
 fn derive(from: &str, to: &str, from_version: Option<&str>) -> Result<(), String> {
@@ -720,10 +748,11 @@ fn derive(from: &str, to: &str, from_version: Option<&str>) -> Result<(), String
         "\n// Derived from {} {}. Levels marked `code` were matched in the game's code, `shifted`\n\
          // levels moved like a neighbouring field, `witness` levels came from matching instructions\n\
          // seen accessing the value, and `copied` levels had no evidence.\n\
-         // Check the values in game with `tomb-helper probe`, and fill in the version string.",
+         // Add this to the offsets file, fill in the version string, and check the values in game\n\
+         // with `tomb-helper probe`.",
         details.name, details.version.version
     );
-    print_entry(&details, &new, "TODO", &lines);
+    print_entry(&details, &new, "TODO", &lines, &HashMap::new());
     Ok(())
 }
 
