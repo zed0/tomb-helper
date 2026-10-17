@@ -64,9 +64,44 @@ Currently the available actions are:
 
 The available keys are listed in the [livesplit_hotkey library documentation](https://docs.rs/livesplit-hotkey/0.5.0/livesplit_hotkey/linux/enum.KeyCode.html).
 
+## Offsets file
+
+The memory offsets for each supported game version are built into tomb-helper (from [`offsets.json`](./offsets.json)). To change them or add a new version without rebuilding, run
+
+```
+tomb-helper export-offsets
+```
+
+which writes them to `tomb-helper-offsets.json` next to `tomb-helper.exe`. While that file exists tomb-helper uses it instead, and reloads it whenever it changes, even while connected to a game, so you can edit offsets and test them straight away. If the file has a mistake in it the error is printed and the previous offsets are kept until it's fixed. Delete the file to go back to the built in offsets.
+
+Each version looks like:
+
+```json
+{
+  "game": "Shadow of the Tomb Raider",
+  "executable": "SOTTR.exe",
+  "version": "(Steam) v1.0 build 492.0_64",
+  "image_size": 73662464,
+  "bits": 64,
+  "offsets": {
+    "XPosition": ["0x14B5BD8", "0x0", "0x33E8", "0x10"],
+    ...
+  },
+  "witnesses": {
+    "XPosition": ["0x62E5A9", "0x12AFCC"],
+    ...
+  }
+}
+```
+
+- `version` is the version string in the game's memory, read using the `Version` offsets, unless `image_size` is given, in which case the size of the game's exe in memory identifies the version instead (Steam and Epic builds share version strings)
+- `offsets` are pointer chains: the first is relative to the game's exe, the rest are followed as pointers. Values a version doesn't have can be left out, and features that need them won't load
+- `witnesses` are optional, see [Finding offsets for a new game version](#finding-offsets-for-a-new-game-version)
+- `unverified` is ignored, and is where the tools put offsets they couldn't confirm
+
 ## Forcing a version
 
-There is an experimental feature to force tomb-helper to use the memory offsets for a specific version of the game. This can be done by specifying the `force_version` key with the version you want. These are chosen from the [`process_details.rs` file](./src/process_details.rs) and must match the version in the config file **exactly**.
+There is an experimental feature to force tomb-helper to use the memory offsets for a specific version of the game. This can be done by specifying the `force_version` key with the version you want. These are chosen from the [offsets file](#offsets-file) and must match the version in the config file **exactly**.
 
 For example
 ```json
@@ -120,20 +155,20 @@ tomb-helper derive <from> <to> [--from-version <version>]
 
 `<from>` and `<to>` are paths to the game's exe, or `running` to use the game that is currently running. Games protected by Denuvo (e.g. Shadow of the Tomb Raider v1.0 build 234.1) are encrypted on disk, so for those launch the game, wait for the main menu, and use `running`, or save a copy with `tomb-helper dump [<out.bin>]` and pass that file instead.
 
-The version of `<from>` is detected from its image size where possible, otherwise pass `--from-version` with a version from [`process_details.rs`](./src/process_details.rs), e.g.
+The version of `<from>` is detected from its image size where possible, otherwise pass `--from-version` with a version from the [offsets file](#offsets-file), e.g.
 
 ```
 tomb-helper derive "C:\Games\Shadow of the Tomb Raider 492.0\SOTTR.exe" running
 tomb-helper derive sottr-234.1.bin "C:\Games\Shadow of the Tomb Raider\SOTTR.exe" --from-version "v1.0 build 234.1_64"
 ```
 
-It prints a `ProcessDetails::new(...)` entry to add to `process_details.rs`, with a comment per offset list saying where each level came from:
+It prints a version entry to add to the [offsets file](#offsets-file), with a note per offset list saying where each level came from:
 
 - `code`: the game's code uses this offset in both versions, in matching places
 - `shifted`: the code doesn't use this offset directly, but a neighbouring field moved by this much
 - `copied`: no evidence, kept as it was in `<from>`
 
-Entries marked `UNSURE` had conflicting matches or a copied level. The version string needs filling in by hand. Check the result in game with `tomb-helper probe [--watch]`, which prints the current value of every offset.
+Offsets marked `UNSURE` had conflicting matches or a copied level, and are put under `unverified` for you to check. The version string needs filling in by hand. Check the result in game with `tomb-helper probe [--watch]`, which prints the current value of every offset.
 
 Derivation works best when the offsets in `<from>` follow the same pointer chains as the game's own code. Pointer scanners tend to find arbitrary chains instead, which can't be matched up between versions. To find the chains the code uses, load into a level (and start a cutscene for the cutscene values) with a known version running, then run:
 
@@ -149,6 +184,6 @@ For those, record which instructions access the value:
 tomb-helper watch CutscenePrompt CutsceneStatus CutsceneLength --delay 15 --seconds 8
 ```
 
-This attaches to the game as a debugger and puts hardware breakpoints on up to 4 values, then detaches. The game pauses when it isn't focused, so use `--delay` to give yourself time to switch back to it (and get the values in use, e.g. start a cutscene). It prints a `.with_witnesses(...)` block to add to that version's entry; `derive` matches those instructions in the new build to find where each field moved to (`witness` in its output).
+This attaches to the game as a debugger and puts hardware breakpoints on up to 4 values, then detaches. The game pauses when it isn't focused, so use `--delay` to give yourself time to switch back to it (and get the values in use, e.g. start a cutscene). It prints a `"witnesses"` block to add to that version's entry in the offsets file; `derive` matches those instructions in the new build to find where each field moved to (`witness` in its output).
 
 `tomb-helper trace <exe> <static address>` prints the chains the code accesses from every reference to a static address, which helps when investigating by hand.

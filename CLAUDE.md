@@ -14,8 +14,8 @@ User docs (hotkeys, config, cutscene timing generation) live in `README.md`.
 
 ## Runtime flow (`src/main.rs`)
 
-1. `main()` hands off to `derive::run` if given any CLI args; otherwise loads config, prints hotkeys, then polls every 100ms with `find_process::find_process(...)`.
-2. On a match, `connect()` builds a `Vec<Box<dyn Handler>>`:
+1. `main()` hands off to `derive::run` if given any CLI args; otherwise loads config and offsets (`OffsetsSource`), prints hotkeys, then polls every 100ms with `find_process::find_process(...)`, reloading the offsets when the file changes.
+2. On a match, `connect()` builds a `Vec<Box<dyn Handler>>` (`create_handlers`):
    - `CutsceneTimingGeneratorHandler` **or** `CutsceneHandler` (chosen by `config.record_cutscene_timing`)
    - `PositionHandler::new_position_handler` (Lara position) and `::new_look_at_handler` (ROTTR look-at)
    - Each constructor returns `None` if the game version lacks a required `AddressType`, so features
@@ -24,6 +24,8 @@ User docs (hotkeys, config, cutscene timing generation) live in `README.md`.
    `Action`s, sent over an mpsc channel.
 4. Busy loop: dispatch any received `Action` to every handler's `handle_action`, then call `handle_tick`
    on all. Exits on game process exit (`is_process_running`) or SIGINT. Errors are just `eprintln!`ed.
+5. Every 500ms it checks the offsets file; if the running version's offsets changed the handlers are recreated
+   (losing their state), and if the game no longer matches any version it disconnects.
 
 ## File index
 
@@ -33,7 +35,9 @@ User docs (hotkeys, config, cutscene timing generation) live in `README.md`.
 | `src/config.rs` | `Config` (serde), loaded from `tomb-helper.json` next to the exe; default hotkeys, default gist URLs, `CutsceneTiming::On/Off` |
 | `src/action.rs` | `Action` enum — every hotkey-bindable action. Movement actions carry `distance` (default 100.0) |
 | `src/handler.rs` | `Handler` trait: `handle_tick`, `handle_action` |
-| `src/process_details.rs` | **Per-game-version memory offsets.** `known_process_details()` table (optionally `.with_witnesses(...)` from `watch`, used only by `derive`), `AddressType` enum, `VersionIdentifier` (version string + optional PE image size to tell Steam/Epic apart) |
+| `offsets.json` | **Per-game-version memory offsets** (built into the exe with `include_str!`). Hex strings, `bits`, optional `image_size` (to tell Steam/Epic apart), optional `witnesses` (from `watch`, only used by `derive`), ignored `unverified` |
+| `src/offsets_file.rs` | JSON schema (`OffsetsFile`/`VersionEntry`/`Hex`, `deny_unknown_fields` to catch typos), `OffsetsSource` (`tomb-helper-offsets.json` next to the exe overrides the built in file; `changed()` for hot reload), `known_process_details()` for the CLI tools, `to_json` (one line per offset list) |
+| `src/process_details.rs` | Types only: `AddressType` enum (serde names are the JSON keys), `ProcessDetails`, `VersionIdentifier` |
 | `src/derive.rs` | CLI dispatch (`dump`/`derive`/`chains`/`probe`/`trace`/`watch`). `derive`: fuzzy-matches code references between builds to find static addresses, then aligns `code_trace` accesses at matched sites to map each chain level (`code`/`witness`/`shifted`/`copied`) |
 | `src/code_trace.rs` | `Tracer`: data-flow trace from an instruction using a static address, following pointer loads, branches, direct calls (args + returned `rax`) and, with a live `CallResolver`, virtual calls; produces `Access` chains in table form |
 | `src/watch.rs` | `watch`: attaches as a debugger (`DebugActiveProcess`), sets DR0-3 data breakpoints on up to 4 values, records accessing instructions ("witnesses"), clears and detaches. 64-bit only. Hidden `watch-raw <pid> <addr>` for testing the debugger on any process |
@@ -52,10 +56,11 @@ User docs (hotkeys, config, cutscene timing generation) live in `README.md`.
 
 ## Common changes
 
-- **Support a new game version:** run `tomb-helper derive <known exe> running` to get most of the entry, then add a `ProcessDetails::new(...)` entry in `known_process_details()`
-  (`src/process_details.rs`). Use `image_size: Some(..)` when the version string is shared between
-  stores. Only include the `AddressType`s you've found — handlers needing missing ones won't load.
-- **Add a new memory value:** add an `AddressType` variant, add offsets per version, read it with
+- **Support a new game version:** run `tomb-helper derive <known exe> running` to get most of the entry, then add it to
+  `offsets.json` (test it first in `tomb-helper-offsets.json` next to the exe, which hot reloads). Use `image_size`
+  when the version string is shared between stores. Only include the `AddressType`s you've found — handlers
+  needing missing ones won't load.
+- **Add a new memory value:** add an `AddressType` variant, add offsets per version in `offsets.json`, read it with
   `TrackedMemory::new(default, offsets.clone(), arch, base_addr)`.
 - **Add a hotkey action:** add a variant to `Action` (`src/action.rs`), handle it in the relevant
   handler's `handle_action`, optionally add a default in `default_hotkeys()` (`src/config.rs`), and

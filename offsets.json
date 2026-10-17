@@ -1,0 +1,246 @@
+{
+  "versions": [
+    {
+      "game": "Tomb Raider 2013",
+      "executable": "TombRaider.exe",
+      "version": "v1.01.748.0",
+      "bits": 32,
+      "offsets": {
+        "Version": ["0x10E6598"],
+        "XPosition": ["0xF39E18", "0x0"],
+        "YPosition": ["0xF39E18", "0x4"],
+        "ZPosition": ["0xF39E18", "0x8"],
+        "CameraSin": ["0x211D698", "0x50"],
+        "CameraCos": ["0x211D698", "0x54"]
+      }
+    },
+    {
+      "game": "Tomb Raider 2013",
+      "executable": "TombRaider.exe",
+      "version": "v1.1 build 838.0_32",
+      "bits": 32,
+      "offsets": {
+        "Version": ["0x1DDBBF4", "0xF0"],
+        "XPosition": ["0xA788F0", "0x0"],
+        "YPosition": ["0xA788F0", "0x4"],
+        "ZPosition": ["0xA788F0", "0x8"],
+        "CameraSin": ["0x150ABC", "0x4C4"],
+        "CameraCos": ["0x150ABC", "0x4C8"]
+      }
+    },
+    {
+      "game": "Tomb Raider 2013",
+      "executable": "TombRaider.exe",
+      "version": "(Steam) v1.01.0.0",
+      "image_size": 38543360,
+      "bits": 32,
+      "offsets": {
+        "Version": ["0x107C898"],
+        "XPosition": ["0xA788F0", "0x0"],
+        "YPosition": ["0xA788F0", "0x4"],
+        "ZPosition": ["0xA788F0", "0x8"],
+        "CameraSin": ["0x150C8C", "0x4C4"],
+        "CameraCos": ["0x150C8C", "0x4C8"]
+      }
+    },
+    {
+      "game": "Tomb Raider 2013",
+      "executable": "TombRaider.exe",
+      "version": "(Epic Games) v1.01.0.0",
+      "image_size": 38535168,
+      "bits": 32,
+      "offsets": {
+        "Version": ["0x107B3D8"],
+        "XPosition": ["0xA77660", "0x0"],
+        "YPosition": ["0xA77660", "0x4"],
+        "ZPosition": ["0xA77660", "0x8"],
+        "CameraSin": ["0x20CB4A0", "0x460"],
+        "CameraCos": ["0x20CB4A0", "0x464"]
+      }
+    },
+    {
+      "game": "Rise of the Tomb Raider",
+      "executable": "ROTTR.exe",
+      "version": "v1.0 build 820.0_64",
+      "bits": 64,
+      "offsets": {
+        "Version": ["0x1066B80", "0x90", "0x238", "0x0"],
+        "XPosition": ["0x1082AB8", "0x10"],
+        "YPosition": ["0x1082AB8", "0x14"],
+        "ZPosition": ["0x1082AB8", "0x18"],
+        "XLookAt": ["0x15A4F88", "0x140", "0x80"],
+        "YLookAt": ["0x15A4F88", "0x140", "0x84"],
+        "ZLookAt": ["0x15A4F88", "0x140", "0x88"],
+        "CameraSin": ["0x2DA2220", "0x490"],
+        "CameraCos": ["0x2DA2220", "0x494"]
+      }
+    },
+    {
+      "game": "Rise of the Tomb Raider",
+      "executable": "ROTTR.exe",
+      "version": "v1.0 build 1027.0_64",
+      "bits": 64,
+      "offsets": {
+        "Version": ["0x2E785F8", "0x1E0"],
+        "XPosition": ["0x10FC8C8", "0x10"],
+        "YPosition": ["0x10FC8C8", "0x14"],
+        "ZPosition": ["0x10FC8C8", "0x18"],
+        "CameraSin": ["0x2E1CC98", "0x70"],
+        "CameraCos": ["0x2E1CC98", "0x74"]
+      }
+    },
+    {
+      "game": "Rise of the Tomb Raider",
+      "executable": "ROTTR.exe",
+      "version": "(Steam) v1.0 build 0.0_64",
+      "image_size": 58654720,
+      "bits": 64,
+      "offsets": {
+        "Version": ["0x2E77658", "0x1E0"],
+        "XPosition": ["0x100C6B0", "0x0", "0x31A8", "0x10"],
+        "YPosition": ["0x100C6B0", "0x0", "0x31A8", "0x14"],
+        "ZPosition": ["0x100C6B0", "0x0", "0x31A8", "0x18"],
+        "CameraSin": ["0x2E1BD08", "0x70"],
+        "CameraCos": ["0x2E1BD08", "0x74"]
+      },
+      "witnesses": {
+        "XPosition": ["0x5B68A1", "0x84BF7C", "0x84C113", "0x113C61", "0x3DEDFC", "0x622FEB", "0x84B38D", "0x44C23E"],
+        "CameraSin": ["0x2927FC", "0x87B864", "0x480153", "0x2979DA", "0x297B83", "0x47FCEB", "0x87B806"]
+      }
+    },
+    {
+      "game": "Rise of the Tomb Raider",
+      "executable": "ROTTR.exe",
+      "version": "(Epic Games) v1.0 build 1027.0_64",
+      "image_size": 57122816,
+      "bits": 64,
+      "offsets": {
+        "Version": ["0x2CF88E8", "0x1F8"],
+        "XPosition": ["0x10E6DD8", "0x10"],
+        "YPosition": ["0x10E6DD8", "0x14"],
+        "ZPosition": ["0x10E6DD8", "0x18"],
+        "CameraSin": ["0x2CA8C90", "0x4E0"],
+        "CameraCos": ["0x2CA8C90", "0x4E4"]
+      }
+    },
+    {
+      "game": "Shadow of the Tomb Raider",
+      "executable": "SOTTR.exe",
+      "version": "v1.0 build 234.1_64",
+      "bits": 64,
+      "offsets": {
+        "Version": ["0x3621B00", "0xD8", "0xB70"],
+        "XPosition": ["0x141E298", "0x0", "0x33C8", "0x10"],
+        "YPosition": ["0x141E298", "0x0", "0x33C8", "0x14"],
+        "ZPosition": ["0x141E298", "0x0", "0x33C8", "0x18"],
+        "CameraSin": ["0x36079A0", "0x70"],
+        "CameraCos": ["0x36079A0", "0x74"],
+        "CutscenePrompt": ["0x141B8C0", "0x10"],
+        "CutsceneStatus": ["0x141B8C0", "0x129"],
+        "CutsceneTimeline": ["0x141B8C0", "0x60"],
+        "CutsceneLength": ["0x141B8A0", "0x0", "0x20"],
+        "CutsceneId": ["0x360E0D0", "0x0", "0x120", "0x10", "0x1D4"]
+      }
+    },
+    {
+      "game": "Shadow of the Tomb Raider",
+      "executable": "SOTTR.exe",
+      "version": "v1.0 build 298.0_64",
+      "bits": 64,
+      "offsets": {
+        "Version": ["0x36B7BB0", "0xD8", "0xB60"],
+        "XPosition": ["0x2FF3470"],
+        "YPosition": ["0x2FF3474"],
+        "ZPosition": ["0x2FF3478"],
+        "CutscenePrompt": ["0x14951C0", "0x10"],
+        "CutsceneStatus": ["0x14951C0", "0x129"],
+        "CutsceneTimeline": ["0x14951C0", "0x60"],
+        "CutsceneLength": ["0x14951C0", "0x48", "0x10", "0x8"],
+        "CutsceneId": ["0x3693F10", "0x68", "0x2C0", "0xA8", "0x22C"]
+      }
+    },
+    {
+      "game": "Shadow of the Tomb Raider",
+      "executable": "SOTTR.exe",
+      "version": "v1.0 build 458.0_64",
+      "bits": 64,
+      "offsets": {
+        "Version": ["0x36C1B60", "0x108", "0x30", "0x30"],
+        "XPosition": ["0x14690B8", "0x10"],
+        "YPosition": ["0x14690B8", "0x14"],
+        "ZPosition": ["0x14690B8", "0x18"],
+        "CameraSin": ["0x36A7A00", "0x70"],
+        "CameraCos": ["0x36A7A00", "0x74"],
+        "CutscenePrompt": ["0x14AF140", "0x10"],
+        "CutsceneStatus": ["0x14AF140", "0x129"],
+        "CutsceneTimeline": ["0x14AF140", "0x60"],
+        "CutsceneLength": ["0x14AF120", "0x0", "0x20"],
+        "CutsceneId": ["0x36AE130", "0x0", "0x120", "0x10", "0x334"]
+      }
+    },
+    {
+      "game": "Shadow of the Tomb Raider",
+      "executable": "SOTTR.exe",
+      "version": "v1.0 build 489.0_64",
+      "bits": 64,
+      "offsets": {
+        "Version": ["0x36C5B40", "0x108", "0x258", "0x0"],
+        "XPosition": ["0x146D0B8", "0x10"],
+        "YPosition": ["0x146D0B8", "0x14"],
+        "ZPosition": ["0x146D0B8", "0x18"],
+        "CameraSin": ["0x36ABA00", "0x70"],
+        "CameraCos": ["0x36ABA00", "0x74"],
+        "CutscenePrompt": ["0x14B3140", "0x10"],
+        "CutsceneStatus": ["0x14B3140", "0x129"],
+        "CutsceneTimeline": ["0x14B3140", "0x60"],
+        "CutsceneLength": ["0x14B3120", "0x0", "0x20"],
+        "CutsceneId": ["0x36B2110", "0x0", "0x120", "0x10", "0x334"]
+      }
+    },
+    {
+      "game": "Shadow of the Tomb Raider",
+      "executable": "SOTTR.exe",
+      "version": "(Epic Games) v1.0 build 492.0_64",
+      "image_size": 72794112,
+      "bits": 64,
+      "offsets": {
+        "Version": ["0x35179A0", "0x108", "0x258", "0x0"],
+        "XPosition": ["0x1451F78", "0x10"],
+        "YPosition": ["0x1451F78", "0x14"],
+        "ZPosition": ["0x1451F78", "0x18"],
+        "CutscenePrompt": ["0x1497AC0", "0x10"],
+        "CutsceneStatus": ["0x1497AC0", "0x129"],
+        "CutsceneTimeline": ["0x1497AC0", "0x60"],
+        "CutsceneLength": ["0x1497AA0", "0x0", "0x20"],
+        "CutsceneId": ["0x3503F78", "0x0", "0xB78", "0x574"]
+      }
+    },
+    {
+      "game": "Shadow of the Tomb Raider",
+      "executable": "SOTTR.exe",
+      "version": "(Steam) v1.0 build 492.0_64",
+      "image_size": 73662464,
+      "bits": 64,
+      "offsets": {
+        "Version": ["0x36C5B40", "0x108", "0x258", "0x0"],
+        "XPosition": ["0x14B5BD8", "0x0", "0x33E8", "0x10"],
+        "YPosition": ["0x14B5BD8", "0x0", "0x33E8", "0x14"],
+        "ZPosition": ["0x14B5BD8", "0x0", "0x33E8", "0x18"],
+        "CameraSin": ["0x36ABA00", "0x70"],
+        "CameraCos": ["0x36ABA00", "0x74"],
+        "CutscenePrompt": ["0x14B3140", "0x10"],
+        "CutsceneStatus": ["0x14B3140", "0x129"],
+        "CutsceneTimeline": ["0x14B3140", "0x60"],
+        "CutsceneLength": ["0x14B3120", "0x0", "0x20"],
+        "CutsceneId": ["0x36B2118", "0x0", "0xB78", "0x574"]
+      },
+      "witnesses": {
+        "XPosition": ["0x62E5A9", "0x12AFCC", "0x4358BC", "0x6B91E0", "0x4D4D84", "0x49AF8A", "0x63536D", "0x8BFD85"],
+        "CameraSin": ["0x2D1CD8", "0x9D7120", "0x2D8729", "0x2D88C7", "0x501F66", "0x9D70C3", "0x50233C"],
+        "CutscenePrompt": ["0x417CA2", "0x41B7EF", "0x41A821", "0x41B887"],
+        "CutsceneStatus": ["0x413E10"],
+        "CutsceneLength": ["0x41AD75"]
+      }
+    }
+  ]
+}
