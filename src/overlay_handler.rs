@@ -11,7 +11,7 @@ use std::{env, fmt, io, time};
 use std::error::Error;
 use hudhook::inject::Process;
 use process_memory::{Architecture, CopyAddress, DataMember, Memory, Pid, ProcessHandle};
-use crate::ui_ipc_data::{ObjectBox, SharedMemoryManager, MAX_OBJECTS, OBJECT_NAME_LENGTH};
+use crate::ui_ipc_data::{BoxKind, ObjectBox, SharedMemoryManager, MAX_OBJECTS, OBJECT_NAME_LENGTH};
 
 // How often to rescan the instance array for objects matching the filters
 const OBJECT_REFRESH_INTERVAL: time::Duration = time::Duration::from_secs(1);
@@ -27,8 +27,9 @@ pub struct OverlayHandler {
     camera_view: TrackedCameraMatrix,
     camera_lens: TrackedMemory<[f32; 8]>,
     instance_array_offsets: Vec<usize>,
+    player_instance_offsets: Option<Vec<usize>>,
     object_list: Option<ObjectList>,
-    objects: Vec<Instance>,
+    objects: Vec<(Instance, BoxKind)>,
     last_object_refresh: Option<time::Instant>,
     ui_memory_manager: SharedMemoryManager,
 }
@@ -78,6 +79,7 @@ impl OverlayHandler {
                 *base_addr,
             ),
             instance_array_offsets: address_offsets.get(&AddressType::InstanceArray)?.clone(),
+            player_instance_offsets: address_offsets.get(&AddressType::PlayerInstance).cloned(),
             object_list: None,
             objects: vec![],
             last_object_refresh: None,
@@ -85,14 +87,17 @@ impl OverlayHandler {
         })
     }
 
+    fn resolve(&self, offsets: &Vec<usize>) -> io::Result<usize> {
+        let mut offsets = offsets.clone();
+        offsets[0] += self.base_addr;
+        DataMember::<u8>::new_offset(self.handle, offsets)
+            .set_arch(self.arch)
+            .get_offset()
+    }
+
     fn refresh_objects(&mut self) -> Result<(), Box<dyn Error>> {
         if self.object_list.is_none() {
-            let mut offsets = self.instance_array_offsets.clone();
-            offsets[0] += self.base_addr;
-            let array_address = DataMember::<u8>::new_offset(self.handle, offsets)
-                .set_arch(self.arch)
-                .get_offset()?;
-            self.object_list = Some(ObjectList::new(array_address));
+            self.object_list = Some(ObjectList::new(self.resolve(&self.instance_array_offsets)?));
         }
 
         let filters: Vec<String> = self.config.object_filters.iter().map(|f| f.to_lowercase()).collect();
@@ -112,8 +117,32 @@ impl OverlayHandler {
             })
             .collect();
         objects.sort_by(|a, b| distance(&a.position).total_cmp(&distance(&b.position)));
-        objects.truncate(MAX_OBJECTS);
-        self.objects = objects;
+
+        let mut boxes = vec![];
+        if let (true, Some(offsets)) = (self.config.lara_box, &self.player_instance_offsets) {
+            let address = self.resolve(offsets)?;
+            boxes.push((
+                Instance {
+                    address,
+                    position: object_list::read_position(self.handle, address)?,
+                    name: "Lara".to_string(),
+                    full_name: String::new(),
+                    bounds: None,
+                },
+                BoxKind::Lara,
+            ));
+        }
+        boxes.extend(objects.into_iter().map(|o| (o, BoxKind::Model)));
+        boxes.truncate(MAX_OBJECTS);
+
+        // Models can change (e.g. Lara's outfit), so these are refreshed with the list
+        for (object, kind) in &mut boxes {
+            object.bounds = object_list::read_bounds(self.handle, object.address);
+            if object.bounds.is_none() && *kind == BoxKind::Model {
+                *kind = BoxKind::Estimated;
+            }
+        }
+        self.objects = boxes;
         Ok(())
     }
 }
@@ -157,7 +186,7 @@ impl Handler for OverlayHandler {
 
         let size = self.config.object_box_size;
         let mut count = 0;
-        for object in &self.objects {
+        for (object, kind) in &self.objects {
             // Objects can be unloaded between refreshes
             let transform = match object_list::read_transform(self.handle, object.address) {
                 Ok(t) => t,
@@ -166,10 +195,15 @@ impl Handler for OverlayHandler {
             let mut name = [0u8; OBJECT_NAME_LENGTH];
             let length = object.name.len().min(OBJECT_NAME_LENGTH - 1);
             name[..length].copy_from_slice(&object.name.as_bytes()[..length]);
+            let (min, max) = object.bounds.unwrap_or((
+                Position { x: -size, y: -size, z: -size },
+                Position { x: size, y: size, z: size },
+            ));
             val.objects[count] = ObjectBox {
                 transform,
-                min: Position { x: -size, y: -size, z: -size },
-                max: Position { x: size, y: size, z: size },
+                min,
+                max,
+                kind: *kind,
                 name,
             };
             count += 1;
