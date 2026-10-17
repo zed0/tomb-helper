@@ -340,7 +340,7 @@ pub fn known_process_details() -> Vec<ProcessDetails> {
     ]
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum AddressType {
     Version,
     XPosition,
@@ -380,6 +380,9 @@ pub struct ProcessDetails {
     pub version: VersionIdentifier,
     pub arch: Architecture,
     pub address_offsets: AddressOffsets,
+    // RVAs of instructions that access each value, found with `tomb-helper watch`. Only used to
+    // derive offsets for new versions.
+    pub witnesses: HashMap<AddressType, Vec<usize>>,
 }
 
 impl ProcessDetails {
@@ -396,6 +399,12 @@ impl ProcessDetails {
             version,
             arch,
             address_offsets,
+            witnesses: HashMap::new(),
         }
+    }
+
+    fn with_witnesses(mut self, witnesses: Vec<(AddressType, Vec<usize>)>) -> ProcessDetails {
+        self.witnesses.extend(witnesses);
+        self
     }
 }

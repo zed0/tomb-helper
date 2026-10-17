@@ -14,7 +14,7 @@ User docs (hotkeys, config, cutscene timing generation) live in `README.md`.
 
 ## Runtime flow (`src/main.rs`)
 
-1. `main()` loads config, prints hotkeys, then polls every 100ms with `find_process::find_process(...)`.
+1. `main()` hands off to `derive::run` if given any CLI args; otherwise loads config, prints hotkeys, then polls every 100ms with `find_process::find_process(...)`.
 2. On a match, `connect()` builds a `Vec<Box<dyn Handler>>`:
    - `CutsceneTimingGeneratorHandler` **or** `CutsceneHandler` (chosen by `config.record_cutscene_timing`)
    - `PositionHandler::new_position_handler` (Lara position) and `::new_look_at_handler` (ROTTR look-at)
@@ -33,7 +33,13 @@ User docs (hotkeys, config, cutscene timing generation) live in `README.md`.
 | `src/config.rs` | `Config` (serde), loaded from `tomb-helper.json` next to the exe; default hotkeys, default gist URLs, `CutsceneTiming::On/Off` |
 | `src/action.rs` | `Action` enum — every hotkey-bindable action. Movement actions carry `distance` (default 100.0) |
 | `src/handler.rs` | `Handler` trait: `handle_tick`, `handle_action` |
-| `src/process_details.rs` | **Per-game-version memory offsets.** `known_process_details()` table, `AddressType` enum, `VersionIdentifier` (version string + optional PE image size to tell Steam/Epic apart) |
+| `src/process_details.rs` | **Per-game-version memory offsets.** `known_process_details()` table (optionally `.with_witnesses(...)` from `watch`, used only by `derive`), `AddressType` enum, `VersionIdentifier` (version string + optional PE image size to tell Steam/Epic apart) |
+| `src/derive.rs` | CLI dispatch (`dump`/`derive`/`chains`/`probe`/`trace`/`watch`). `derive`: fuzzy-matches code references between builds to find static addresses, then aligns `code_trace` accesses at matched sites to map each chain level (`code`/`witness`/`shifted`/`copied`) |
+| `src/code_trace.rs` | `Tracer`: data-flow trace from an instruction using a static address, following pointer loads, branches, direct calls (args + returned `rax`) and, with a live `CallResolver`, virtual calls; produces `Access` chains in table form |
+| `src/watch.rs` | `watch`: attaches as a debugger (`DebugActiveProcess`), sets DR0-3 data breakpoints on up to 4 values, records accessing instructions ("witnesses"), clears and detaches. 64-bit only. Hidden `watch-raw <pid> <addr>` for testing the debugger on any process |
+| `src/witness.rs` | Matches witness instructions into a new build by byte-window similarity around the displacement; the displacement change gives the new last offset |
+| `src/chains.rs` | Live: `chains` traces every static reference, evaluates the chains in the running game and lists code chains landing on each current value; `probe` prints current values |
+| `src/pe_image.rs` | `PeImage`: load an exe in memory layout (or a dump), or dump a running process's main module (works on Denuvo builds) |
 | `src/find_process.rs` | Win32 process/module lookup (`get_pid`, `get_base_address`, `is_process_running`), version detection (image size first, else reads version string from memory), `force_version` override |
 | `src/tracked_memory.rs` | `TrackedMemory<T>`: cached value + pointer-chain offsets; `fetch_from_game` / `apply_to_game`. First offset is relative to module base |
 | `src/tracked_position.rs` | `TrackedPosition`: three `TrackedMemory<f32>` (x/y/z), `to_position()` |
@@ -46,7 +52,7 @@ User docs (hotkeys, config, cutscene timing generation) live in `README.md`.
 
 ## Common changes
 
-- **Support a new game version:** add a `ProcessDetails::new(...)` entry in `known_process_details()`
+- **Support a new game version:** run `tomb-helper derive <known exe> running` to get most of the entry, then add a `ProcessDetails::new(...)` entry in `known_process_details()`
   (`src/process_details.rs`). Use `image_size: Some(..)` when the version string is shared between
   stores. Only include the `AddressType`s you've found — handlers needing missing ones won't load.
 - **Add a new memory value:** add an `AddressType` variant, add offsets per version, read it with
@@ -64,3 +70,4 @@ User docs (hotkeys, config, cutscene timing generation) live in `README.md`.
 - `CutsceneHandler::skip` deliberately returns `Ok` when not in a cutscene (Space is also jump).
   A blacklist `skip_delay` of `20000.0` means "never skip".
 - `PositionHandler` and `CutsceneHandler` both bind Space by default (`Up` and `SkipCutscene`).
+- The games pause when alt-tabbed, so live tools that need activity (`watch`) take `--delay`.
