@@ -1,3 +1,5 @@
+use crate::config::OverlayConfig;
+use crate::object_list::{self, Instance, ObjectList};
 use crate::position::Position;
 use crate::tracked_memory::TrackedMemory;
 use crate::tracked_position::TrackedPosition;
@@ -5,20 +7,29 @@ use crate::action::Action;
 use crate::handler::Handler;
 use crate::process_details::{AddressOffsets, AddressType};
 use std::convert::TryInto;
-use std::{env, fmt, io};
+use std::{env, fmt, io, time};
 use std::error::Error;
 use hudhook::inject::Process;
-use process_memory::{Architecture, Pid, ProcessHandle};
-use crate::ui_ipc_data::{SharedMemoryManager, Trigger};
+use process_memory::{Architecture, CopyAddress, DataMember, Memory, Pid, ProcessHandle};
+use crate::ui_ipc_data::{ObjectBox, SharedMemoryManager, MAX_OBJECTS, OBJECT_NAME_LENGTH};
+
+// How often to rescan the instance array for objects matching the filters
+const OBJECT_REFRESH_INTERVAL: time::Duration = time::Duration::from_secs(1);
 
 pub struct OverlayHandler {
     active: bool,
-    name: String,
     handle: ProcessHandle,
     pid: Pid,
+    arch: Architecture,
+    base_addr: usize,
+    config: OverlayConfig,
     position: TrackedPosition,
-    camera_extrinsics: TrackedCameraMatrix,
-    camera_intrinsics: [TrackedCameraMatrix;100],
+    camera_view: TrackedCameraMatrix,
+    camera_lens: TrackedMemory<[f32; 8]>,
+    instance_array_offsets: Vec<usize>,
+    object_list: Option<ObjectList>,
+    objects: Vec<Instance>,
+    last_object_refresh: Option<time::Instant>,
     ui_memory_manager: SharedMemoryManager,
 }
 
@@ -29,6 +40,7 @@ impl OverlayHandler {
         base_addr: &usize,
         handle: &ProcessHandle,
         pid: &Pid,
+        config: &OverlayConfig,
     ) -> Option<OverlayHandler> {
         println!("Loading overlay handler...");
 
@@ -37,25 +49,16 @@ impl OverlayHandler {
         let mut val = manager.current();
         val.debug = true;
         val.should_exit = false;
+        val.object_count = 0;
         manager.set_next(val);
-
-        let mut extrinsics_offsets = address_offsets.get(&AddressType::CameraSin)?.clone();
-        // let extrinsics_offsets = vec![0x2D3B1D0];
-        // *extrinsics_offsets.last_mut().unwrap() += 0 * 4;
-        // *extrinsics_offsets.last_mut().unwrap() += 104 * 4;
-        // *extrinsics_offsets.last_mut().unwrap() += 208 * 4;
-
-        // let intrinsics_offsets = address_offsets.get(&AddressType::CameraSin)?.clone();
-        // *intrinsics_offsets.last_mut().unwrap() += 44 * 4;
-
-        println!("extrinsics offsets: {:?}", extrinsics_offsets);
-        // println!("intrinsics offsets: {:?}", intrinsics_offsets);
 
         Some(OverlayHandler {
             active: false,
-            name: "overlay".to_string(),
             handle: *handle,
             pid: *pid,
+            arch: *arch,
+            base_addr: *base_addr,
+            config: config.clone(),
             position: TrackedPosition::new(
                 address_offsets.get(&AddressType::XPosition)?.clone(),
                 address_offsets.get(&AddressType::YPosition)?.clone(),
@@ -63,27 +66,72 @@ impl OverlayHandler {
                 *arch,
                 *base_addr,
             ),
-            camera_extrinsics: TrackedCameraMatrix::new(
-                extrinsics_offsets.clone(),
+            camera_view: TrackedCameraMatrix::new(
+                address_offsets.get(&AddressType::CameraView)?.clone(),
                 *arch,
                 *base_addr,
             ),
-            // camera_intrinsics: TrackedCameraMatrix::new(
-            //     intrinsics_offsets,
-            //     *arch,
-            //     *base_addr,
-            // ),
-            camera_intrinsics: (0usize..100usize).map(|n|{
-                let mut offsets = extrinsics_offsets.clone();
-                *offsets.last_mut().unwrap() += n*4;
-                TrackedCameraMatrix::new(offsets, *arch, *base_addr)
-            }).collect::<Vec<TrackedCameraMatrix>>()
-            .try_into()
-            .unwrap(),
+            camera_lens: TrackedMemory::new(
+                [0.0; 8],
+                address_offsets.get(&AddressType::CameraLens)?.clone(),
+                *arch,
+                *base_addr,
+            ),
+            instance_array_offsets: address_offsets.get(&AddressType::InstanceArray)?.clone(),
+            object_list: None,
+            objects: vec![],
+            last_object_refresh: None,
             ui_memory_manager,
         })
     }
 
+    fn refresh_objects(&mut self) -> Result<(), Box<dyn Error>> {
+        if self.object_list.is_none() {
+            let mut offsets = self.instance_array_offsets.clone();
+            offsets[0] += self.base_addr;
+            let array_address = DataMember::<u8>::new_offset(self.handle, offsets)
+                .set_arch(self.arch)
+                .get_offset()?;
+            self.object_list = Some(ObjectList::new(array_address));
+        }
+
+        let filters: Vec<String> = self.config.object_filters.iter().map(|f| f.to_lowercase()).collect();
+        let lara = self.position.to_position();
+        let distance = |p: &Position| {
+            ((p.x - lara.x).powi(2) + (p.y - lara.y).powi(2) + (p.z - lara.z).powi(2)).sqrt()
+        };
+
+        let mut objects: Vec<Instance> = self.object_list.as_mut().unwrap()
+            .instances(self.handle)?
+            .into_iter()
+            .filter(|i| distance(&i.position) <= self.config.object_radius)
+            .filter(|i| {
+                let name = i.name.to_lowercase();
+                let full_name = i.full_name.to_lowercase();
+                filters.iter().any(|f| name.contains(f.as_str()) || full_name.contains(f.as_str()))
+            })
+            .collect();
+        objects.sort_by(|a, b| distance(&a.position).total_cmp(&distance(&b.position)));
+        objects.truncate(MAX_OBJECTS);
+        self.objects = objects;
+        Ok(())
+    }
+}
+
+// The game's projection matrix is reused for another pass with a narrower fov part way through each
+// frame, so build the main camera's from its lens instead: near, far, near, far, fov, aspect, fov, aspect.
+// The second copies are the more stable ones.
+fn projection_from_lens(lens: &[f32; 8]) -> [f32; 16] {
+    let (near, far, fov, aspect) = (lens[2], lens[3], lens[6], lens[7]);
+    let y = 1.0 / (fov / 2.0).tan();
+    let z = far / (far - near);
+    // Row-major for row vectors, like the game's
+    [
+        y / aspect, 0.0, 0.0, 0.0,
+        0.0, y, 0.0, 0.0,
+        0.0, 0.0, z, 1.0,
+        0.0, 0.0, -near * z, 0.0,
+    ]
 }
 
 impl Handler for OverlayHandler {
@@ -93,36 +141,40 @@ impl Handler for OverlayHandler {
         }
 
         self.position.fetch_from_game(self.handle)?;
-        self.camera_extrinsics.fetch_from_game(self.handle)?;
-        // self.camera_intrinsics.fetch_from_game(self.handle)?;
-        for camera_intrinsic in &mut self.camera_intrinsics {
-            camera_intrinsic.fetch_from_game(self.handle)?;
+        self.camera_view.fetch_from_game(self.handle)?;
+        self.camera_lens.fetch_from_game(self.handle)?;
+
+        if self.last_object_refresh.map_or(true, |t| t.elapsed() > OBJECT_REFRESH_INTERVAL) {
+            self.last_object_refresh = Some(time::Instant::now());
+            self.refresh_objects()?;
         }
+
         let manager = self.ui_memory_manager.get_mut();
         let mut val = manager.current();
         val.position = self.position.to_position();
-        val.camera_extrinsics = self.camera_extrinsics.to_array();
-        // val.camera_intrinsics = self.camera_intrinsics.to_array();
-        val.camera_intrinsics = self.camera_intrinsics.clone().map(|i| i.to_array());
-        val.triggers = [
-            Some(Trigger {
-                origin: Position {
-                    x: 44744.87,
-                    y: -10983.537,
-                    z: 16185.443,
-                },
-                size: 1.0,
-            }),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-        ];
+        val.camera_view = self.camera_view.to_array();
+        val.camera_projection = projection_from_lens(&self.camera_lens.data);
+
+        let size = self.config.object_box_size;
+        let mut count = 0;
+        for object in &self.objects {
+            // Objects can be unloaded between refreshes
+            let transform = match object_list::read_transform(self.handle, object.address) {
+                Ok(t) => t,
+                Err(_) => continue,
+            };
+            let mut name = [0u8; OBJECT_NAME_LENGTH];
+            let length = object.name.len().min(OBJECT_NAME_LENGTH - 1);
+            name[..length].copy_from_slice(&object.name.as_bytes()[..length]);
+            val.objects[count] = ObjectBox {
+                transform,
+                min: Position { x: -size, y: -size, z: -size },
+                max: Position { x: size, y: size, z: size },
+                name,
+            };
+            count += 1;
+        }
+        val.object_count = count;
         manager.set_next(val);
         Ok(())
     }
@@ -171,20 +223,24 @@ impl Drop for OverlayHandler {
 
 #[derive(Debug, Clone)]
 pub struct TrackedCameraMatrix {
-    pub matrix: [TrackedMemory<f32>;16],
+    pub matrix: [f32; 16],
+    offsets: Vec<usize>,
+    arch: Architecture,
+    base_addr: usize,
 }
 
 impl TrackedCameraMatrix {
+    // Reads the whole matrix at once, so it isn't a mix of two game frames
     pub fn fetch_from_game(&mut self, handle: ProcessHandle) -> io::Result<()> {
-        for element in &mut self.matrix {
-            element.fetch_from_game(handle)?;
-        }
-        Ok(())
-    }
-
-    pub fn apply_to_game(&mut self, handle: ProcessHandle) -> io::Result<()> {
-        for element in &mut self.matrix {
-            element.apply_to_game(handle)?;
+        let mut offsets = self.offsets.clone();
+        offsets[0] += self.base_addr;
+        let address = DataMember::<u8>::new_offset(handle, offsets)
+            .set_arch(self.arch)
+            .get_offset()?;
+        let mut bytes = [0u8; 64];
+        handle.copy_address(address, &mut bytes)?;
+        for (i, element) in self.matrix.iter_mut().enumerate() {
+            *element = f32::from_le_bytes(bytes[i * 4..i * 4 + 4].try_into().unwrap());
         }
         Ok(())
     }
@@ -195,42 +251,23 @@ impl TrackedCameraMatrix {
         base_addr: usize,
     ) -> TrackedCameraMatrix {
         TrackedCameraMatrix {
-            matrix: (0usize..16usize).map(|n|{
-                let mut offsets = matrix_offsets.clone();
-                *offsets.last_mut().unwrap() += n*4;
-                TrackedMemory::new(0.0, offsets, arch, base_addr)
-            }).collect::<Vec<TrackedMemory<f32>>>()
-            .try_into()
-            .unwrap()
+            matrix: [0.0; 16],
+            offsets: matrix_offsets,
+            arch,
+            base_addr,
         }
     }
 
     pub fn to_array(&self) -> [f32; 16] {
-        self.matrix.clone().map(|e| e.data)
+        self.matrix
     }
 }
 
 impl fmt::Display for TrackedCameraMatrix {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "({}, {}, {}, {})\n({}, {}, {}, {})\n({}, {}, {}, {})\n({}, {}, {}, {})\n",
-            self.matrix[0].data,
-            self.matrix[1].data,
-            self.matrix[2].data,
-            self.matrix[3].data,
-            self.matrix[4].data,
-            self.matrix[5].data,
-            self.matrix[6].data,
-            self.matrix[7].data,
-            self.matrix[8].data,
-            self.matrix[9].data,
-            self.matrix[10].data,
-            self.matrix[11].data,
-            self.matrix[12].data,
-            self.matrix[13].data,
-            self.matrix[14].data,
-            self.matrix[15].data,
-        )
+        for row in self.matrix.chunks(4) {
+            writeln!(f, "({}, {}, {}, {})", row[0], row[1], row[2], row[3])?;
+        }
+        Ok(())
     }
 }

@@ -1,89 +1,104 @@
 use imgui::*;
 use hudhook::*;
 use hudhook::hooks::dx12::ImguiDx12Hooks;
-use crate::ui_ipc_data::SharedMemoryManager;
+use crate::ui_ipc_data::{ObjectBox, SharedMemoryManager, UiData};
 use crate::tracing::{error, warn};
 
 mod ui_ipc_data;
 mod position;
 
-use nalgebra::{Matrix4, Vector4, Vector3};
+use nalgebra::{Matrix4, Vector3, Vector4};
 
-/// Projects a 3D world position to 2D screen coordinates.
-/// 
-/// - `world_pos`: 3D position in world space
-/// - `extrinsic`: 4x4 world-to-camera matrix
-/// - `intrinsic`: 4x4 projection matrix
-/// - `screen_width`, `screen_height`: viewport size in pixels
-///
-/// Returns Some((x, y)) if visible, or None if behind camera
-// fn world_to_screen(
-//     world_pos: Vector3<f32>,
-//     extrinsic: &Matrix4<f32>,
-//     intrinsic: &Matrix4<f32>,
-//     screen_width: f32,
-//     screen_height: f32,
-// ) -> Option<(f32, f32)> {
-//     // Convert to homogeneous coordinate
-//     let world_pos_h = Vector4::new(world_pos.x, world_pos.y, world_pos.z, 1.0);
-//
-//     // World → Camera
-//     let cam_space = extrinsic * world_pos_h;
-//     let cam_space = Vector4::new(cam_space.x, cam_space.y, -cam_space.z, cam_space.w);
-//     // let cam_space = Vector4::new(100., 0., -10., 1.0);
-//     // warn!("cam_space: {}", cam_space);
-//
-//     // Discard points behind the camera
-//     // if cam_space.z >= 0.0 {
-//     //     return None;
-//     // }
-//
-//     // Camera → Clip (projection)
-//     let clip_space = intrinsic * cam_space;
-//     // warn!("clip_space: {}", clip_space);
-//
-//     // Perspective divide to get NDC
-//     if clip_space.w.abs() < 1e-6 {
-//         return None;
-//     }
-//     let ndc = clip_space.xyz() / clip_space.w;
-//
-//     // NDC [-1,1] → screen coordinates
-//     let x_screen = (ndc.x * 0.5 + 0.5) * screen_width;
-//     let y_screen = (1.0 - (ndc.y * 0.5 + 0.5)) * screen_height; // y flipped for typical screen space
-//     // let y_screen = (ndc.y * 0.5 + 0.5) * screen_height;
-//
-//     Some((x_screen, y_screen))
-// }
+// Points closer to the camera plane than this (in clip space w) are clipped off
+const NEAR_CLIP_W: f32 = 1.0;
 
-pub fn world_to_screen(
-    world_pos: Vector3<f32>,
-    view_matrix: &Matrix4<f32>,
-    projection_matrix: &Matrix4<f32>,
+const BOX_COLOUR: [f32; 4] = [0.0, 1.0, 0.0, 1.0];
+const LARA_COLOUR: [f32; 4] = [1.0, 0.0, 1.0, 1.0];
+
+// The game stores matrices row-major for row vectors (`v * M`). Reading the same floats column-major
+// gives the transposed matrix, which is the equivalent for nalgebra's column vectors (`M * v`).
+fn game_matrix(elements: &[f32; 16]) -> Matrix4<f32> {
+    Matrix4::from_column_slice(elements)
+}
+
+struct Projector {
+    view_projection: Matrix4<f32>,
     screen_width: f32,
     screen_height: f32,
-) -> Option<(f32, f32)> {
-    // Step 1: Convert to homogeneous coordinates
-    let world_pos_h = Vector4::new(world_pos.x, world_pos.y, world_pos.z, 1.0);
+}
 
-    // Step 2: Transform into clip space (projection * view * world)
-    let clip_space = projection_matrix * view_matrix * world_pos_h;
-
-    // Step 3: Perspective divide (check if w != 0)
-    if clip_space.w.abs() < f32::EPSILON {
-        return None;
+impl Projector {
+    fn to_clip(&self, model: &Matrix4<f32>, point: Vector3<f32>) -> Vector4<f32> {
+        self.view_projection * model * point.push(1.0)
     }
-    let ndc = clip_space.xyz() / clip_space.w;
 
-    // Step 4: Convert NDC (-1..1) to screen coordinates (0..width/height)
-    let screen_x = (ndc.x + 1.0) * 0.5 * screen_width;
-    let screen_y = (1.0 - ndc.y) * 0.5 * screen_height; // flip y-axis for screen coords
+    fn to_screen(&self, clip: Vector4<f32>) -> [f32; 2] {
+        let ndc = clip.xy() / clip.w;
+        // The game's view space has y pointing down the screen, so there's no flip here
+        [
+            (ndc.x + 1.0) * 0.5 * self.screen_width,
+            (ndc.y + 1.0) * 0.5 * self.screen_height,
+        ]
+    }
 
-    Some((screen_x, screen_y))
+    fn project(&self, point: Vector3<f32>) -> Option<[f32; 2]> {
+        let clip = self.to_clip(&Matrix4::identity(), point);
+        if clip.w < NEAR_CLIP_W {
+            return None;
+        }
+        Some(self.to_screen(clip))
+    }
+
+    // Clips the line against the near plane, returns None if it's entirely behind the camera
+    fn project_line(&self, a: Vector4<f32>, b: Vector4<f32>) -> Option<([f32; 2], [f32; 2])> {
+        if a.w < NEAR_CLIP_W && b.w < NEAR_CLIP_W {
+            return None;
+        }
+        let clip = |inside: Vector4<f32>, outside: Vector4<f32>| {
+            let t = (inside.w - NEAR_CLIP_W) / (inside.w - outside.w);
+            inside + (outside - inside) * t
+        };
+        let a2 = if a.w < NEAR_CLIP_W { clip(b, a) } else { a };
+        let b2 = if b.w < NEAR_CLIP_W { clip(a, b) } else { b };
+        Some((self.to_screen(a2), self.to_screen(b2)))
+    }
+}
+
+fn draw_box(draw_list: &DrawListMut, projector: &Projector, object: &ObjectBox) {
+    let model = game_matrix(&object.transform);
+    let (min, max) = (object.min, object.max);
+    // Corner i uses max for each axis whose bit is set in i
+    let corners: Vec<Vector4<f32>> = (0..8)
+        .map(|i| {
+            let point = Vector3::new(
+                if i & 1 != 0 { max.x } else { min.x },
+                if i & 2 != 0 { max.y } else { min.y },
+                if i & 4 != 0 { max.z } else { min.z },
+            );
+            projector.to_clip(&model, point)
+        })
+        .collect();
+
+    for a in 0..8 {
+        for axis in [1, 2, 4] {
+            if a & axis == 0 {
+                if let Some((from, to)) = projector.project_line(corners[a], corners[a | axis]) {
+                    draw_list.add_line(from, to, BOX_COLOUR).thickness(1.5).build();
+                }
+            }
+        }
+    }
+
+    let top = (corners[4] + corners[5] + corners[6] + corners[7]) / 4.0;
+    if top.w >= NEAR_CLIP_W {
+        draw_list.add_text(projector.to_screen(top), BOX_COLOUR, object.name());
+    }
 }
 
 struct TombHelperHud {
     ui_memory_manager: SharedMemoryManager,
+    // Last complete copy, used when the exe was mid write
+    ui_data: UiData,
     ejecting: bool,
 }
 
@@ -110,6 +125,7 @@ impl TombHelperHud {
 
         Self {
             ui_memory_manager,
+            ui_data,
             ejecting: false,
         }
     }
@@ -117,7 +133,10 @@ impl TombHelperHud {
 
 impl ImguiRenderLoop for TombHelperHud {
     fn render(&mut self, ui: &mut Ui) {
-        let ui_data = self.ui_memory_manager.get().current();
+        if let Some(ui_data) = self.ui_memory_manager.get().try_current() {
+            self.ui_data = ui_data;
+        }
+        let ui_data = self.ui_data;
         if !self.ejecting && ui_data.should_exit {
             self.ejecting = true;
             error!("ejecting!");
@@ -126,6 +145,7 @@ impl ImguiRenderLoop for TombHelperHud {
 
         let screen_width = ui.io().display_size[0];
         let screen_height = ui.io().display_size[1];
+        let object_count = ui_data.object_count.min(ui_data.objects.len());
 
         ui.window("Position")
             .position_pivot([1., 0.])
@@ -133,134 +153,23 @@ impl ImguiRenderLoop for TombHelperHud {
             .size([400., 200.], Condition::Once)
             .build(|| {
                 ui.text_wrapped(format!("{:?}", ui_data.position));
+                ui.text(format!("{} objects", object_count));
             });
 
-        
-        let draw_list = ui.get_foreground_draw_list();
-        const RED: [f32; 3] = [1.0, 0.0, 0.0];
-        const GREEN: [f32; 3] = [0.0, 1.0, 0.0];
-        for trigger in ui_data.triggers {
-            if !trigger.is_some() {break};
-            let trigger = trigger.unwrap();
+        let projector = Projector {
+            view_projection: game_matrix(&ui_data.camera_projection) * game_matrix(&ui_data.camera_view),
+            screen_width,
+            screen_height,
+        };
 
-            let origin = Vector3::new(trigger.origin.x, trigger.origin.y, trigger.origin.z);
-            // warn!("origin: {}", origin);
+        let draw_list = ui.get_background_draw_list();
+        for object in &ui_data.objects[..object_count] {
+            draw_box(&draw_list, &projector, object);
+        }
 
-            {
-                let camera_extrinsics = Matrix4::from_column_slice(&ui_data.camera_extrinsics);
-                warn!("camera_extrinsics: {}", camera_extrinsics);
-
-                for (index, camera_intrinsics) in ui_data.camera_intrinsics.iter().enumerate() {
-                    let camera_intrinsics = Matrix4::from_column_slice(camera_intrinsics);
-                    // warn!("camera_intrinsics: {}", camera_intrinsics);
-
-                    let coord_2d = world_to_screen(
-                        origin,
-                        &camera_extrinsics,
-                        &camera_intrinsics,
-                        screen_width,
-                        screen_height,
-                    );
-                    // warn!("coord_2d: {:?}", coord_2d);
-
-                    if coord_2d.is_some() {
-                        draw_list.add_circle(
-                            [coord_2d.unwrap().0, coord_2d.unwrap().1],
-                            10.0,
-                            RED,
-                        ).build();
-                        draw_list.add_text(
-                            [coord_2d.unwrap().0, coord_2d.unwrap().1],
-                            RED,
-                            format!("{}", index),
-                        );
-                    }
-                }
-                {
-                    let camera_intrinsics = Matrix4::identity();
-                    // warn!("camera_intrinsics: {}", camera_intrinsics);
-
-                    let coord_2d = world_to_screen(
-                        origin,
-                        &camera_extrinsics,
-                        &camera_intrinsics,
-                        screen_width,
-                        screen_height,
-                    );
-                    // warn!("coord_2d: {:?}", coord_2d);
-
-                    if coord_2d.is_some() {
-                        draw_list.add_circle(
-                            [coord_2d.unwrap().0, coord_2d.unwrap().1],
-                            10.0,
-                            RED,
-                        ).build();
-                        draw_list.add_text(
-                            [coord_2d.unwrap().0, coord_2d.unwrap().1],
-                            RED,
-                            format!("X"),
-                        );
-                    }
-                }
-            }
-
-            {
-                let camera_extrinsics = Matrix4::from_row_slice(&ui_data.camera_extrinsics);
-                warn!("camera_extrinsics: {}", camera_extrinsics);
-
-                for (index, camera_intrinsics) in ui_data.camera_intrinsics.iter().enumerate() {
-                    let camera_intrinsics = Matrix4::from_row_slice(camera_intrinsics);
-                    // warn!("camera_intrinsics: {}", camera_intrinsics);
-
-                    let coord_2d = world_to_screen(
-                        origin,
-                        &camera_extrinsics,
-                        &camera_intrinsics,
-                        screen_width,
-                        screen_height,
-                    );
-                    // warn!("coord_2d: {:?}", coord_2d);
-
-                    if coord_2d.is_some() {
-                        draw_list.add_circle(
-                            [coord_2d.unwrap().0, coord_2d.unwrap().1],
-                            10.0,
-                            GREEN,
-                        ).build();
-                        draw_list.add_text(
-                            [coord_2d.unwrap().0, coord_2d.unwrap().1],
-                            GREEN,
-                            format!("{}", index),
-                        );
-                    }
-                }
-                {
-                    let camera_intrinsics = Matrix4::identity();
-                    // warn!("camera_intrinsics: {}", camera_intrinsics);
-
-                    let coord_2d = world_to_screen(
-                        origin,
-                        &camera_extrinsics,
-                        &camera_intrinsics,
-                        screen_width,
-                        screen_height,
-                    );
-                    // warn!("coord_2d: {:?}", coord_2d);
-
-                    if coord_2d.is_some() {
-                        draw_list.add_circle(
-                            [coord_2d.unwrap().0, coord_2d.unwrap().1],
-                            10.0,
-                            GREEN,
-                        ).build();
-                        draw_list.add_text(
-                            [coord_2d.unwrap().0, coord_2d.unwrap().1],
-                            GREEN,
-                            format!("X"),
-                        );
-                    }
-                }
-            }
+        let lara = Vector3::new(ui_data.position.x, ui_data.position.y, ui_data.position.z);
+        if let Some(point) = projector.project(lara) {
+            draw_list.add_circle(point, 6.0, LARA_COLOUR).thickness(2.0).build();
         }
     }
 }

@@ -27,6 +27,7 @@ mod derive;
 mod pe_image;
 mod position_handler;
 mod handler;
+mod object_list;
 mod overlay_handler;
 mod position;
 mod process_details;
@@ -141,7 +142,8 @@ fn create_handlers(
         &details.arch,
         &base_addr,
         &handle,
-        &pid
+        &pid,
+        &config.overlay,
     ) {
         Some(h) => handlers.push(Box::new(h)),
         None => {},
