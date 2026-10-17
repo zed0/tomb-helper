@@ -19,6 +19,12 @@ pub enum AddressType {
     // From there the first 2 entries of the matrix can be used as CameraSin and CameraCos
     CameraSin,
     CameraCos,
+    // Row-major 4x4 world-to-view matrix (row vectors, as used by the game)
+    CameraView,
+    // 8 floats: near, far, near, far, vertical fov (radians), aspect, fov, aspect
+    CameraLens,
+    // Static array of 0x120 byte instance (game object) records, see `object_list`
+    InstanceArray,
     CutscenePrompt,
     CutsceneStatus,
     CutsceneTimeline,

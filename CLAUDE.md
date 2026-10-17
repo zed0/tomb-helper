@@ -64,9 +64,10 @@ User docs (hotkeys, config, cutscene timing generation) live in `README.md`.
 | `src/cutscene_timing_info.rs` | `TimingInfo` / `TimingEntry` JSON format (cutscene ids → durations, skippable-at times) |
 | `src/cutscene_timing_generator_handler.rs` | Records cutscene timings by watching memory + querying LiveSplit Server over TCP (`getcurrenttime`); writes the timing file after each cutscene |
 | `src/readable_from_path.rs` | `ReadableFromPath` trait: load JSON from a local path or URL (blocking reqwest), default on failure |
-| `src/overlay_handler.rs` | **WIP.** On `ToggleUI` injects `tomb_helper_ui.dll` into the game (`hudhook::inject`), streams position + camera matrices into shared memory each tick; sets `should_exit` to eject on toggle-off/drop. `TrackedCameraMatrix` (16 floats). Trigger position is currently hardcoded |
+| `src/overlay_handler.rs` | **WIP.** On `ToggleUI` injects `tomb_helper_ui.dll` into the game (`hudhook::inject`), streams position, `CameraView`, a projection built from `CameraLens` and the transforms of objects matching `config.overlay` filters (rescanned every second) into shared memory each tick; sets `should_exit` to eject on toggle-off/drop. `TrackedCameraMatrix` (16 floats) |
+| `src/object_list.rs` | Reads the game's static instance array (`InstanceArray`, 0x120 byte records until a zero header): position, placement names, `cdc::TransformComponent` world matrix. Layout offsets are constants found in ROTTR Steam |
 | `src/ui_ipc_data.rs` | Shared-memory IPC (`shared_memory` crate, os_id `"TombHelperIPC"`): `UiData`, lock-free `UiDoubleBuffer` (`set_next`/`current`), `SharedMemoryManager` (exe is owner) |
-| `src/lib.rs` | **WIP.** Injected overlay: `TombHelperHud` implements `ImguiRenderLoop`; shows position window, projects triggers to screen via `world_to_screen` (nalgebra) — currently experimenting with many candidate intrinsics matrices and row/column-major. Calls `eject()` when `should_exit` is set |
+| `src/lib.rs` | **WIP.** Injected overlay: `TombHelperHud` implements `ImguiRenderLoop`; shows position window, draws a near-plane-clipped wireframe box + name per `ObjectBox` and a circle at Lara. Calls `eject()` when `should_exit` is set |
 
 ## Common changes
 
@@ -83,6 +84,18 @@ User docs (hotkeys, config, cutscene timing generation) live in `README.md`.
 - **Send more data to the overlay:** add a field to `UiData` (`src/ui_ipc_data.rs`), fill it in
   `OverlayHandler::handle_tick`, read it in `TombHelperHud::render` (`src/lib.rs`). Both binaries must be
   rebuilt together.
+
+## Game memory notes (ROTTR Steam, Foundation/cdc engine)
+
+- MSVC RTTI is present: an object's first qword is a vtable, `vtable[-1]` is the CompleteObjectLocator whose
+  type descriptor (+0xC RVA, name at +0x10) gives the class name. Great for identifying unknown structs.
+- Objects are entities in a static instance array (see `object_list.rs`); components (`TransformComponent`,
+  `DrawableComponent`, `CollideComponent`, ...) are heap objects whose +0x8 points back at the instance.
+- `GameRender` (`[0x2E1BD08]`): +0x30 near/far, +0x40 fov/aspect, +0x70 camera-to-world (CameraSin/Cos are its
+  first row), +0xF0 projection (swapped for a narrower fov pass for ~1ms of every frame, so the overlay builds its own
+  from +0x30/+0x48), +0x520 world-to-view. Matrices are row-major for row vectors and view space y
+  points down the screen. World is Z up.
+- Real per-object bounds haven't been found yet (`SceneEntity` holds some AABBs, but at type-dependent offsets).
 
 ## Gotchas
 

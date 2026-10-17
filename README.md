@@ -41,7 +41,8 @@ The default configuration is:
 	"force_version": null,
 	"cutscene_blacklist_file": "https://gist.githubusercontent.com/Atorizil/734a7649471f0fa0a2a9f92a167e294b/raw/Blacklist.json",
 	"cutscene_timing_file": "https://gist.githubusercontent.com/zed0/762a5790501af95189344834bc210616/raw/tomb-helper-timing-info.json",
-	"record_cutscene_timing": {"Off": {}}
+	"record_cutscene_timing": {"Off": {}},
+	"overlay": {"object_filters": ["campsite_base_trx-"], "object_radius": 5000.0, "object_box_size": 50.0}
 }
 ```
 
@@ -100,6 +101,14 @@ Each version looks like:
 - `offsets` are pointer chains: the first is relative to the game's exe, the rest are followed as pointers. Values a version doesn't have can be left out, and features that need them won't load
 - `witnesses` are optional, see [Finding offsets for a new game version](#finding-offsets-for-a-new-game-version)
 - `unverified` is ignored, and is where the tools put offsets they couldn't confirm
+
+## Overlay
+
+The overlay (`ToggleUI`) draws a box around game objects near Lara, labelled with the object's name.
+It currently needs the `CameraView`, `CameraLens` and `InstanceArray` offsets, which only Rise of the Tomb Raider (Steam) has so far.
+- `object_filters`: objects whose name contains any of these (case insensitive) get a box, `[""]` shows everything. The default, `campsite_base_trx-`, matches each base camp (at its campfire)
+- `object_radius`: only objects this close to Lara are shown (the closest 64 are drawn)
+- `object_box_size`: half the width of each box. The objects' real sizes aren't known yet, so every box is this size (rotated and scaled with the object)
 
 ## Forcing a version
 

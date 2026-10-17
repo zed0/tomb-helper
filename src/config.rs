@@ -98,6 +98,38 @@ impl Default for CutsceneTiming {
     }
 }
 
+fn default_object_filters() -> Vec<String> {
+    // The root object of each base camp, which is where its campfire is
+    vec!["campsite_base_trx-".to_string()]
+}
+
+fn default_object_radius() -> f32 {
+    5000.0
+}
+
+fn default_object_box_size() -> f32 {
+    50.0
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct OverlayConfig {
+    // Objects whose placement name contains any of these (case insensitive) get a box. "" matches everything.
+    #[serde(default = "default_object_filters")]
+    pub object_filters: Vec<String>,
+    // Only objects within this distance of Lara are shown
+    #[serde(default = "default_object_radius")]
+    pub object_radius: f32,
+    // Half width of the box drawn around each object (the real bounds aren't known yet)
+    #[serde(default = "default_object_box_size")]
+    pub object_box_size: f32,
+}
+
+impl Default for OverlayConfig {
+    fn default() -> Self {
+        serde_json::from_str("{}").unwrap()
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {
     #[serde(default = "default_hotkeys")]
@@ -110,4 +142,6 @@ pub struct Config {
     pub record_cutscene_timing: CutsceneTiming,
     #[serde(default)]
     pub force_version: Option<String>,
+    #[serde(default)]
+    pub overlay: OverlayConfig,
 }
