@@ -1,7 +1,7 @@
 use imgui::*;
 use hudhook::*;
 use hudhook::hooks::dx12::ImguiDx12Hooks;
-use crate::ui_ipc_data::{BoxKind, Capsule, ObjectBox, SharedMemoryManager, UiData};
+use crate::ui_ipc_data::{BoxKind, Capsule, ObjectBox, Probe, SharedMemoryManager, UiData};
 use crate::tracing::{error, warn};
 
 mod ui_ipc_data;
@@ -17,6 +17,9 @@ const CAPSULE_SEGMENTS: usize = 16;
 const MODEL_COLOUR: [f32; 4] = [0.0, 1.0, 0.0, 1.0];
 const ESTIMATED_COLOUR: [f32; 4] = [1.0, 1.0, 0.0, 1.0];
 const LARA_COLOUR: [f32; 4] = [1.0, 0.0, 1.0, 1.0];
+const PROBE_COLOUR: [f32; 4] = [0.0, 1.0, 1.0, 1.0];
+// Half size of the cross drawn where a probe hit
+const PROBE_HIT_SIZE: f32 = 4.0;
 
 // The game stores matrices row-major for row vectors (`v * M`). Reading the same floats column-major
 // gives the transposed matrix, which is the equivalent for nalgebra's column vectors (`M * v`).
@@ -141,6 +144,18 @@ fn draw_capsule(draw_list: &DrawListMut, projector: &Projector, capsule: &Capsul
     }
 }
 
+fn draw_probe(draw_list: &DrawListMut, projector: &Projector, probe: &Probe) {
+    let vector = |p: &crate::position::Position| Vector3::new(p.x, p.y, p.z);
+    draw_world_line(draw_list, projector, vector(&probe.start), vector(&probe.end), PROBE_COLOUR);
+    if probe.has_hit {
+        let hit = vector(&probe.hit);
+        for axis in [Vector3::x(), Vector3::y(), Vector3::z()] {
+            let offset = axis * PROBE_HIT_SIZE;
+            draw_world_line(draw_list, projector, hit - offset, hit + offset, PROBE_COLOUR);
+        }
+    }
+}
+
 struct TombHelperHud {
     ui_memory_manager: SharedMemoryManager,
     // Last complete copy, used when the exe was mid write
@@ -214,6 +229,9 @@ impl ImguiRenderLoop for TombHelperHud {
         }
         for capsule in &ui_data.capsules[..ui_data.capsule_count.min(ui_data.capsules.len())] {
             draw_capsule(&draw_list, &projector, capsule, LARA_COLOUR);
+        }
+        for probe in &ui_data.probes[..ui_data.probe_count.min(ui_data.probes.len())] {
+            draw_probe(&draw_list, &projector, probe);
         }
 
         let lara = Vector3::new(ui_data.position.x, ui_data.position.y, ui_data.position.z);

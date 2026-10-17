@@ -105,11 +105,11 @@ Each version looks like:
 ## Overlay
 
 The overlay (`ToggleUI`) draws a box around game objects near Lara, labelled with the object's name.
-It currently needs the `CameraView`, `CameraLens` and `InstanceArray` (and `PlayerInstance` for Lara's box) offsets, which only Rise of the Tomb Raider (Steam) has so far.
+It currently needs the `CameraView`, `CameraLens` and `InstanceArray` (and `PlayerInstance`/`PlayerProbes` for Lara's collision) offsets, which only Rise of the Tomb Raider (Steam) has so far.
 - `object_filters`: objects whose name contains any of these (case insensitive) get a box, `[""]` shows everything. The default, `campsite_base_trx-`, matches each base camp (at its campfire)
 - `object_radius`: only objects this close to Lara are shown (the closest 64 are drawn)
 - `object_box_size`: objects with a model get a green box showing its bounds, the rest (triggers, markers, ...) get a yellow box this size (half width)
-- `lara_collision`: also draw Lara's hit capsules (in magenta), which follow her pose
+- `lara_collision`: also draw Lara's hit capsules (in magenta), which follow her pose, and the ground probes the game casts for her feet and body (cyan lines, with a cross where they hit)
 
 ## Forcing a version
 

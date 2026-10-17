@@ -5,6 +5,7 @@ use crate::position::Position;
 
 pub const MAX_OBJECTS: usize = 64;
 pub const MAX_CAPSULES: usize = 32;
+pub const MAX_PROBES: usize = 8;
 pub const OBJECT_NAME_LENGTH: usize = 64;
 
 #[repr(u32)]
@@ -46,6 +47,16 @@ pub struct Capsule {
     pub radius: f32,
 }
 
+// A ray the game casts for Lara's movement, and where it hit
+#[repr(C)]
+#[derive(Copy, Clone, Debug)]
+pub struct Probe {
+    pub start: Position,
+    pub end: Position,
+    pub hit: Position,
+    pub has_hit: bool,
+}
+
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
 pub struct UiData {
@@ -60,6 +71,8 @@ pub struct UiData {
     // Lara's collision
     pub capsule_count: usize,
     pub capsules: [Capsule; MAX_CAPSULES],
+    pub probe_count: usize,
+    pub probes: [Probe; MAX_PROBES],
 }
 
 #[repr(C)]
