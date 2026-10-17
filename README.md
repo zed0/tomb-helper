@@ -109,3 +109,46 @@ Generating a cutscene timing file can be done using tomb-helper:
 - Save the newly created file somewhere (upload it if you want others to be able to use it)
 - Change your `"cutscene_timing_file"` configuration option to the location you saved the created file
 - Change your `"record_cutscene_timing"` back to `{"Off": {}}`
+
+# Finding offsets for a new game version
+
+tomb-helper can work out most of the memory offsets for a new version of a game from a version it already supports:
+
+```
+tomb-helper derive <from> <to> [--from-version <version>]
+```
+
+`<from>` and `<to>` are paths to the game's exe, or `running` to use the game that is currently running. Games protected by Denuvo (e.g. Shadow of the Tomb Raider v1.0 build 234.1) are encrypted on disk, so for those launch the game, wait for the main menu, and use `running`, or save a copy with `tomb-helper dump [<out.bin>]` and pass that file instead.
+
+The version of `<from>` is detected from its image size where possible, otherwise pass `--from-version` with a version from [`process_details.rs`](./src/process_details.rs), e.g.
+
+```
+tomb-helper derive "C:\Games\Shadow of the Tomb Raider 492.0\SOTTR.exe" running
+tomb-helper derive sottr-234.1.bin "C:\Games\Shadow of the Tomb Raider\SOTTR.exe" --from-version "v1.0 build 234.1_64"
+```
+
+It prints a `ProcessDetails::new(...)` entry to add to `process_details.rs`, with a comment per offset list saying where each level came from:
+
+- `code`: the game's code uses this offset in both versions, in matching places
+- `shifted`: the code doesn't use this offset directly, but a neighbouring field moved by this much
+- `copied`: no evidence, kept as it was in `<from>`
+
+Entries marked `UNSURE` had conflicting matches or a copied level. The version string needs filling in by hand. Check the result in game with `tomb-helper probe [--watch]`, which prints the current value of every offset.
+
+Derivation works best when the offsets in `<from>` follow the same pointer chains as the game's own code. Pointer scanners tend to find arbitrary chains instead, which can't be matched up between versions. To find the chains the code uses, load into a level (and start a cutscene for the cutscene values) with a known version running, then run:
+
+```
+tomb-helper chains
+```
+
+For each value it lists the chains the game's code uses to reach the same address, and prints an entry using the best of them. Some values (e.g. most SOTTR cutscene values) are only read by code that finds the object some other way, so have no code chain and keep their current offsets.
+
+For those, record which instructions access the value:
+
+```
+tomb-helper watch CutscenePrompt CutsceneStatus CutsceneLength --delay 15 --seconds 8
+```
+
+This attaches to the game as a debugger and puts hardware breakpoints on up to 4 values, then detaches. The game pauses when it isn't focused, so use `--delay` to give yourself time to switch back to it (and get the values in use, e.g. start a cutscene). It prints a `.with_witnesses(...)` block to add to that version's entry; `derive` matches those instructions in the new build to find where each field moved to (`witness` in its output).
+
+`tomb-helper trace <exe> <static address>` prints the chains the code accesses from every reference to a static address, which helps when investigating by hand.

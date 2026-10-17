@@ -19,12 +19,18 @@ mod action;
 mod config;
 mod cutscene_handler;
 mod cutscene_timing_generator_handler;
+mod chains;
+mod code_trace;
+mod derive;
+mod pe_image;
 mod position_handler;
 mod handler;
 mod position;
 mod process_details;
 mod find_process;
 mod tracked_memory;
+mod watch;
+mod witness;
 mod tracked_position;
 mod cutscene_timing_info;
 mod readable_from_path;
@@ -33,6 +39,15 @@ mod readable_from_path;
 extern crate winapi;
 
 fn main() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if !args.is_empty() {
+        if let Err(e) = derive::run(&args) {
+            eprintln!("{}", e);
+            std::process::exit(1);
+        }
+        return;
+    }
+
     let term = Arc::new(AtomicBool::new(false));
 
     flag::register(SIGINT, Arc::clone(&term)).expect("Could not register SIGINT handler");
