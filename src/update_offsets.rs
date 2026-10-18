@@ -184,7 +184,7 @@ pub fn update_offsets(from: Option<String>, from_version: Option<String>, dry_ru
         discover::save_entry(entry)?;
     }
     println!("\nChecking it...");
-    check::run(handle, base_address, details)
+    check::run(pid, handle, base_address, details)
 }
 
 /// The running game (a known executable), its known details if this build is known, and the details to start from:

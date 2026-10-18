@@ -9,6 +9,8 @@ pub const MAX_PROBES: usize = 8;
 pub const MAX_PROXIES: usize = 2;
 pub const MAX_ATTACHED: usize = 8;
 pub const OBJECT_NAME_LENGTH: usize = 64;
+// Its name, what sets it off and what it does
+pub const TRIGGER_LABEL_LENGTH: usize = 128;
 pub const MAX_TRIANGLES: usize = 163_840;
 pub const MAX_TRIGGERS: usize = 256;
 pub const MAX_TRIGGER_LINES: usize = 16384;
@@ -114,13 +116,58 @@ impl TriggerCategory {
     }
 }
 
+// What triggers can be shown by: what their scripts lead to (see `trigger_scripts`), then whether they act on a
+// particular instance, and the ones that don't do anything known. Each is a bit, in this order. The names are used in
+// the labels and the config.
+pub const TRIGGER_ACTIONS: [&str; 28] = [
+    "checkpoint",
+    "objective",
+    "progress",
+    "cutscene",
+    "moveset",
+    "camera",
+    "streaming",
+    "teleport",
+    "combat",
+    "spawn",
+    "despawn",
+    "damage",
+    "dialogue",
+    "tutorial",
+    "look at",
+    "NPC",
+    "inventory",
+    "campsite",
+    "lighting",
+    "weather",
+    "audio",
+    "UI",
+    "rumble",
+    "saves state",
+    // Acts on or sends messages to a particular instance
+    "instances",
+    // Has a script, but nothing it does is known
+    "something else",
+    "no script",
+    // Not looked for yet
+    "unchecked",
+];
+
+pub fn trigger_action_bit(name: &str) -> u32 {
+    TRIGGER_ACTIONS.iter().position(|a| a.eq_ignore_ascii_case(name)).map_or(0, |i| 1 << i)
+}
+
+pub fn trigger_action_mask(names: &[String]) -> u32 {
+    names.iter().map(|n| trigger_action_bit(n)).fold(0, |mask, bit| mask | bit)
+}
+
 // A trigger's name and where to put it, its outline is in `UiData::trigger_lines`
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
 pub struct TriggerLabel {
     pub position: Position,
     pub category: TriggerCategory,
-    pub name: [u8; OBJECT_NAME_LENGTH],
+    pub name: [u8; TRIGGER_LABEL_LENGTH],
 }
 
 impl TriggerLabel {
@@ -140,9 +187,13 @@ pub struct Line {
 
 // Nul padded
 pub fn name_bytes(name: &str) -> [u8; OBJECT_NAME_LENGTH] {
-    let mut bytes = [0u8; OBJECT_NAME_LENGTH];
-    let length = name.len().min(OBJECT_NAME_LENGTH - 1);
-    bytes[..length].copy_from_slice(&name.as_bytes()[..length]);
+    text_bytes(name)
+}
+
+pub fn text_bytes<const N: usize>(text: &str) -> [u8; N] {
+    let mut bytes = [0u8; N];
+    let length = text.len().min(N - 1);
+    bytes[..length].copy_from_slice(&text.as_bytes()[..length]);
     bytes
 }
 
@@ -306,8 +357,10 @@ pub struct UiSettings {
     pub interactables: AtomicBool,
     pub triggers: AtomicBool,
     pub npcs: AtomicBool,
-    // Which `TriggerCategory`s to show, as bits
+    // Show triggers by `TRIGGER_ACTIONS` rather than `TriggerCategory`s, and which of each to show, as bits
+    pub triggers_by_action: AtomicBool,
     pub trigger_categories: AtomicU32,
+    pub trigger_actions: AtomicU32,
 }
 
 impl UiSettings {

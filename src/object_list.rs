@@ -17,6 +17,8 @@ const SLOTS_PER_READ: usize = 512;
 #[derive(Debug, Clone)]
 pub struct Instance {
     pub address: usize,
+    // Unique, and what scripts refer to it by
+    pub id: u64,
     pub position: Position,
     pub name: String,
     pub full_name: String,
@@ -76,6 +78,7 @@ impl ObjectList {
                 };
                 instances.push(Instance {
                     address,
+                    id: read_usize(slot, instance.id) as u64,
                     position: read_position_from(slot, instance.position),
                     name,
                     full_name,

@@ -10,9 +10,10 @@ use crate::object_list::{self, Instance, ObjectList};
 use crate::position::Position;
 use crate::process_details::{AddressType, ProcessDetails};
 use crate::trigger::{self, Shape};
+use crate::trigger_scripts::SetOffBy;
 use crate::ui_ipc_data::SurfaceKind;
 use nalgebra::{Matrix3, Vector3};
-use process_memory::{CopyAddress, ProcessHandle};
+use process_memory::{CopyAddress, Pid, ProcessHandle};
 use std::convert::TryInto;
 
 // Things of Lara's should be this close to her
@@ -82,13 +83,13 @@ impl Game {
 }
 
 pub fn check(version: Option<String>) -> Result<(), String> {
-    let (_pid, handle, base_address, details) = chains::connect(version)?;
+    let (pid, handle, base_address, details) = chains::connect(version)?;
     println!("Found {} {}", details.name, details.version.version);
-    run(handle, base_address, details)
+    run(pid, handle, base_address, details)
 }
 
 /// Checks the offsets and layout in `details` against the game
-pub fn run(handle: ProcessHandle, base_address: usize, details: ProcessDetails) -> Result<(), String> {
+pub fn run(pid: Pid, handle: ProcessHandle, base_address: usize, details: ProcessDetails) -> Result<(), String> {
     crate::layout::set(details.layout.clone());
     let game = Game { handle, base_address, details };
     let mut report = Report::default();
@@ -121,6 +122,9 @@ pub fn run(handle: ProcessHandle, base_address: usize, details: ProcessDetails) 
         _ => report.skip("Lara's collision and the level's", "Lara wasn't found".to_string()),
     }
     check_kinds(&game, &mut report, &mut components, &nearby);
+    if let Some(instances) = &instances {
+        check_trigger_scripts(&game, &mut report, &mut components, pid, instances, &nearby);
+    }
 
     let mut slots: Vec<_> = components.known_slots().iter().collect();
     slots.sort_by_key(|(_, slot)| **slot);
@@ -202,6 +206,13 @@ fn check_instances(game: &Game, report: &mut Report) -> Option<Vec<Instance>> {
             spawned,
             instances.iter().find(|i| printable(&i.name)).map_or("?", |i| i.name.as_str())
         ),
+    );
+
+    let ids: std::collections::HashSet<u64> = instances.iter().map(|i| i.id).collect();
+    report.result(
+        "instance ids",
+        !ids.contains(&0) && ids.len() == instances.len(),
+        format!("{} distinct ids for {} instances", ids.len(), instances.len()),
     );
 
     let rotations = sample
@@ -413,6 +424,60 @@ fn check_kinds(game: &Game, report: &mut Report, components: &mut Components, ne
             shapes * 10 >= triggers * 8,
             format!("{}/{} triggers have a box, plane, sphere or polygon of a sane size", shapes, triggers),
         );
+    }
+}
+
+fn check_trigger_scripts(
+    game: &Game,
+    report: &mut Report,
+    components: &mut Components,
+    pid: Pid,
+    instances: &[Instance],
+    nearby: &[Instance],
+) {
+    let triggers: Vec<u64> = nearby
+        .iter()
+        .filter(|i| trigger::read_kinds(game.handle, components, i.address).trigger)
+        .map(|i| i.id)
+        .collect();
+    if triggers.is_empty() {
+        return report.skip("trigger scripts", "no triggers near Lara".to_string());
+    }
+    let names = instances.iter().map(|i| (i.id, i.name.clone())).collect();
+    match crate::trigger_scripts::scripts_now(pid, game.handle, game.base_address, &triggers, &names) {
+        Ok(found) => {
+            let mut counts: std::collections::BTreeMap<String, usize> = Default::default();
+            let mut does: std::collections::BTreeMap<String, usize> = Default::default();
+            for script in found.values() {
+                for what in &script.does {
+                    *does.entry(what.clone()).or_insert(0) += 1;
+                }
+            }
+            for set_off_by in found.values().map(|s| &s.set_off_by) {
+                let key = match set_off_by {
+                    SetOffBy::Lara => "Lara".to_string(),
+                    SetOffBy::Instance(Some(name)) => name.clone(),
+                    SetOffBy::Instance(None) => "an instance".to_string(),
+                    SetOffBy::Script => "other scripts".to_string(),
+                    SetOffBy::Nothing => "no script".to_string(),
+                };
+                *counts.entry(key).or_insert(0) += 1;
+            }
+            let with_script = found.values().filter(|s| s.set_off_by != SetOffBy::Nothing).count();
+            report.result(
+                "trigger scripts",
+                with_script * 2 >= found.len(),
+                format!("{}/{} triggers near Lara have a script: {:?}", with_script, found.len(), counts),
+            );
+            // The graph layout is right if the links lead somewhere
+            let described = found.values().filter(|s| !s.does.is_empty()).count();
+            report.result(
+                "trigger script links",
+                described > 0,
+                format!("{}/{} triggers near Lara do something that's known: {:?}", described, with_script, does),
+            );
+        }
+        Err(e) => report.fail("trigger scripts", e),
     }
 }
 

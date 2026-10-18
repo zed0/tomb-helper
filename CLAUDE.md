@@ -74,6 +74,7 @@ User docs (hotkeys, config, cutscene timing generation) live in `README.md`.
 | `src/discover.rs` | `discover [--save]`: finds GameRender (camera), TR9MultibodyClient (-> CollisionSceneClient) and the instance array statics through what they point to, optionally writing them to the offsets file |
 | `src/update_offsets.rs` | `update-offsets [--from <exe or dump>] [--dry-run]`: the one command for a new build. Attaches to any known exe (new builds start from the last known entry for it; an entry without a layout borrows the last one of the same game that has one), finds statics (`discover::find_statics`), Lara (PlayerComponent) -> position chain (kept if the previous chain still lands there, else `chains::best_code_chains`; Y/Z = X + 4/8), ground probes by contents, version string; `--from` adds `derive::derive_lines`; the rest goes to `unverified` for a new build. Saves (`discover::save_entry`) and runs `check::run` |
 | `src/check.rs` | `check`: reads everything the overlay does from the running game and checks it makes sense, to port the layout |
+| `src/trigger_scripts.rs` | What sets triggers off and what they do: a background heap scan for ActionGraph trigger nodes (vtables of every class found by RTTI in the image, `all_vtables`), matched to triggers by instance id, then each node's links in its graph followed (`layout.script`) to the nodes it leads to, described by class (`ACTIONS`) and the instances they act on; cached per id, rescanned for new triggers (10s) and ones with no script (60s). The overlay can show triggers by these words (`TRIGGER_ACTIONS` in `ui_ipc_data`) instead of by name |
 | `src/ui_ipc_data.rs` | Shared-memory IPC (`shared_memory` crate, os_id `"TombHelperIPC-<size of UiDoubleBuffer>"` so a stale mapping from another layout is never opened): `UiData` (camera, `ObjectBox`es, `Capsule`s, `Probe`s, collision `Triangle`s), `UiDoubleBuffer` with a sequence counter per buffer, changed and read in place since `UiData` is ~7MB, copying only the triangles in use, plus `UiSettings` (atomic show/hide toggles, mesh radii, opacity, fade and hidden triangle culling, which the DLL's checkboxes/sliders and the exe's hotkeys change) (`update`; the reader uses `try_read` into a scratch box and keeps its last good copy, since the exe never waits), `SharedMemoryManager` (exe is owner) |
 | `src/lib.rs` | Injected overlay: `TombHelperHud` implements `ImguiRenderLoop`; opens a console only if `config.overlay.console`; shows a position window and draws (near-plane clipped, in world space via `Projector`) a box + name per `ObjectBox`, Lara's capsules, probes, a circle at her feet and the level's collision triangles (filled faintly, under everything, without anti-aliasing,
 skipping back faces and ones off screen, and optionally ones behind others via a quarter resolution software ID buffer
@@ -181,6 +182,22 @@ again (`derive` plus live checks).
   sizes, the x/y plane), 4 sphere (+0x8 radius), 5 polygon volume (+0x8 u32 count, +0x10 -> 0x20 byte entries: corner
   x, y, z, 1 then the vector it's swept along, e.g. (0, 0, 1000); +0x18/+0x1C two more floats, unknown). Whether box and
   plane sizes are half sizes is unverified. Slot 14 holds other things on non-triggers.
+- What sets a trigger off isn't in it either: TriggerComponent +0x38 (ROTTR +0x48) is runtime state (0x40 enabled, 0x10/0x20
+  moved/turned this frame, 0x08/0x04 something inside; set by SOTTR mod+0x47EA10) and every trigger is tested against the
+  same global list of things (mod+0x47C390 -> +0x46EBC0, geometry only). It's decided by the ActionGraph nodes using the
+  trigger, which hold its instance's u64 id (instance +0x60): AGPlayerTriggerNode (Lara), AGInstanceTriggerNode (with
+  the instance's id in it too, e.g. a roaming musician's animhost), AGTriggerNode/AGTriggerMasterNode. A node's
+  references are (id, other id, u32 -1, u32 type << 16 | flag): type 2 or 0xE for triggers, 3/0xF for others; no
+  enter/exit event is stored per trigger. In SOTTR's village 414/477 triggers had a node: 382 player only.
+- Scripts (SOTTR; `layout.script`): no names or tags anywhere, everything is a 64 bit hash, and the ones in scripts are
+  instance ids (instance +0x60; +0x70 is shared by many instances, a parent or unit). A node's +0x8 -> its graph (no
+  RTTI, one per instance with a script, the owner's at instance +0x58; graph +0x8/+0x10 link every graph in a list,
+  +0xA8 is its id = the owner's instance id). Graph +0x78 -> its nodes (pointers, with null gaps), +0x90 -> links header:
+  u32 node count (indices are below it), u32 link count, +0x10 -> links of (u16 from, u16 to, u16 output, u16 input).
+  A trigger node has a second vtable at +0x28 (only the start is in the graph). Subgraphs are AGSubGraphNodes in the
+  same graph that nothing points back at, so their contents aren't followed. AGObjectNode +0x50 and AGMessageSendNode
+  (and AGMessageReceiveNode) +0x28 hold the id of the instance they act on; AGInstance_ActionGraphInstanceNode +0x50 is
+  its own graph's id. Following links, 390 of the 593 trigger ids in SOTTR's village lead to something recognisable.
 - Nothing in the TriggerComponent says what a trigger is for, so `trigger::categorise` goes by words in its name and
   its parent's (e.g. `bendy_bv_young_pine.triggersphere`). About a third are unnamed `triggerplane`/`triggervolume`s
   in the level/mission masters, which end up with anything else unrecognised as unknown.

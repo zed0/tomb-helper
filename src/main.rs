@@ -44,6 +44,7 @@ mod watch;
 mod witness;
 mod tracked_position;
 mod trigger;
+mod trigger_scripts;
 mod update_offsets;
 mod cutscene_timing_info;
 mod readable_from_path;
