@@ -44,7 +44,7 @@ pub fn read_capsule_shapes(
     let mut capsules = vec![];
     for entry in entries.chunks_exact(layout.entry_size) {
         let id = usize_at(entry, layout.entry_id);
-        if (id >> 16) as u8 != layout.capsule_type as u8 {
+        if ((id >> 16) as usize) & 0xFF & layout.capsule_type_mask != layout.capsule_type {
             continue;
         }
         let mut shape = vec![0u8; layout.capsule_size];
@@ -213,15 +213,16 @@ pub fn read_proxy(handle: ProcessHandle, proxy: usize) -> io::Result<ProxyCapsul
 
 fn read_contacts(handle: ProcessHandle, proxy: usize) -> Vec<Vector3<f32>> {
     let layout = &layout::current().proxy;
-    let mut counts = [0u8; 8];
+    let count_at = |offset: usize| {
+        let mut bytes = [0u8; 4];
+        handle.copy_address(proxy + offset, &mut bytes).ok().map(|_| i32::from_le_bytes(bytes).max(0) as usize)
+    };
     let mut records = vec![0u8; MAX_CONTACTS * layout.contact_size];
-    if handle.copy_address(proxy + layout.contact_counts, &mut counts).is_err()
-        || handle.copy_address(proxy + layout.contacts, &mut records).is_err()
-    {
-        return vec![];
-    }
-    let count_at = |offset: usize| i32::from_le_bytes(counts[offset..offset + 4].try_into().unwrap()).max(0) as usize;
-    let count = (count_at(0) + count_at(4)).min(MAX_CONTACTS);
+    let counts = (count_at(layout.contact_count), count_at(layout.second_contact_count));
+    let count = match (counts, handle.copy_address(proxy + layout.contacts, &mut records)) {
+        ((Some(first), Some(second)), Ok(_)) => (first + second).min(MAX_CONTACTS),
+        _ => return vec![],
+    };
     (0..count).map(|i| vector_at(&records, i * layout.contact_size)).collect()
 }
 

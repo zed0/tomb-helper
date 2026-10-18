@@ -190,16 +190,17 @@ fn check_instances(game: &Game, report: &mut Report) -> Option<Vec<Instance>> {
     let placed: Vec<&Instance> = instances.iter().filter(|i| !i.full_name.is_empty()).collect();
     let spawned = instances.len() - placed.len();
     let good_names = instances.iter().filter(|i| printable(&i.name)).count();
+    // SOTTR's placements have no names, so everything goes by its object type
     report.result(
         "names",
-        good_names * 10 >= instances.len() * 9 && !placed.is_empty(),
+        good_names * 10 >= instances.len() * 9,
         format!(
-            "{}/{} readable ({} placed, {} spawned), e.g. {}",
+            "{}/{} readable ({} with placement names, {} by object type), e.g. {}",
             good_names,
             instances.len(),
             placed.len(),
             spawned,
-            placed.first().map_or("?", |i| i.name.as_str())
+            instances.iter().find(|i| printable(&i.name)).map_or("?", |i| i.name.as_str())
         ),
     );
 

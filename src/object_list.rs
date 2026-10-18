@@ -55,15 +55,24 @@ impl ObjectList {
                 }
                 let address = self.array_address + (first_slot + index) * instance.size;
                 let placement = read_usize(slot, instance.placement);
-                let (name, full_name) = if placement != 0 {
-                    let name = read_pointer(handle, placement + placement_layout.name).unwrap_or(0);
-                    let full_name = read_pointer(handle, placement + placement_layout.full_name).unwrap_or(0);
-                    (self.name(handle, name), self.name(handle, full_name))
-                } else {
+                let (name, full_name) = match placement {
+                    0 => (String::new(), String::new()),
+                    _ => {
+                        let name = read_pointer(handle, placement + placement_layout.name).unwrap_or(0);
+                        let full_name = read_pointer(handle, placement + placement_layout.full_name).unwrap_or(0);
+                        (self.name(handle, name), self.name(handle, full_name))
+                    }
+                };
+                // Spawned instances have no placement, and SOTTR's placements are all called "?", so they go by what
+                // they are instead
+                let unnamed = |n: &str| n.is_empty() || n == "?";
+                let (name, full_name) = if unnamed(&name) {
                     match read_chain(handle, address, &instance.object_name) {
-                        Some(name) => (self.name(handle, name), String::new()),
+                        Some(object_name) => (self.name(handle, object_name), String::new()),
                         None => continue,
                     }
+                } else {
+                    (name, if unnamed(&full_name) { String::new() } else { full_name })
                 };
                 instances.push(Instance {
                     address,
