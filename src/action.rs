@@ -43,4 +43,6 @@ pub enum Action {
     ToggleInteractables {},
     ToggleTriggers {},
     ToggleNpcs {},
+    // Everything to do with collision at once
+    ToggleCollision {},
 }

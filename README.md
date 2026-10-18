@@ -30,6 +30,7 @@ The default configuration is:
 		{"key": "F7", "action": {"RestorePosition": {}}},
 		{"key": "F8", "action": {"ResetSkipCutsceneTracker": {}}},
 		{"key": "F9", "action": {"ToggleUI": {}}},
+		{"key": "F10", "action": {"ToggleCollision": {}}},
 		{"key": "Space", "action": {"SkipCutscene": {}}},
 		{"key": "W", "action": {"Forward": {"distance": 100.0}}},
 		{"key": "S", "action": {"Backward": {"distance": 100.0}}},
@@ -42,7 +43,7 @@ The default configuration is:
 	"cutscene_blacklist_file": "https://gist.githubusercontent.com/Atorizil/734a7649471f0fa0a2a9f92a167e294b/raw/Blacklist.json",
 	"cutscene_timing_file": "https://gist.githubusercontent.com/zed0/762a5790501af95189344834bc210616/raw/tomb-helper-timing-info.json",
 	"record_cutscene_timing": {"Off": {}},
-	"overlay": {"object_filters": [], "interactables": true, "npcs": true, "triggers": false, "object_radius": 5000.0, "object_box_size": 50.0, "lara_capsules": false, "lara_probes": true, "lara_proxy": true, "console": false}
+	"overlay": {"object_filters": [], "interactables": true, "npcs": true, "triggers": false, "collision": false, "object_radius": 5000.0, "object_box_size": 50.0, "lara_capsules": false, "lara_probes": true, "lara_proxy": true, "console": false}
 }
 ```
 
@@ -58,7 +59,7 @@ Currently the available actions are:
 - `SkipCutscene`
 - `ResetSkipCutsceneTracker` (reset the total amount of time of cutscenes skipped, prints out the previous total, suggest binding this to the same key you use to reset livesplit)
 - `ToggleUI` (inject or remove the in-game overlay; experimental, DirectX 12 only)
-- `ToggleLaraCollision`, `ToggleCoarseCollision`, `ToggleDetailedCollision` (show or hide Lara's collision, the level's collision she collides with, and the rest of it, in the overlay)
+- `ToggleLaraCollision`, `ToggleCoarseCollision`, `ToggleDetailedCollision` (show or hide Lara's collision, the level's collision she collides with, and the rest of it, in the overlay), and `ToggleCollision` for all of them at once
 - `ToggleInteractables`, `ToggleNpcs`, `ToggleTriggers` (show or hide the boxes round interactable objects and characters, and the trigger volumes, in the overlay)
 - `Forward` (can take a distance, which defaults to `100.0`)
 - `Backward` (can take a distance, which defaults to `100.0`)
@@ -121,7 +122,7 @@ It currently needs the `CameraView`, `CameraLens` and `InstanceArray` (and `Play
 - `collision_meshes`: draw the level's collision that Lara collides with (the ground, walls, rocks, buildings, invisible walls and anything else fixed in place) near her: floors in green, walls in orange and surfaces facing down in blue. Physics props (barrels, buckets, breakables, ...) aren't included. On by default
 - `detailed_collision_meshes`: also draw the level's collision she doesn't collide with, in purple. Many objects have a detailed mesh (probably for projectiles, e.g. one for each log of a pile) as well as the rough one she collides with. Off by default
 
-These, and Lara's own collision (`lara_capsules`/`lara_probes`/`lara_proxy`), can be turned on and off while playing with the checkboxes in the overlay's window or the `ToggleLaraCollision`/`ToggleCoarseCollision`/`ToggleDetailedCollision` hotkeys (F10, F11 and F12 by default; F12 is also Steam's screenshot key). The settings above are what they start as. The window also has a slider for how opaque the level's collision and Lara's collision are drawn, a checkbox to draw it fainter the further it is from Lara (fading out by the edge of the radius, faster the higher the fade strength), and one to hide the triangles behind other collision triangles (the game's own scenery doesn't hide them, and triangles smaller than about 4 pixels across can go missing). Their starting values are `collision_opacity` (default 0.25), `collision_mesh_fade` (default on), `collision_mesh_fade_strength` (default 2) and `collision_mesh_cull_hidden` (default on).
+These, and Lara's own collision (`lara_capsules`/`lara_probes`/`lara_proxy`), can be turned on and off while playing with the checkboxes under "Collision meshes" in the overlay's window, or the `ToggleLaraCollision`/`ToggleCoarseCollision`/`ToggleDetailedCollision` hotkey actions (not bound by default). "Collision meshes" itself turns all of them on and off at once: it's off to start with (`collision` in the config) and `ToggleCollision` (F10 by default) toggles it. The settings above are what they start as. The window also has a slider for how opaque the level's collision and Lara's collision are drawn, a checkbox to draw it fainter the further it is from Lara (fading out by the edge of the radius, faster the higher the fade strength), and one to hide the triangles behind other collision triangles (the game's own scenery doesn't hide them, and triangles smaller than about 4 pixels across can go missing). Their starting values are `collision_opacity` (default 0.25), `collision_mesh_fade` (default on), `collision_mesh_fade_strength` (default 2) and `collision_mesh_cull_hidden` (default on).
 - `collision_mesh_radius`, `detailed_collision_mesh_radius`: how far from Lara's feet the collision she collides with and the detailed collision are drawn (default 1500 each, i.e. 15m; they can also be changed with sliders in the overlay's window). The closest 163840 triangles are drawn, so this gets slow with a large radius
 - `console`: open a console window in the game showing the overlay's logs, for debugging it
 - `lara_proxy`: also draw the capsule the game moves Lara with, i.e. what she collides with walls with (white, or yellow while it's pushing her off something). When it changes shape (e.g. when she starts aiming) the shape it's changing to is drawn in red. While she aims, the proxies attached to Lara's also collide, and are drawn the same way: the camera, which moves behind her, and her weapon (a thin rod), which is what holds her further from walls in front of her

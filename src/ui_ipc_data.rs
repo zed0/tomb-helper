@@ -285,6 +285,8 @@ pub fn projection_from_lens(lens: &[f32; 8]) -> [f32; 16] {
 pub struct UiSettings {
     // Whether the exe has set the starting values from its config
     pub initialised: AtomicBool,
+    // Everything to do with collision (Lara's and the meshes), whatever the settings below
+    pub collision: AtomicBool,
     // Lara's capsules and probes
     pub lara_collision: AtomicBool,
     // The level's collision meshes Lara collides with, and the rest
