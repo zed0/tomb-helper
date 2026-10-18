@@ -57,7 +57,7 @@ impl OverlayHandler {
         let mut ui_memory_manager = SharedMemoryManager::new(true);
         let manager = ui_memory_manager.get_mut();
         let mut val = manager.current();
-        val.debug = true;
+        val.debug = config.console;
         val.should_exit = false;
         val.object_count = 0;
         manager.set_next(val);
