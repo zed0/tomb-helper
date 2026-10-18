@@ -12,7 +12,7 @@ use std::{env, fmt, io, time};
 use std::error::Error;
 use hudhook::inject::Process;
 use process_memory::{Architecture, CopyAddress, DataMember, Memory, Pid, ProcessHandle};
-use crate::ui_ipc_data::{BoxKind, ObjectBox, SharedMemoryManager, MAX_CAPSULES, MAX_OBJECTS, MAX_PROBES, OBJECT_NAME_LENGTH};
+use crate::ui_ipc_data::{BoxKind, ObjectBox, SharedMemoryManager, MAX_CAPSULES, MAX_OBJECTS, MAX_PROBES, MAX_PROXIES, OBJECT_NAME_LENGTH};
 
 // How often to rescan the instance array for objects matching the filters
 const OBJECT_REFRESH_INTERVAL: time::Duration = time::Duration::from_secs(1);
@@ -30,6 +30,7 @@ pub struct OverlayHandler {
     instance_array_offsets: Vec<usize>,
     player_instance_offsets: Option<Vec<usize>>,
     player_probes_offsets: Option<Vec<usize>>,
+    proxy_type_offsets: Option<Vec<usize>>,
     object_list: Option<ObjectList>,
     objects: Vec<(Instance, BoxKind)>,
     // Lara's instance and her capsules in bone space
@@ -85,6 +86,7 @@ impl OverlayHandler {
             instance_array_offsets: address_offsets.get(&AddressType::InstanceArray)?.clone(),
             player_instance_offsets: address_offsets.get(&AddressType::PlayerInstance).cloned(),
             player_probes_offsets: address_offsets.get(&AddressType::PlayerProbes).cloned(),
+            proxy_type_offsets: address_offsets.get(&AddressType::ProxyComponentType).cloned(),
             object_list: None,
             objects: vec![],
             lara: None,
@@ -195,6 +197,12 @@ impl Handler for OverlayHandler {
             (true, Some(offsets)) => collision::read_probes(self.handle, self.resolve(offsets)?)?,
             _ => vec![],
         };
+        let proxies = match (self.config.lara_proxy, &self.player_instance_offsets, &self.proxy_type_offsets) {
+            (true, Some(instance), Some(type_id)) => {
+                collision::read_proxy(self.handle, self.resolve(instance)?, self.resolve(type_id)?)?
+            }
+            _ => vec![],
+        };
 
         let manager = self.ui_memory_manager.get_mut();
         let mut val = manager.current();
@@ -232,6 +240,10 @@ impl Handler for OverlayHandler {
             *slot = *probe;
         }
         val.probe_count = probes.len().min(MAX_PROBES);
+        for (slot, proxy) in val.proxies.iter_mut().zip(proxies.iter().take(MAX_PROXIES)) {
+            *slot = *proxy;
+        }
+        val.proxy_count = proxies.len().min(MAX_PROXIES);
 
         val.capsule_count = 0;
         if let Some((address, shapes)) = &self.lara {

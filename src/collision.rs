@@ -61,12 +61,7 @@ pub fn read_capsule_shapes(handle: ProcessHandle, instance_address: usize) -> io
         let mut shape = [0u8; CAPSULE_SIZE];
         handle.copy_address(usize_at(entry, SHAPE_ENTRY_SHAPE), &mut shape)?;
 
-        let rotation = UnitQuaternion::from_quaternion(Quaternion::new(
-            f32_at(&shape, CAPSULE_ROTATION + 12),
-            f32_at(&shape, CAPSULE_ROTATION),
-            f32_at(&shape, CAPSULE_ROTATION + 4),
-            f32_at(&shape, CAPSULE_ROTATION + 8),
-        ));
+        let rotation = quaternion_at(&shape, CAPSULE_ROTATION);
         let centre = vector_at(&shape, CAPSULE_CENTRE);
         let half_axis = rotation * Vector3::z() * (f32_at(&shape, CAPSULE_LENGTH) / 2.0);
         capsules.push(CapsuleShape {
@@ -108,6 +103,112 @@ pub fn place_capsules(
             }
         })
         .collect())
+}
+
+// Lara's movement collision is the capsule of her character proxy (cdc::ProxyComponent), which the game
+// moves her with. Its slot in the component table is the proxy component type's id, a static u32
+// (`ProxyComponentType`). It holds the shape in use, and the one it's changing to (e.g. when she starts
+// aiming), which the shape in use eases towards over a few frames.
+const PROXY_CENTRE: usize = 0x30; // Of the shape in use, in world space
+const PROXY_SHAPES: [ProxyShape; 2] = [
+    ProxyShape { size: 0x58, offset: 0x60, local_rotation: 0x80, rotation: 0x90 },
+    ProxyShape { size: 0xC0, offset: 0xD0, local_rotation: 0xF0, rotation: 0x100 },
+];
+const PROXY_SIZE: usize = 0x150;
+// The physics capsule the proxy is swept as, which the shape in use is copied to
+const PROXY_BODY: usize = 0x148; // -> body, whose +0x20 -> shape
+const BODY_SHAPE: usize = 0x20;
+const SHAPE_CENTRE: usize = 0x0; // World space
+const SHAPE_ROTATION: usize = 0x20; // World space quaternion x, y, z, w; the capsule runs along its z axis
+const SHAPE_RADIUS: usize = 0x44; // Then the length of the cylinder part
+const SHAPE_TYPE: usize = 0x98;
+const SHAPE_TYPE_CAPSULE_BODY: u8 = 1;
+const SHAPE_SIZE: usize = 0xA0;
+// Shapes this similar are drawn once
+const PROXY_SAME_SHAPE: f32 = 0.01;
+
+struct ProxyShape {
+    size: usize, // Radius, then the length of the cylinder part (from the physics shape's volume)
+    offset: usize, // Of the centre from Lara's feet, in her space
+    local_rotation: usize, // Tilt of the capsule (e.g. lying down when rolling), quaternion x, y, z, w
+    rotation: usize, // Lara's facing
+}
+
+// The proxy's shapes in world space: the one in use, then the one it's changing to if that's different
+pub fn read_proxy(handle: ProcessHandle, instance_address: usize, type_id_address: usize) -> io::Result<Vec<Capsule>> {
+    let mut type_id = [0u8; 4];
+    handle.copy_address(type_id_address, &mut type_id)?;
+    let components = read_usize(handle, instance_address + INSTANCE_COMPONENTS)?;
+    let proxy = read_usize(handle, components + u32::from_le_bytes(type_id) as usize * 8)?;
+    if proxy == 0 {
+        return Ok(vec![]);
+    }
+    let mut bytes = [0u8; PROXY_SIZE];
+    handle.copy_address(proxy, &mut bytes)?;
+
+    // Lara's feet plus her rotated offset is the centre for most moves, but not e.g. rolls, so use the one
+    // the game stores, and place the other shape relative to it
+    let mut centre = vector_at(&bytes, PROXY_CENTRE);
+    let in_use_offset = vector_at(&bytes, PROXY_SHAPES[0].offset);
+    let mut capsules: Vec<(Vector3<f32>, Vector3<f32>, Capsule)> = vec![];
+
+    // The physics shape is what's actually swept, so prefer it for the shape in use
+    if let Some((capsule, physics_centre)) = read_physics_capsule(handle, usize_at(&bytes, PROXY_BODY)) {
+        let size = Vector3::new(f32_at(&bytes, PROXY_SHAPES[0].size), f32_at(&bytes, PROXY_SHAPES[0].size + 4), 0.0);
+        capsules.push((size, in_use_offset, capsule));
+        centre = physics_centre;
+    }
+
+    for shape in &PROXY_SHAPES {
+        let radius = f32_at(&bytes, shape.size);
+        let length = f32_at(&bytes, shape.size + 4);
+        let offset = vector_at(&bytes, shape.offset);
+        let rotation = quaternion_at(&bytes, shape.rotation);
+        let size = Vector3::new(radius, length, 0.0);
+        if capsules.iter().any(|(s, o, _)| (s - size).norm() < PROXY_SAME_SHAPE && (o - offset).norm() < PROXY_SAME_SHAPE) {
+            continue;
+        }
+        let shape_centre = centre + rotation * (offset - in_use_offset);
+        let half_axis = rotation * quaternion_at(&bytes, shape.local_rotation) * Vector3::z() * (length / 2.0);
+        capsules.push((
+            size,
+            offset,
+            Capsule { a: to_position(&(shape_centre - half_axis)), b: to_position(&(shape_centre + half_axis)), radius },
+        ));
+    }
+    Ok(capsules.into_iter().map(|(_, _, capsule)| capsule).collect())
+}
+
+// The capsule and its centre
+fn read_physics_capsule(handle: ProcessHandle, body: usize) -> Option<(Capsule, Vector3<f32>)> {
+    if body == 0 {
+        return None;
+    }
+    let shape = read_usize(handle, body + BODY_SHAPE).ok()?;
+    if shape == 0 {
+        return None;
+    }
+    let mut bytes = [0u8; SHAPE_SIZE];
+    handle.copy_address(shape, &mut bytes).ok()?;
+    if bytes[SHAPE_TYPE] != SHAPE_TYPE_CAPSULE_BODY {
+        return None;
+    }
+    let centre = vector_at(&bytes, SHAPE_CENTRE);
+    let radius = f32_at(&bytes, SHAPE_RADIUS);
+    let half_axis = quaternion_at(&bytes, SHAPE_ROTATION) * Vector3::z() * (f32_at(&bytes, SHAPE_RADIUS + 4) / 2.0);
+    Some((
+        Capsule { a: to_position(&(centre - half_axis)), b: to_position(&(centre + half_axis)), radius },
+        centre,
+    ))
+}
+
+fn quaternion_at(bytes: &[u8], offset: usize) -> UnitQuaternion<f32> {
+    UnitQuaternion::from_quaternion(Quaternion::new(
+        f32_at(bytes, offset + 12),
+        f32_at(bytes, offset),
+        f32_at(bytes, offset + 4),
+        f32_at(bytes, offset + 8),
+    ))
 }
 
 // The ground probes the game casts for Lara: one per foot (knee height to below the foot) and one for

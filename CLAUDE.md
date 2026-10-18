@@ -66,7 +66,7 @@ User docs (hotkeys, config, cutscene timing generation) live in `README.md`.
 | `src/readable_from_path.rs` | `ReadableFromPath` trait: load JSON from a local path or URL (blocking reqwest), default on failure |
 | `src/overlay_handler.rs` | **WIP.** On `ToggleUI` injects `tomb_helper_ui.dll` into the game (`hudhook::inject`), streams position, `CameraView`, a projection built from `CameraLens` and the transforms of objects matching `config.overlay` filters (rescanned every second) into shared memory each tick; sets `should_exit` to eject on toggle-off/drop. `TrackedCameraMatrix` (16 floats) |
 | `src/object_list.rs` | Reads the game's static instance array (`InstanceArray`, 0x120 byte records until a zero header): position, placement names, world matrix (built from the instance's position + Rx*Ry*Rz Euler rotation, with only the scale from `cdc::TransformComponent`, which goes stale for Lara), and model bounds (`read_bounds`: component table -> DrawableComponent -> InstanceDrawable -> CommonRenderModelInstance -> CommonRenderModel -> `Mesh` header min/max). Layout offsets are constants found in ROTTR Steam |
-| `src/collision.rs` | Lara's hit capsules: shape list from her `CollideComponent` (+0x70, bone space capsules), placed each tick with the live bone matrices at `TransformComponent+0x80`; and the static ground probe records (`PlayerProbes`). Lara has no stored movement shape: her other environment queries are rays in ActionGraph nodes |
+| `src/collision.rs` | Lara's hit capsules: shape list from her `CollideComponent` (+0x70, bone space capsules), placed each tick with the live bone matrices at `TransformComponent+0x80`; and the static ground probe records (`PlayerProbes`). her movement collision is the capsule of her `cdc::ProxyComponent` (`read_proxy`), found by watching writes to her position (`watch XPosition --write`) back through the player move code |
 | `src/ui_ipc_data.rs` | Shared-memory IPC (`shared_memory` crate, os_id `"TombHelperIPC"`): `UiData`, lock-free `UiDoubleBuffer` (`set_next`/`current`), `SharedMemoryManager` (exe is owner) |
 | `src/lib.rs` | **WIP.** Injected overlay: `TombHelperHud` implements `ImguiRenderLoop`; shows position window, draws a near-plane-clipped wireframe box + name per `ObjectBox` and a circle at Lara. Calls `eject()` when `should_exit` is set |
 
@@ -96,6 +96,14 @@ User docs (hotkeys, config, cutscene timing generation) live in `README.md`.
   first row), +0xF0 projection (swapped for a narrower fov pass for ~1ms of every frame, so the overlay builds its own
   from +0x30/+0x48), +0x520 world-to-view. Matrices are row-major for row vectors and view space y
   points down the screen. World is Z up.
+- Lara's movement collision is her `cdc::ProxyComponent` capsule (`collision::read_proxy`): +0x30 world centre, +0x58
+  radius/cylinder length, +0x60 offset from her feet, +0x80 tilt, +0x90 facing; +0xC8.. is the shape it's
+  changing to, which the one in use eases towards over a few frames. Seen shapes (radius, cylinder length, offset):
+  standing 25/60 (0,-5,85) (30..140 above her feet), aiming 25/40 (0,-10,90), crouched 23.7/35.8 (0,0,60),
+  rolling 45/15 (0,-23,90) tilted ~25deg (38..142, after a 25/50 (0,-20,92) wind up), and once 25/25 (0,-25,0)
+  tilted 90deg (unidentified). The roll swapping a radius 25 capsule for a 45 one, offset 23 along her local -y, is
+  the likely cause of the aim + roll wall clip. The physics capsule actually swept is at proxy+0x148 -> +0x20.
+  Found by `watch XPosition --write` -> player move (+0x83B330) <- +0x840460, which collides via +0x82B770.
 - Model bounds are in each `Mesh` resource header ("Mesh" magic, +0x10 sphere centre, +0x20/+0x30 box min/max,
   +0x50 sphere radius); terrain meshes are in world space, others in object space. Instances that aren't drawn
   (triggers etc.) have no `InstanceDrawable`. Lara's instance is `PlayerInstance` (`Player+0x31A8`).

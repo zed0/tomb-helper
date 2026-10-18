@@ -120,6 +120,10 @@ fn default_lara_probes() -> bool {
     true
 }
 
+fn default_lara_proxy() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct OverlayConfig {
     // Objects whose placement name contains any of these (case insensitive) get a box. "" matches everything.
@@ -137,6 +141,9 @@ pub struct OverlayConfig {
     // Draw the ground probes the game casts for Lara
     #[serde(default = "default_lara_probes")]
     pub lara_probes: bool,
+    // Draw the capsule the game moves Lara with
+    #[serde(default = "default_lara_proxy")]
+    pub lara_proxy: bool,
 }
 
 impl Default for OverlayConfig {
