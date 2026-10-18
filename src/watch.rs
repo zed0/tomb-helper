@@ -10,6 +10,7 @@ use crate::process_details::AddressType;
 use iced_x86::{Decoder, DecoderOptions, Formatter, Instruction, IntelFormatter, OpKind, Register};
 use process_memory::{CopyAddress, DataMember, Memory, Pid, ProcessHandle, TryIntoProcessHandle};
 use std::collections::{BTreeMap, HashMap};
+use std::convert::TryInto;
 use std::time::{Duration, Instant};
 use winapi::shared::minwindef::FALSE;
 use winapi::shared::winerror::ERROR_SEM_TIMEOUT;
@@ -32,6 +33,11 @@ const STATUS_BREAKPOINT: u32 = 0x8000_0003;
 const MAX_INSTRUCTION_LENGTH: usize = 15;
 // Witnesses suggested per value
 const MAX_WITNESSES: usize = 8;
+// How much of the stack to search for return addresses, and how many callers to keep
+const STACK_SCAN_SIZE: usize = 0x1000;
+const MAX_CALLERS: usize = 8;
+// Caller chains printed per instruction by `watch-raw`
+const MAX_CALLER_CHAINS: usize = 3;
 
 #[repr(C, align(16))]
 struct AlignedContext(CONTEXT);
@@ -46,8 +52,9 @@ fn thread_context(thread: HANDLE, flags: u32) -> Option<AlignedContext> {
     }
 }
 
-/// Points debug registers 0..n at the addresses (1 byte each, break on read or write), or clears them
-fn set_watches(thread: HANDLE, addresses: &[usize]) -> bool {
+/// Points debug registers 0..n at the addresses (1 byte each, break on read or write, or only on
+/// write), or clears them
+fn set_watches(thread: HANDLE, addresses: &[usize], write_only: bool) -> bool {
     let mut context = match thread_context(thread, CONTEXT_DEBUG_REGISTERS) {
         Some(c) => c,
         None => return false,
@@ -57,9 +64,9 @@ fn set_watches(thread: HANDLE, addresses: &[usize]) -> bool {
     let mut values = [0_u64; MAX_WATCHES];
     for (i, address) in addresses.iter().enumerate().take(MAX_WATCHES) {
         values[i] = *address as u64;
-        // Local enable, RW = 11 (read or write), LEN = 00 (1 byte)
+        // Local enable, RW = 11 (read or write) or 01 (write), LEN = 00 (1 byte)
         dr7 |= 1 << (i * 2);
-        dr7 |= 0b11 << (16 + i * 4);
+        dr7 |= if write_only { 0b01 } else { 0b11 } << (16 + i * 4);
     }
     c.Dr0 = values[0];
     c.Dr1 = values[1];
@@ -127,15 +134,55 @@ struct Hit {
     count: usize,
     text: String,
     displacement: i64,
+    // Return addresses found on the stack (as RVAs), most recent first, and how often each chain was seen
+    callers: BTreeMap<Vec<usize>, usize>,
 }
 
-/// Records which instructions access each address, as RVAs relative to `base_addr`
+/// A best guess at the call stack: values on the stack that point just after a call instruction in `code`.
+/// Without unwind info this can include stale return addresses, but the first few are usually right.
+fn stack_callers(handle: ProcessHandle, c: &CONTEXT, code: (usize, usize), base_addr: usize) -> Vec<usize> {
+    // Near the top of the stack a long read runs off the end, so fall back to shorter ones
+    let stack = match (0..4)
+        .map(|shift| vec![0_u8; STACK_SCAN_SIZE >> shift])
+        .find_map(|mut stack| handle.copy_address(c.Rsp as usize, &mut stack).ok().map(|_| stack))
+    {
+        Some(stack) => stack,
+        None => return vec![],
+    };
+    let mut callers = vec![];
+    for value in stack.chunks_exact(8).map(|b| u64::from_le_bytes(b.try_into().unwrap()) as usize) {
+        if value < code.0 + 8 || value >= code.1 {
+            continue;
+        }
+        let mut before = [0_u8; 7];
+        if handle.copy_address(value - before.len(), &mut before).is_err() {
+            continue;
+        }
+        // call rel32 / call [rip+disp32] / call [reg+disp8] / call reg
+        let is_call = before[2] == 0xE8
+            || (before[1] == 0xFF && before[2] & 0x38 == 0x10)
+            || (before[4] == 0xFF && before[5] & 0x38 == 0x10)
+            || (before[5] == 0xFF && before[6] & 0xF8 == 0xD0);
+        if is_call {
+            callers.push(value - base_addr);
+            if callers.len() == MAX_CALLERS {
+                break;
+            }
+        }
+    }
+    callers
+}
+
+/// Records which instructions access each address, as RVAs relative to `base_addr`, and with `code_range` (the
+/// range of the game's code) which functions called them
 fn record(
     pid: Pid,
     handle: ProcessHandle,
     base_addr: usize,
     addresses: &[usize],
     seconds: u64,
+    write_only: bool,
+    code_range: Option<(usize, usize)>,
 ) -> Result<Vec<BTreeMap<usize, Hit>>, String> {
     if unsafe { DebugActiveProcess(pid) } == FALSE {
         return Err(format!("Could not attach as a debugger (error {})", unsafe { GetLastError() }));
@@ -162,7 +209,7 @@ fn record(
             detaching = true;
             for thread in threads.values() {
                 unsafe { SuspendThread(*thread) };
-                set_watches(*thread, &[]);
+                set_watches(*thread, &[], write_only);
                 unsafe { ResumeThread(*thread) };
             }
         }
@@ -185,12 +232,12 @@ fn record(
                 let info = unsafe { event.u.CreateProcessInfo() };
                 unsafe { CloseHandle(info.hFile) };
                 threads.insert(event.dwThreadId, info.hThread);
-                armed += set_watches(info.hThread, if detaching { &[] } else { &addresses }) as usize;
+                armed += set_watches(info.hThread, if detaching { &[] } else { &addresses }, write_only) as usize;
             }
             CREATE_THREAD_DEBUG_EVENT => {
                 let thread = unsafe { event.u.CreateThread() }.hThread;
                 threads.insert(event.dwThreadId, thread);
-                armed += set_watches(thread, if detaching { &[] } else { &addresses }) as usize;
+                armed += set_watches(thread, if detaching { &[] } else { &addresses }, write_only) as usize;
             }
             EXIT_THREAD_DEBUG_EVENT => {
                 threads.remove(&event.dwThreadId);
@@ -220,9 +267,13 @@ fn record(
                                             count: 0,
                                             text,
                                             displacement: instruction.memory_displacement64() as i64,
+                                            callers: BTreeMap::new(),
                                         }
                                     });
                                     hit.count += 1;
+                                    if let Some(code_range) = code_range {
+                                        *hit.callers.entry(stack_callers(handle, &context.0, code_range, base_addr)).or_insert(0) += 1;
+                                    }
                                 }
                             }
                             context.0.Dr6 = 0;
@@ -233,7 +284,7 @@ fn record(
                     // The breakpoint Windows raises once attached; every thread is known by now
                     attached = true;
                     for thread in threads.values() {
-                        armed += set_watches(*thread, &addresses) as usize;
+                        armed += set_watches(*thread, &addresses, write_only) as usize;
                     }
                 } else if code != STATUS_BREAKPOINT {
                     // The game's own exceptions are its business
@@ -260,19 +311,71 @@ fn record(
     Ok(hits)
 }
 
-/// For testing the debugger itself on any 64-bit process: `watch-raw <pid> <address in hex>`
-pub fn watch_raw(pid: &str, address: &str, seconds: u64) -> Result<(), String> {
+fn parse_hex(text: &str) -> Result<usize, String> {
+    usize::from_str_radix(text.trim_start_matches("0x"), 16).map_err(|e| format!("{}: {}", text, e))
+}
+
+// An absolute address in hex, or one relative to the main module with a leading `+`
+fn parse_address(text: &str, base_addr: usize) -> Result<usize, String> {
+    match text.strip_prefix('+') {
+        Some(rva) => Ok(base_addr + parse_hex(rva)?),
+        None => parse_hex(text),
+    }
+}
+
+/// `watch-raw <pid> <address>`: record what accesses (or with `write_only` writes) any address in a 64-bit
+/// process, and for the main module's code which functions it was called from. Addresses are printed
+/// relative to the main module.
+pub fn watch_raw(pid: &str, address: &str, seconds: u64, delay: u64, write_only: bool) -> Result<(), String> {
     let pid: Pid = pid.parse().map_err(|_| "Bad PID")?;
-    let address = usize::from_str_radix(address.trim_start_matches("0x"), 16).map_err(|e| e.to_string())?;
     let handle = pid.try_into_process_handle().map_err(|e| e.to_string())?;
-    let hits = record(pid, handle, 0, &[address], seconds)?;
-    for (rva, hit) in &hits[0] {
-        println!("    {:#X} {:>6}x  {}", rva, hit.count, hit.text);
+    let base_addr = find_process::get_base_address(pid) as usize;
+    let image_size = find_process::get_image_size(handle, base_addr).map_err(|e| e.to_string())?;
+    let address = parse_address(address, base_addr)?;
+    if delay > 0 {
+        println!("Starting in {} seconds...", delay);
+        std::thread::sleep(Duration::from_secs(delay));
+    }
+    let hits = record(pid, handle, base_addr, &[address], seconds, write_only, Some((base_addr, base_addr + image_size)))?;
+    let mut by_count: Vec<(&usize, &Hit)> = hits[0].iter().collect();
+    by_count.sort_by_key(|(rva, hit)| (std::cmp::Reverse(hit.count), **rva));
+    for (rva, hit) in by_count {
+        println!("    +{:#X} {:>6}x  {}", rva, hit.count, hit.text);
+        print_callers(hit);
     }
     Ok(())
 }
 
-pub fn watch(names: &[&str], version: Option<String>, seconds: u64, delay: u64) -> Result<(), String> {
+fn print_callers(hit: &Hit) {
+    let mut chains: Vec<(&Vec<usize>, &usize)> = hit.callers.iter().collect();
+    chains.sort_by_key(|(_, count)| std::cmp::Reverse(**count));
+    for (chain, count) in chains.into_iter().take(MAX_CALLER_CHAINS) {
+        let chain: Vec<String> = chain.iter().map(|rva| format!("+{:#X}", rva)).collect();
+        println!("        {:>6}x  called from {}", count, chain.join(" <- "));
+    }
+}
+
+/// `disasm <pid> <address> [count]`: print instructions from a running process's memory
+pub fn disasm(pid: &str, address: &str, count: &str) -> Result<(), String> {
+    let pid: Pid = pid.parse().map_err(|_| "Bad PID")?;
+    let handle = pid.try_into_process_handle().map_err(|e| e.to_string())?;
+    let base_addr = find_process::get_base_address(pid) as usize;
+    let address = parse_address(address, base_addr)?;
+    let count: usize = count.parse().map_err(|_| "Bad instruction count")?;
+    let mut bytes = vec![0_u8; count * MAX_INSTRUCTION_LENGTH];
+    handle.copy_address(address, &mut bytes).map_err(|e| e.to_string())?;
+    let mut decoder = Decoder::with_ip(64, &bytes, address as u64, DecoderOptions::NONE);
+    let mut formatter = IntelFormatter::new();
+    let mut text = String::new();
+    for instruction in decoder.iter().take(count) {
+        text.clear();
+        formatter.format(&instruction, &mut text);
+        println!("+{:#X}  {}", instruction.ip() as usize - base_addr, text);
+    }
+    Ok(())
+}
+
+pub fn watch(names: &[&str], version: Option<String>, seconds: u64, delay: u64, write_only: bool) -> Result<(), String> {
     if delay > 0 {
         println!("Starting in {} seconds...", delay);
         std::thread::sleep(Duration::from_secs(delay));
@@ -307,7 +410,8 @@ pub fn watch(names: &[&str], version: Option<String>, seconds: u64, delay: u64) 
     }
     let addresses: Vec<usize> = watched.iter().map(|(_, a)| *a).collect();
 
-    let hits = record(pid, handle, base_addr, &addresses, seconds)?;
+    let image_size = find_process::get_image_size(handle, base_addr).map_err(|e| e.to_string())?;
+    let hits = record(pid, handle, base_addr, &addresses, seconds, write_only, Some((base_addr, base_addr + image_size)))?;
 
     let mut witnesses: BTreeMap<AddressType, Vec<Hex>> = BTreeMap::new();
     for ((address_type, address), hits) in watched.iter().zip(&hits) {
@@ -320,6 +424,7 @@ pub fn watch(names: &[&str], version: Option<String>, seconds: u64, delay: u64) 
         by_count.sort_by_key(|(rva, hit)| (std::cmp::Reverse(hit.count), **rva));
         for (rva, hit) in &by_count {
             println!("    {:#010X} {:>6}x  {}", rva, hit.count, hit.text);
+            print_callers(hit);
         }
         // The best witnesses access the field with the same offset as the chain (so they use the
         // same object pointer), and run often (so they're the main code path, not a one-off)

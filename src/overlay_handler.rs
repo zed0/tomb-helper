@@ -126,7 +126,7 @@ impl OverlayHandler {
 
         let mut boxes = vec![];
         self.lara = None;
-        if let (true, Some(offsets)) = (self.config.lara_collision, &self.player_instance_offsets) {
+        if let (true, Some(offsets)) = (self.config.lara_capsules, &self.player_instance_offsets) {
             let address = self.resolve(offsets)?;
             let shapes = collision::read_capsule_shapes(self.handle, address)?;
             if shapes.is_empty() {
@@ -191,7 +191,7 @@ impl Handler for OverlayHandler {
             self.refresh_objects()?;
         }
 
-        let probes = match (self.config.lara_collision, &self.player_probes_offsets) {
+        let probes = match (self.config.lara_probes, &self.player_probes_offsets) {
             (true, Some(offsets)) => collision::read_probes(self.handle, self.resolve(offsets)?)?,
             _ => vec![],
         };

@@ -57,7 +57,7 @@ Usage:
       Print the current value of each known offset for the running game.
   tomb-helper trace <image> <static address in hex>
       Print the pointer chains the code accesses from each reference to a static address.
-  tomb-helper watch <address type>... [--version <version>] [--seconds <n>] [--delay <n>]
+  tomb-helper watch <address type>... [--version <version>] [--seconds <n>] [--delay <n>] [--write]
       Attach as a debugger and record which instructions access up to 4 values (e.g. CutscenePrompt)
       for a few seconds (default 5), optionally after a delay so the game can be focused.
       These let `derive` find where a field moved to.";
@@ -68,6 +68,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
     let mut watch = false;
     let mut seconds = 5;
     let mut delay = 0;
+    let mut write_only = false;
     let mut rest = args.iter();
     while let Some(arg) = rest.next() {
         match arg.as_str() {
@@ -75,6 +76,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
                 version = Some(rest.next().ok_or(format!("{} needs a value", arg))?.clone())
             }
             "--watch" => watch = true,
+            "--write" => write_only = true,
             "--delay" => delay = rest.next().and_then(|s| s.parse().ok()).ok_or("--delay needs a number")?,
             "--seconds" => {
                 seconds = rest
@@ -86,8 +88,10 @@ pub fn run(args: &[String]) -> Result<(), String> {
         }
     }
     match positional.as_slice() {
-        ["watch-raw", pid, address] => crate::watch::watch_raw(pid, address, seconds),
-        ["watch", names @ ..] => crate::watch::watch(names, version, seconds, delay),
+        ["watch-raw", pid, address] => crate::watch::watch_raw(pid, address, seconds, delay, write_only),
+        ["disasm", pid, address] => crate::watch::disasm(pid, address, "40"),
+        ["disasm", pid, address, count] => crate::watch::disasm(pid, address, count),
+        ["watch", names @ ..] => crate::watch::watch(names, version, seconds, delay, write_only),
         ["export-offsets"] => export_offsets(None),
         ["export-offsets", out] => export_offsets(Some(out)),
         ["dump"] => dump(None),
