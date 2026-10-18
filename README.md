@@ -176,6 +176,22 @@ Generating a cutscene timing file can be done using tomb-helper:
 
 # Finding offsets for a new game version
 
+After a patch, launch the game, load into a level, and run:
+
+```
+tomb-helper update-offsets
+```
+
+It works out the offsets for the running build and saves them to the [offsets file](#offsets-file) next to the exe (which tomb-helper picks up while it's running), then checks them against the game (see [Porting the overlay](#porting-the-overlay)). On its own it finds:
+
+- the overlay's offsets (camera, instance array, collision scene) through the RTTI class names of what they point to
+- Lara's position, by finding her instance (the one with a `PlayerComponent`) and the pointer chain the game's code uses to reach it
+- the ground probes, by their contents, and the version string
+
+Anything that was right for the previous build is kept as it was. The rest, like the cutscene offsets, needs the previous build to compare against: pass its exe, or a dump of it (see below), with `--from <exe or dump>`. Without it, they're kept in the entry as `unverified` (and so not used) for you to look at. `--dry-run` shows what it found without saving it.
+
+The commands below do parts of this, and are useful for investigating when something isn't found.
+
 tomb-helper can work out most of the memory offsets for a new version of a game from a version it already supports:
 
 ```
@@ -221,8 +237,8 @@ This attaches to the game as a debugger and puts hardware breakpoints on up to 4
 
 Most of what the overlay reads is found through the game's RTTI class names (e.g. `InteractableComponent`, `cdc::CollisionSceneClient`), which are the same between patches and in Shadow of the Tomb Raider, so there's less to port than for the other offsets:
 
-1. Load into a level, then run `tomb-helper discover --save`. It finds the camera, instance array and collision scene through the classes of what they point to, and saves them to the [offsets file](#offsets-file) next to the exe (which tomb-helper reloads while running). `PlayerProbes` can't be found this way, so use `derive` for it.
-2. With Lara standing somewhere ordinary, run `tomb-helper check`. It reads everything the way the overlay does and checks the results make sense, e.g. that instances' transforms are TransformComponents, there's a collision floor under Lara, her capsules are her size and on her. Each check that fails points at a group of the `layout`.
+1. Load into a level, with Lara standing somewhere ordinary, then run `tomb-helper update-offsets` (see [Finding offsets for a new game version](#finding-offsets-for-a-new-game-version)). It finds the offsets and saves them, then runs `check` on them. (`tomb-helper discover --save` does just the camera, instance array and collision scene.)
+2. `tomb-helper check` can also be run on its own. It reads everything the way the overlay does and checks the results make sense, e.g. that instances' transforms are TransformComponents, there's a collision floor under Lara, her capsules are her size and on her. Each check that fails points at a group of the `layout`.
 3. Fix the failing groups in that version's `layout` (the file is reloaded, rerun `check`) until everything passes. `tomb-helper disasm <pid> <address>` and the notes in `CLAUDE.md` on how each structure was found help with finding a field that moved.
 
 Components are found by class too, so their slots never need porting: each type's slot is learnt from the first component table it's seen in.

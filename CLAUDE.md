@@ -72,6 +72,7 @@ User docs (hotkeys, config, cutscene timing generation) live in `README.md`.
 | `src/layout.rs` | `Layout`: where everything the overlay reads is in the game's structures (instance, drawable, collide, proxy, body, physics shape, probes, camera, collision scene/instance/mesh, trigger shape), ROTTR Steam's by default, overridable per version in the offsets file's `layout` section. `layout::current()` is set on connecting |
 | `src/components.rs` | Components by RTTI class name: `Classes` (vtable -> class name via the CompleteObjectLocator), `Components::get` learns each class's slot from a table (budgeted per `start_refresh`) and checks class + back pointer. Class name constants |
 | `src/discover.rs` | `discover [--save]`: finds GameRender (camera), TR9MultibodyClient (-> CollisionSceneClient) and the instance array statics through what they point to, optionally writing them to the offsets file |
+| `src/update_offsets.rs` | `update-offsets [--from <exe or dump>] [--dry-run]`: the one command for a new build. Attaches to any known exe (new builds start from the last known entry for it), finds statics (`discover::find_statics`), Lara (PlayerComponent) -> position chain (kept if the previous chain still lands there, else `chains::best_code_chains`; Y/Z = X + 4/8), ground probes by contents, version string; `--from` adds `derive::derive_lines`; the rest goes to `unverified` for a new build. Saves (`discover::save_entry`) and runs `check::run` |
 | `src/check.rs` | `check`: reads everything the overlay does from the running game and checks it makes sense, to port the layout |
 | `src/ui_ipc_data.rs` | Shared-memory IPC (`shared_memory` crate, os_id `"TombHelperIPC-<size of UiDoubleBuffer>"` so a stale mapping from another layout is never opened): `UiData` (camera, `ObjectBox`es, `Capsule`s, `Probe`s, collision `Triangle`s), `UiDoubleBuffer` with a sequence counter per buffer, changed and read in place since `UiData` is ~7MB, copying only the triangles in use, plus `UiSettings` (atomic show/hide toggles, mesh radii, opacity, fade and hidden triangle culling, which the DLL's checkboxes/sliders and the exe's hotkeys change) (`update`; the reader uses `try_read` into a scratch box and keeps its last good copy, since the exe never waits), `SharedMemoryManager` (exe is owner) |
 | `src/lib.rs` | Injected overlay: `TombHelperHud` implements `ImguiRenderLoop`; opens a console only if `config.overlay.console`; shows a position window and draws (near-plane clipped, in world space via `Projector`) a box + name per `ObjectBox`, Lara's capsules, probes, a circle at her feet and the level's collision triangles (filled faintly, under everything, without anti-aliasing,
@@ -81,8 +82,9 @@ at addresses the exe sends) since the exe's copy lags and made everything judder
 
 ## Common changes
 
-- **Port the overlay:** `discover --save`, then `check`, fixing that version's `layout` until it passes (README "Porting
-  the overlay"). New fields read from the game go in `Layout` (with ROTTR's value as the default), not constants.
+- **New patch / game:** `update-offsets` (plus `--from` the old exe for cutscene offsets), then fix that version's
+  `layout` until `check` passes (README "Porting the overlay"). New fields read from the game go in `Layout` (with
+  ROTTR's value as the default), not constants.
 - **Support a new game version:** run `tomb-helper derive <known exe> running` to get most of the entry, then add it to
   `offsets.json` (test it first in `tomb-helper-offsets.json` next to the exe, which hot reloads). Use `image_size`
   when the version string is shared between stores. Only include the `AddressType`s you've found — handlers

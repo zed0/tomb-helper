@@ -7,7 +7,7 @@ use crate::derive::{format_offsets, References};
 use crate::layout;
 use crate::offsets_file::{to_json, Hex, OffsetsFile, OffsetsSource, VersionEntry};
 use crate::pe_image::PeImage;
-use crate::process_details::{AddressType, ProcessDetails};
+use crate::process_details::AddressType;
 use process_memory::{CopyAddress, ProcessHandle};
 use std::collections::{BTreeMap, HashMap};
 use std::convert::TryInto;
@@ -28,7 +28,30 @@ pub fn discover(version: Option<String>, save: bool) -> Result<(), String> {
     println!("Found {} {}", details.name, details.version.version);
     println!("Dumping the game...");
     let image = PeImage::dump(pid).map_err(|e| format!("Could not dump the game: {}", e))?;
-    let references = References::new(&image);
+    let found = find_statics(handle, base_address, &image);
+
+    println!();
+    for (address_type, chain) in &found {
+        let note = match details.address_offsets.get(address_type) {
+            Some(known) if known == chain => "matches the offsets file",
+            Some(_) => "DIFFERS from the offsets file",
+            None => "new",
+        };
+        println!("  {:<15} {}  ({})", format!("{:?}", address_type), format_offsets(chain), note);
+    }
+    if save {
+        let mut entry = VersionEntry::from_details(&details);
+        for (address_type, chain) in &found {
+            entry.offsets.insert(*address_type, chain.iter().map(|o| Hex(*o)).collect());
+        }
+        save_entry(entry)?;
+    }
+    Ok(())
+}
+
+/// The statics found through the RTTI classes of what they point to, for the game whose image this is
+pub fn find_statics(handle: ProcessHandle, base_address: usize, image: &PeImage) -> BTreeMap<AddressType, Vec<usize>> {
+    let references = References::new(image);
     let mut classes = Classes::new(base_address);
 
     // Code referenced statics holding a pointer to an object, by the object's class, with how many references
@@ -75,28 +98,14 @@ pub fn discover(version: Option<String>, save: bool) -> Result<(), String> {
         }
         None => println!("TR9MultibodyClient: NOT FOUND"),
     }
-    match find_instance_array(handle, &mut classes, &image, base_address) {
+    match find_instance_array(handle, &mut classes, image, base_address) {
         Some((rva, slots)) => {
             println!("Instance array at mod+{:X} ({} slots)", rva, slots);
             found.insert(AddressType::InstanceArray, vec![rva]);
         }
         None => println!("Instance array: NOT FOUND"),
     }
-    println!("(PlayerProbes can't be found this way, use `derive` from a known version)");
-
-    println!();
-    for (address_type, chain) in &found {
-        let note = match details.address_offsets.get(address_type) {
-            Some(known) if known == chain => "matches the offsets file",
-            Some(_) => "DIFFERS from the offsets file",
-            None => "new",
-        };
-        println!("  {:<15} {}  ({})", format!("{:?}", address_type), format_offsets(chain), note);
-    }
-    if save {
-        save_offsets(&details, &found)?;
-    }
-    Ok(())
+    found
 }
 
 // The offset in the object of a pointer to an object of the class
@@ -168,20 +177,21 @@ fn pointer_at(bytes: &[u8], offset: usize) -> Option<usize> {
     bytes.get(offset..offset + 8).map(|b| u64::from_le_bytes(b.try_into().unwrap()) as usize)
 }
 
-// Updates (or adds) the version's entry in the offsets file next to the exe, starting from the built in offsets
-fn save_offsets(details: &ProcessDetails, found: &BTreeMap<AddressType, Vec<usize>>) -> Result<(), String> {
+/// Replaces the version's entry (the one with the same image size, or version string if there's none) in the
+/// offsets file next to the exe, or adds it, starting from the built in offsets if there's no file yet
+pub fn save_entry(entry: VersionEntry) -> Result<(), String> {
     let mut source = OffsetsSource::new();
     let mut versions: Vec<VersionEntry> = source.load()?.iter().map(VersionEntry::from_details).collect();
-    let same = |e: &VersionEntry| e.version == details.version.version && e.image_size == details.version.image_size;
-    let index = match versions.iter().position(same) {
-        Some(index) => index,
-        None => {
-            versions.push(VersionEntry::from_details(details));
-            versions.len() - 1
-        }
+    let same = |e: &VersionEntry| {
+        e.executable == entry.executable
+            && match (e.image_size, entry.image_size) {
+                (Some(a), Some(b)) => a == b,
+                _ => e.version == entry.version,
+            }
     };
-    for (address_type, chain) in found {
-        versions[index].offsets.insert(*address_type, chain.iter().map(|o| Hex(*o)).collect());
+    match versions.iter().position(same) {
+        Some(index) => versions[index] = entry,
+        None => versions.push(entry),
     }
     let file = OffsetsFile { versions };
     std::fs::write(&source.path, to_json(&file) + "\n").map_err(|e| format!("Could not write {:?}: {}", source.path, e))?;

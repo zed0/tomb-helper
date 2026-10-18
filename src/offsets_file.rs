@@ -109,7 +109,7 @@ impl VersionEntry {
         }
     }
 
-    fn to_details(&self) -> Result<ProcessDetails, String> {
+    pub fn to_details(&self) -> Result<ProcessDetails, String> {
         let arch = match self.bits {
             64 => Architecture::Arch64Bit,
             32 => Architecture::Arch32Bit,
