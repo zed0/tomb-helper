@@ -47,15 +47,14 @@ const CATEGORY_WORDS: [(TriggerCategory, &[&str]); 8] = [
     ]),
 ];
 
-// Things Lara can gather crafting resources from (herb and berry plants, mushrooms, magnesite veins, feathers, ...)
-// have no interaction components of their own, but are named "craftable_resource_..." (or e.g.
-// "st_martyrdom_connector.craftable_resource_spawner_magnesitevein" when the name includes its parent). Parts of
-// them, like "craftable_resource_magnesitevein.live_en_p2p_target", aren't.
-const RESOURCE_PREFIX: &str = "craftable_resource";
+// Places NPCs and animals play animations at ("animhost_npc_human_eatcandybar", "animhost_npc_deer_bedding", ...)
+// have an InteractableComponent, but it's for them rather than Lara
+const NOT_INTERACTABLE: [&str; 1] = ["animhost"];
 
-pub fn is_resource(name: &str) -> bool {
-    let own_name = name.rsplit('.').next().unwrap_or(name);
-    own_name.to_lowercase().starts_with(RESOURCE_PREFIX)
+// Whether an instance with an interaction component is one Lara can use, going by its name
+pub fn for_lara(name: &str) -> bool {
+    let name = name.to_lowercase();
+    !NOT_INTERACTABLE.iter().any(|w| name.contains(w))
 }
 
 pub fn categorise(name: &str, full_name: &str) -> TriggerCategory {
@@ -298,11 +297,10 @@ mod tests {
     }
 
     #[test]
-    fn resources_are_found_by_name_but_not_their_parts() {
-        assert!(is_resource("craftable_resource_spawner_herbs_plant_a-athayer19"));
-        assert!(is_resource("st_martyrdom_connector.craftable_resource_spawner_magnesitevein-x1"));
-        assert!(!is_resource("craftable_resource_magnesitevein.live_en_p2p_target-x2"));
-        assert!(!is_resource("marker_object_lookat_resources-x3"));
+    fn npc_animation_spots_are_not_for_lara() {
+        assert!(!for_lara("scenario_vh3_blacksmith.animhost_npc_human_eatcandybar-neberle4"));
+        assert!(!for_lara("vh_valley_hub.animhost_npc_deer_bedding-zing44"));
+        assert!(for_lara("campsite_base_trx.campsite_survivordifficulty_interact-benriz2"));
     }
 
     #[test]
