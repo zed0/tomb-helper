@@ -1,3 +1,4 @@
+use crate::layout;
 use crate::position::Position;
 use crate::ui_ipc_data::{SurfaceKind, Triangle};
 use nalgebra::Vector3;
@@ -9,35 +10,10 @@ use std::io;
 // The level's collision is triangle meshes placed in the world by instances, which the cdc::CollisionSceneClient
 // (`CollisionScene`) keeps in a list. It's the ground and everything fixed in the level (walls, rocks, buildings);
 // physics props are separate bodies. Found in ROTTR (Steam) from the code testing a mesh's triangles (+0x18C5F0).
-const SCENE_FIRST: usize = 0x28; // -> first instance
-const SCENE_COUNT: usize = 0x30; // u32
-const INSTANCE_SIZE: usize = 0x98;
-const INSTANCE_MATRIX: usize = 0x0; // Row-major object-to-world matrix (row vectors)
-const INSTANCE_MIN: usize = 0x40; // World space bounds
-const INSTANCE_MAX: usize = 0x50;
-// The matrix and bounds, which is what's reread each tick
-const INSTANCE_PLACEMENT_SIZE: usize = 0x60;
-// -> the instance's collision filter, shared by many
-const INSTANCE_FILTER: usize = 0x60;
-const INSTANCE_MESH: usize = 0x70;
-const INSTANCE_NEXT: usize = 0x88;
-const INSTANCE_FLAGS: usize = 0x90; // u16, bit 0 swaps the first two corners of each triangle
-// u32 of bits for which kinds of collision use the mesh. Everything Lara's movement proxy touched had bit 1 set (as did
-// the level's default, 0x2C7F), and objects often have both a detailed mesh without it (0x1C10, probably for
-// projectiles) and a rough one with it (0x204E). About 900 meshes are just 0x0002, presumably invisible walls.
-const FILTER_KINDS: usize = 0x4;
-const KIND_PLAYER: u32 = 0x2;
-const MESH_HEADER_SIZE: usize = 0x48;
-const MESH_VERTICES: usize = 0x10;
-const MESH_TRIANGLES: usize = 0x18;
-const MESH_TRIANGLE_COUNT: usize = 0x34; // u32
-const MESH_VERTEX_COUNT: usize = 0x38; // u32
-const MESH_VERTEX_FORMAT: usize = 0x44; // u16
-const FORMAT_FLOAT: u16 = 1; // 3 f32s
-const FORMAT_HALF: u16 = 2; // 3 f16s
-const TRIANGLE_SIZE: usize = 0x10; // 3 u32 vertex indices, a flags byte and a material byte
-const TRIANGLE_FLAGS: usize = 0xC;
-const TRIANGLE_IGNORED: u8 = 0x40; // The game's collision tests skip these
+// Where things are is in `layout`. Each instance's filter has bits for which kinds of collision use the mesh. Everything
+// Lara's movement proxy touched had the player bit set (as did the level's default, 0x2C7F), and objects often have
+// both a detailed mesh without it (0x1C10, probably for projectiles) and a rough one with it (0x204E). About 900 meshes
+// are just 0x0002, presumably invisible walls.
 // In case the list is broken
 const MAX_INSTANCES: usize = 100_000;
 // Normals with at least this much z are floors, at most minus this ceilings
@@ -64,11 +40,11 @@ struct PlacedTriangle {
     triangle: Triangle,
 }
 
-struct Mesh {
+pub struct Mesh {
     // To notice the mesh being replaced by another at the same address
     header: Vec<u8>,
-    vertices: Vec<Vector3<f32>>,
-    triangles: Vec<[u32; 3]>,
+    pub vertices: Vec<Vector3<f32>>,
+    pub triangles: Vec<[u32; 3]>,
 }
 
 #[derive(Default)]
@@ -81,9 +57,12 @@ impl CollisionMeshes {
     // Rereads the list of instances, which changes as the level streams in and out. Keeps those Lara collides with if
     // `coarse`, and the rest if `detailed`.
     pub fn refresh(&mut self, handle: ProcessHandle, scene_address: usize, coarse: bool, detailed: bool) -> io::Result<()> {
-        let mut scene = [0u8; SCENE_COUNT + 4];
+        let layout = layout::current();
+        let (scene_layout, instance) = (&layout.collision_scene, &layout.collision_instance);
+        let mesh_layout = &layout.collision_mesh;
+        let mut scene = vec![0u8; scene_layout.first.max(scene_layout.count) + 8];
         handle.copy_address(scene_address, &mut scene)?;
-        let count = (u32_at(&scene, SCENE_COUNT) as usize).min(MAX_INSTANCES);
+        let count = (u32_at(&scene, scene_layout.count) as usize).min(MAX_INSTANCES);
 
         // Keep what's already been placed
         let mut old: HashMap<(usize, usize), Placement> =
@@ -93,30 +72,31 @@ impl CollisionMeshes {
         let mut placements = vec![];
         // Many meshes are loaded twice and placed in the same place
         let mut seen = HashSet::new();
-        let mut address = usize_at(&scene, SCENE_FIRST);
-        let mut bytes = [0u8; INSTANCE_SIZE];
+        let mut address = usize_at(&scene, scene_layout.first);
+        let mut bytes = vec![0u8; instance.size];
         let mut visited = 0;
         while address != 0 && visited < count {
             visited += 1;
             handle.copy_address(address, &mut bytes)?;
-            let next = usize_at(&bytes, INSTANCE_NEXT);
-            let filter = usize_at(&bytes, INSTANCE_FILTER);
+            let next = usize_at(&bytes, instance.next);
+            let filter = usize_at(&bytes, instance.filter);
             if !filters.contains_key(&filter) {
                 let mut kind_bytes = [0u8; 4];
-                handle.copy_address(filter + FILTER_KINDS, &mut kind_bytes)?;
-                filters.insert(filter, u32::from_le_bytes(kind_bytes));
+                handle.copy_address(filter + instance.filter_kinds, &mut kind_bytes)?;
+                filters.insert(filter, u32::from_le_bytes(kind_bytes) as usize);
             }
-            let is_detailed = filters[&filter] & KIND_PLAYER == 0;
+            let is_detailed = filters[&filter] & instance.player_kind == 0;
             if !(if is_detailed { detailed } else { coarse }) {
                 address = next;
                 continue;
             }
-            let mesh = usize_at(&bytes, INSTANCE_MESH);
+            let mesh = usize_at(&bytes, instance.mesh);
             if !headers.contains_key(&mesh) {
                 headers.insert(mesh, self.mesh_header(handle, mesh)?);
             }
             let header = &headers[&mesh];
-            let key = (bytes[..INSTANCE_PLACEMENT_SIZE].to_vec(), header[MESH_TRIANGLE_COUNT..MESH_HEADER_SIZE].to_vec());
+            let counts = mesh_layout.triangle_count.min(header.len())..header.len();
+            let key = (bytes[..instance.placement_size].to_vec(), header[counts].to_vec());
             if seen.insert(key) {
                 // Unless it was placed with a mesh that's since been replaced
                 let placed = old
@@ -126,10 +106,10 @@ impl CollisionMeshes {
                 placements.push(Placement {
                     address,
                     mesh,
-                    flipped: u16_at(&bytes, INSTANCE_FLAGS) & 1 != 0,
+                    flipped: u16_at(&bytes, instance.flags) & 1 != 0,
                     detailed: is_detailed,
-                    min: vector_at(&bytes, INSTANCE_MIN),
-                    max: vector_at(&bytes, INSTANCE_MAX),
+                    min: vector_at(&bytes, instance.min),
+                    max: vector_at(&bytes, instance.max),
                     placed,
                 });
             }
@@ -144,7 +124,7 @@ impl CollisionMeshes {
 
     // Drops the cached mesh if the header changed, so it gets loaded again when it's needed
     fn mesh_header(&mut self, handle: ProcessHandle, address: usize) -> io::Result<Vec<u8>> {
-        let mut header = vec![0u8; MESH_HEADER_SIZE];
+        let mut header = vec![0u8; layout::current().collision_mesh.header_size];
         handle.copy_address(address, &mut header)?;
         if self.meshes.get(&address).map_or(false, |m| m.header != header) {
             self.meshes.remove(&address);
@@ -161,6 +141,7 @@ impl CollisionMeshes {
         detailed_radius: f32,
         max: usize,
     ) -> Vec<Triangle> {
+        let layout = &layout::current().collision_instance;
         let centre = Vector3::new(centre.x, centre.y, centre.z);
         let mut found = vec![];
         for placement in &mut self.placements {
@@ -169,11 +150,11 @@ impl CollisionMeshes {
                 continue;
             }
             // Instances can move (e.g. bendy trees) or be unloaded between refreshes
-            let mut bytes = [0u8; INSTANCE_PLACEMENT_SIZE];
+            let mut bytes = vec![0u8; layout.placement_size];
             if handle.copy_address(placement.address, &mut bytes).is_err() {
                 continue;
             }
-            let (min, max) = (vector_at(&bytes, INSTANCE_MIN), vector_at(&bytes, INSTANCE_MAX));
+            let (min, max) = (vector_at(&bytes, layout.min), vector_at(&bytes, layout.max));
             if box_distance(&centre, &min, &max) > radius {
                 continue;
             }
@@ -184,7 +165,7 @@ impl CollisionMeshes {
                 };
                 placement.placed = None;
             }
-            let matrix = &bytes[INSTANCE_MATRIX..INSTANCE_MATRIX + 0x40];
+            let matrix = &bytes[layout.matrix..layout.matrix + 0x40];
             if placement.placed.as_ref().map_or(true, |(m, _)| m.as_slice() != matrix) {
                 let mesh = &self.meshes[&placement.mesh];
                 let triangles = place_triangles(mesh, matrix, placement.flipped, placement.detailed);
@@ -202,35 +183,35 @@ impl CollisionMeshes {
     }
 }
 
-fn read_mesh(handle: ProcessHandle, address: usize) -> io::Result<Mesh> {
-    let mut header = vec![0u8; MESH_HEADER_SIZE];
+pub fn read_mesh(handle: ProcessHandle, address: usize) -> io::Result<Mesh> {
+    let layout = &layout::current().collision_mesh;
+    let mut header = vec![0u8; layout.header_size];
     handle.copy_address(address, &mut header)?;
-    let vertex_count = u32_at(&header, MESH_VERTEX_COUNT) as usize;
-    let triangle_count = u32_at(&header, MESH_TRIANGLE_COUNT) as usize;
+    let vertex_count = u32_at(&header, layout.vertex_count) as usize;
+    let triangle_count = u32_at(&header, layout.triangle_count) as usize;
 
-    let vertices = match u16_at(&header, MESH_VERTEX_FORMAT) {
-        FORMAT_FLOAT => {
-            let mut bytes = vec![0u8; vertex_count * 12];
-            handle.copy_address(usize_at(&header, MESH_VERTICES), &mut bytes)?;
-            bytes.chunks_exact(12).map(|v| vector_at(v, 0)).collect()
-        }
-        FORMAT_HALF => {
-            let mut bytes = vec![0u8; vertex_count * 6];
-            handle.copy_address(usize_at(&header, MESH_VERTICES), &mut bytes)?;
-            bytes
-                .chunks_exact(6)
-                .map(|v| Vector3::new(half_at(v, 0), half_at(v, 2), half_at(v, 4)))
-                .collect()
-        }
+    let format = u16_at(&header, layout.vertex_format) as usize;
+    let vertices = if format == layout.format_float {
+        let mut bytes = vec![0u8; vertex_count * 12];
+        handle.copy_address(usize_at(&header, layout.vertices), &mut bytes)?;
+        bytes.chunks_exact(12).map(|v| vector_at(v, 0)).collect()
+    } else if format == layout.format_half {
+        let mut bytes = vec![0u8; vertex_count * 6];
+        handle.copy_address(usize_at(&header, layout.vertices), &mut bytes)?;
+        bytes
+            .chunks_exact(6)
+            .map(|v| Vector3::new(half_at(v, 0), half_at(v, 2), half_at(v, 4)))
+            .collect()
+    } else {
         // Not seen, and the game just copies 6 bytes, so who knows
-        _ => vec![],
+        vec![]
     };
 
-    let mut bytes = vec![0u8; triangle_count * TRIANGLE_SIZE];
-    handle.copy_address(usize_at(&header, MESH_TRIANGLES), &mut bytes)?;
+    let mut bytes = vec![0u8; triangle_count * layout.triangle_size];
+    handle.copy_address(usize_at(&header, layout.triangles), &mut bytes)?;
     let triangles = bytes
-        .chunks_exact(TRIANGLE_SIZE)
-        .filter(|t| t[TRIANGLE_FLAGS] & TRIANGLE_IGNORED == 0)
+        .chunks_exact(layout.triangle_size)
+        .filter(|t| t[layout.triangle_flags] as usize & layout.triangle_ignored == 0)
         .map(|t| [u32_at(t, 0), u32_at(t, 4), u32_at(t, 8)])
         .filter(|t| t.iter().all(|&i| (i as usize) < vertices.len()))
         .collect();

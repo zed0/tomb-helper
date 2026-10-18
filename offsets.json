@@ -105,9 +105,7 @@
         "CameraView": ["0x2E1BD08", "0x520"],
         "CameraLens": ["0x2E1BD08", "0x30"],
         "InstanceArray": ["0x24EEAD0"],
-        "PlayerInstance": ["0x100C6B0", "0x0", "0x31A8", "0x0"],
         "PlayerProbes": ["0x1A8C720"],
-        "ProxyComponentType": ["0x1101D20"],
         "CollisionScene": ["0x2D57440", "0x10", "0x0"]
       },
       "witnesses": {

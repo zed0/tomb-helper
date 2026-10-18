@@ -2,6 +2,7 @@
 //! `tomb-helper-offsets.json` next to the exe replaces it, so offsets can be edited without
 //! rebuilding (and are reloaded while tomb-helper is running).
 
+use crate::layout::Layout;
 use crate::process_details::{AddressType, ProcessDetails, VersionIdentifier};
 use process_memory::Architecture;
 use serde::de::{self, Visitor};
@@ -88,6 +89,9 @@ pub struct VersionEntry {
     // Offsets a tool found but couldn't confirm, for review. Not used.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub unverified: BTreeMap<AddressType, Vec<Hex>>,
+    // Where things are in the game's structures, where they differ from ROTTR (Steam)'s (see `layout`)
+    #[serde(default, skip_serializing_if = "Layout::is_default")]
+    pub layout: Layout,
 }
 
 impl VersionEntry {
@@ -101,6 +105,7 @@ impl VersionEntry {
             offsets: details.address_offsets.iter().map(|(t, o)| (*t, to_hex(o))).collect(),
             witnesses: details.witnesses.iter().map(|(t, w)| (*t, to_hex(w))).collect(),
             unverified: BTreeMap::new(),
+            layout: details.layout.clone(),
         }
     }
 
@@ -123,6 +128,7 @@ impl VersionEntry {
             arch,
             address_offsets: self.offsets.iter().map(|(t, o)| (*t, from_hex(o))).collect(),
             witnesses: self.witnesses.iter().map(|(t, w)| (*t, from_hex(w))).collect(),
+            layout: self.layout.clone(),
         })
     }
 }
@@ -244,6 +250,18 @@ mod tests {
             "offsets": {"XPositon": ["0x10"]}
         }]}"#;
         assert!(parse(json).is_err());
+    }
+
+    #[test]
+    fn reads_layout_overrides() {
+        let json = r#"{"versions": [{
+            "game": "Game", "executable": "Game.exe", "version": "v1", "bits": 64,
+            "offsets": {"XPosition": ["0x10"]},
+            "layout": {"instance": {"position": "0x20"}}
+        }]}"#;
+        let versions = parse(json).unwrap();
+        assert_eq!(versions[0].layout.instance.position, 0x20);
+        assert_eq!(versions[0].layout.instance.rotation, Layout::default().instance.rotation);
     }
 
     #[test]

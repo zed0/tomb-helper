@@ -24,11 +24,13 @@ mod cutscene_timing_generator_handler;
 mod chains;
 mod collision;
 mod collision_mesh;
+mod components;
 mod code_trace;
 mod derive;
 mod pe_image;
 mod position_handler;
 mod handler;
+mod layout;
 mod object_list;
 mod overlay_handler;
 mod position;
@@ -110,6 +112,7 @@ fn create_handlers(
     details: &ProcessDetails,
 ) -> Vec<Box<dyn Handler>> {
     let mut handlers: Vec<Box<dyn Handler>> = vec![];
+    layout::set(details.layout.clone());
 
     match &config.record_cutscene_timing {
         CutsceneTiming::On { timing_file, livesplit_port } => {

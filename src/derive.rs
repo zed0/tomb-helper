@@ -637,6 +637,8 @@ pub fn print_entry(
             .iter()
             .filter_map(|(t, chain, sure, _)| chain.as_ref().filter(|_| !*sure).map(|c| (*t, hex(c))))
             .collect(),
+        // Structures are much less likely to change than statics, so start from the known version's
+        layout: details.layout.clone(),
     };
     println!("{}", to_json(&entry));
 }
