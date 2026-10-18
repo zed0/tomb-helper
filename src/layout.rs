@@ -62,6 +62,9 @@ pub struct InstanceLayout {
     /// -> placement record, null for spawned instances
     #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
     pub placement: usize,
+    /// u64 unique to the instance, which scripts refer to it by
+    #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
+    pub id: usize,
     /// Pointers to follow from the instance to the name of its object type (e.g. "trx_mountain_hare"), which is all
     /// spawned instances have
     #[serde(serialize_with = "serialize_hex_list", deserialize_with = "deserialize_hex_list")]
@@ -82,6 +85,7 @@ impl Default for InstanceLayout {
             position: 0x10,
             rotation: 0x30,
             placement: 0x78,
+            id: 0x60,
             object_name: vec![0x80, 0x8, 0x58, 0x8],
             components: 0xD8,
             transform: 0xE0,
@@ -329,6 +333,30 @@ group! {
     }
 }
 
+group! {
+    /// ActionGraph scripts: a graph (one per instance with a script) lists its nodes and the links between them. Found
+    /// in SOTTR, unverified in ROTTR
+    ScriptLayout {
+        /// In a node, -> its graph
+        node_graph = 0x8,
+        /// In a graph, -> its nodes (pointers, with gaps)
+        graph_nodes = 0x78,
+        /// In a graph, -> its links' header
+        graph_links = 0x90,
+        /// In the links' header, u32: how many nodes the links can refer to
+        node_count = 0x0,
+        /// u32
+        link_count = 0x4,
+        /// -> links: u16 from node, u16 to node (indices in the graph's nodes), u16 output, u16 input
+        links = 0x10,
+        link_size = 0x8,
+        /// In an AGObjectNode, the id of the instance it acts on
+        object_instance = 0x50,
+        /// In an AGMessageSendNode, the id of the instance it sends a message to
+        message_instance = 0x28,
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Layout {
@@ -347,6 +375,7 @@ pub struct Layout {
     pub collision_instance: CollisionInstanceLayout,
     pub collision_mesh: CollisionMeshLayout,
     pub trigger_shape: TriggerShapeLayout,
+    pub script: ScriptLayout,
 }
 
 impl Layout {

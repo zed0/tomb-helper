@@ -153,6 +153,14 @@ fn default_interactables() -> bool {
     true
 }
 
+fn default_triggers_by_action() -> bool {
+    true
+}
+
+fn default_trigger_actions() -> Vec<String> {
+    crate::ui_ipc_data::TRIGGER_ACTIONS.iter().map(|a| a.to_string()).collect()
+}
+
 fn default_npcs() -> bool {
     true
 }
@@ -215,6 +223,12 @@ pub struct OverlayConfig {
     // Which kinds of trigger to show (to start with), see `TriggerCategory::name`
     #[serde(default = "default_trigger_categories")]
     pub trigger_categories: Vec<String>,
+    // Choose which triggers to show by what their scripts do rather than by `trigger_categories` (to start with)
+    #[serde(default = "default_triggers_by_action")]
+    pub triggers_by_action: bool,
+    // Which triggers to show by what their scripts do (to start with), see `TRIGGER_ACTIONS`
+    #[serde(default = "default_trigger_actions")]
+    pub trigger_actions: Vec<String>,
     // Only draw collision triangles that aren't hidden behind others (to start with)
     #[serde(default = "default_collision_mesh_cull_hidden")]
     pub collision_mesh_cull_hidden: bool,

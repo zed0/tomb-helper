@@ -17,7 +17,8 @@ use std::error::Error;
 use hudhook::inject::Process;
 use process_memory::{Architecture, CopyAddress, DataMember, Memory, Pid, ProcessHandle};
 use crate::trigger::{self, Shape};
-use crate::ui_ipc_data::{name_bytes, projection_from_lens, BoxKind, Capsule, Line, ObjectBox, ObjectCategory, SharedMemoryManager, TriggerCategory, TriggerLabel, UiSettings, MAX_ATTACHED, MAX_OBJECTS, MAX_TRIANGLES, MAX_TRIGGERS};
+use crate::trigger_scripts::{SetOffBy, TriggerScripts};
+use crate::ui_ipc_data::{name_bytes, text_bytes, trigger_action_bit, trigger_action_mask, projection_from_lens, BoxKind, Capsule, Line, ObjectBox, ObjectCategory, SharedMemoryManager, TriggerCategory, TriggerLabel, UiSettings, MAX_ATTACHED, MAX_OBJECTS, MAX_TRIANGLES, MAX_TRIGGERS};
 
 // Lara is the nearest instance with a PlayerComponent, out of this many
 const LARA_CANDIDATES: usize = 8;
@@ -49,12 +50,15 @@ pub struct OverlayHandler {
     // Characters' and animals' hit capsules in bone space, by instance. Their models' bounds are often only part of
     // them (people are several models), so they're boxed round these instead.
     npc_capsules: HashMap<usize, Vec<CapsuleShape>>,
-    triggers: Vec<(Instance, Shape, TriggerCategory)>,
+    // With their labels
+    triggers: Vec<(Instance, Shape, TriggerCategory, String)>,
+    trigger_scripts: TriggerScripts,
     components: Components,
     // Found by her PlayerComponent each refresh
     lara_address: Option<usize>,
-    // Interactables, triggers, trigger categories and NPCs, as of the last refresh
-    object_settings: (bool, bool, u32, bool),
+    // Interactables, triggers, trigger categories, NPCs, whether triggers are shown by action and which, as of the last
+    // refresh
+    object_settings: (bool, bool, u32, bool, bool, u32),
     proxy_last_touching: Option<time::Instant>,
     attached_last_touching: [Option<time::Instant>; MAX_ATTACHED],
     // Lara's instance and her capsules in bone space
@@ -92,6 +96,8 @@ impl OverlayHandler {
             UiSettings::set(&settings.triggers, config.triggers);
             UiSettings::set(&settings.npcs, config.npcs);
             UiSettings::set_u32(&settings.trigger_categories, TriggerCategory::mask(&config.trigger_categories));
+            UiSettings::set(&settings.triggers_by_action, config.triggers_by_action);
+            UiSettings::set_u32(&settings.trigger_actions, trigger_action_mask(&config.trigger_actions));
             UiSettings::set(&settings.initialised, true);
         }
         ui_memory_manager.get_mut().update(|val| {
@@ -137,9 +143,10 @@ impl OverlayHandler {
             objects: vec![],
             npc_capsules: HashMap::new(),
             triggers: vec![],
+            trigger_scripts: TriggerScripts::new(*pid, *handle, *base_addr),
             components: Components::new(*base_addr),
             lara_address: None,
-            object_settings: (false, false, 0, false),
+            object_settings: (false, false, 0, false, false, 0),
             lara: None,
             last_object_refresh: None,
             proxy_last_touching: None,
@@ -162,6 +169,8 @@ impl OverlayHandler {
         triggers: bool,
         categories: u32,
         npcs: bool,
+        by_action: bool,
+        actions: u32,
     ) -> Result<(), Box<dyn Error>> {
         if self.object_list.is_none() {
             self.object_list = Some(ObjectList::new(self.resolve(&self.instance_array_offsets)?));
@@ -173,11 +182,10 @@ impl OverlayHandler {
             ((p.x - lara.x).powi(2) + (p.y - lara.y).powi(2) + (p.z - lara.z).powi(2)).sqrt()
         };
 
-        let mut nearby: Vec<Instance> = self.object_list.as_mut().unwrap()
-            .instances(self.handle)?
-            .into_iter()
-            .filter(|i| distance(&i.position) <= self.config.object_radius)
-            .collect();
+        let all = self.object_list.as_mut().unwrap().instances(self.handle)?;
+        let names: HashMap<u64, String> = all.iter().map(|i| (i.id, i.name.clone())).collect();
+        let mut nearby: Vec<Instance> =
+            all.into_iter().filter(|i| distance(&i.position) <= self.config.object_radius).collect();
         nearby.sort_by(|a, b| distance(&a.position).total_cmp(&distance(&b.position)));
 
         // She has her own collision drawn, and counts as interactable herself (she has an InteractableComponent). She's
@@ -204,11 +212,10 @@ impl OverlayHandler {
                 trigger::Kinds::default()
             };
             let category = trigger::categorise(&instance.name, &instance.full_name);
-            let wanted = categories & category.bit() != 0;
-            if triggers && kinds.trigger && wanted && trigger_shapes.len() < MAX_TRIGGERS {
-                if let Some(shape) = trigger::read_shape(self.handle, &mut self.components, instance.address) {
-                    trigger_shapes.push((instance.clone(), shape, category));
-                }
+            // By what they do once that's known, below
+            let wanted = by_action || categories & category.bit() != 0;
+            if triggers && kinds.trigger && wanted {
+                trigger_shapes.push((instance.clone(), category));
             }
             let is_lara = Some(instance.address) == lara_address;
             if named {
@@ -224,7 +231,39 @@ impl OverlayHandler {
                 objects.push((instance, ObjectCategory::Interactable));
             }
         }
-        self.triggers = trigger_shapes;
+        // What sets them off is found in the background, so it can change from "unchecked" between refreshes
+        let ids: Vec<u64> = trigger_shapes.iter().map(|(i, _)| i.id).collect();
+        if triggers {
+            self.trigger_scripts.update(&ids, &names);
+        }
+        let mut shown = vec![];
+        for (instance, category) in trigger_shapes {
+            let script = self.trigger_scripts.script(instance.id);
+            let by = match script.map(|s| &s.set_off_by) {
+                Some(SetOffBy::Lara) => Some("Lara".to_string()),
+                Some(SetOffBy::Instance(name)) => Some(name.clone().unwrap_or_else(|| "an instance".to_string())),
+                Some(SetOffBy::Script) => Some("script".to_string()),
+                Some(SetOffBy::Nothing) => Some("no script".to_string()),
+                None => None,
+            };
+            let does = script.map_or(trigger_action_bit("unchecked"), |s| s.actions);
+            if (by_action && actions & does == 0) || shown.len() >= MAX_TRIGGERS {
+                continue;
+            }
+            if let Some(shape) = trigger::read_shape(self.handle, &mut self.components, instance.address) {
+                let mut label = match by {
+                    Some(by) => format!("{} ({})", instance.name, by),
+                    None => instance.name.clone(),
+                };
+                // What it does on a second line
+                if let Some(script) = script.filter(|s| !s.does.is_empty()) {
+                    label = format!("{}
+{}", label, script.does.join(", "));
+                }
+                shown.push((instance, shape, category, label));
+            }
+        }
+        self.triggers = shown;
 
         let mut boxes = vec![];
         self.lara = None;
@@ -235,6 +274,7 @@ impl OverlayHandler {
                 boxes.push((
                     Instance {
                         address,
+                        id: 0,
                         position: object_list::read_position(self.handle, address)?,
                         name: "Lara".to_string(),
                         full_name: String::new(),
@@ -334,6 +374,8 @@ impl Handler for OverlayHandler {
             UiSettings::get(&settings.triggers),
             UiSettings::get_u32(&settings.trigger_categories),
             UiSettings::get(&settings.npcs),
+            UiSettings::get(&settings.triggers_by_action),
+            UiSettings::get_u32(&settings.trigger_actions),
         );
 
         let refresh_due = self.last_object_refresh.map_or(true, |t| t.elapsed() > OBJECT_REFRESH_INTERVAL);
@@ -341,8 +383,8 @@ impl Handler for OverlayHandler {
         if refresh_due || object_settings != self.object_settings {
             self.last_object_refresh = Some(time::Instant::now());
             self.object_settings = object_settings;
-            let (interactables, triggers, categories, npcs) = object_settings;
-            self.refresh_objects(interactables, triggers, categories, npcs)?;
+            let (interactables, triggers, categories, npcs, by_action, actions) = object_settings;
+            self.refresh_objects(interactables, triggers, categories, npcs, by_action, actions)?;
         }
         // Straight away when they're toggled
         if refresh_due || mesh_settings != self.mesh_settings {
@@ -408,7 +450,7 @@ impl Handler for OverlayHandler {
 
         let mut trigger_labels = vec![];
         let mut trigger_lines = vec![];
-        for (trigger, shape, category) in &self.triggers {
+        for (trigger, shape, category, label) in &self.triggers {
             let transform = match object_list::read_transform(self.handle, trigger.address) {
                 Ok(t) => t,
                 Err(_) => continue,
@@ -416,7 +458,7 @@ impl Handler for OverlayHandler {
             trigger_labels.push(TriggerLabel {
                 position: Position { x: transform[12], y: transform[13], z: transform[14] },
                 category: *category,
-                name: name_bytes(&trigger.name),
+                name: text_bytes(label),
             });
             let outline = trigger::outline(shape, &transform);
             trigger_lines.extend(outline.into_iter().map(|(a, b)| Line { a, b, category: *category }));

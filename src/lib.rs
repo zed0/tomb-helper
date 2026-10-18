@@ -1,7 +1,7 @@
 use imgui::*;
 use hudhook::*;
 use hudhook::hooks::dx12::ImguiDx12Hooks;
-use crate::ui_ipc_data::{projection_from_lens, BoxKind, Capsule, ObjectBox, ObjectCategory, Probe, SharedMemoryManager, SurfaceKind, Triangle, TriggerCategory, UiData, UiSettings};
+use crate::ui_ipc_data::{projection_from_lens, BoxKind, Capsule, ObjectBox, ObjectCategory, Probe, SharedMemoryManager, SurfaceKind, Triangle, TriggerCategory, UiData, UiSettings, TRIGGER_ACTIONS};
 use crate::tracing::{error, warn};
 
 mod ui_ipc_data;
@@ -464,7 +464,7 @@ impl ImguiRenderLoop for TombHelperHud {
         ui.window("Position")
             .position_pivot([1., 0.])
             .position([screen_width, 0.], Condition::Once)
-            .size([400., 500.], Condition::Once)
+            .size([400., 600.], Condition::Once)
             .build(|| {
                 ui.text_wrapped(format!("{:?}", ui_data.position));
                 ui.text(format!("{} objects", object_count));
@@ -477,16 +477,48 @@ impl ImguiRenderLoop for TombHelperHud {
                 }
                 if UiSettings::get(&settings.triggers) {
                     ui.indent();
-                    let mut categories = UiSettings::get_u32(&settings.trigger_categories);
-                    for category in TriggerCategory::ALL {
-                        let (colour, label) = trigger_style(category);
-                        let mut value = categories & category.bit() != 0;
-                        let style = ui.push_style_color(StyleColor::Text, colour);
-                        if ui.checkbox(label, &mut value) {
-                            categories ^= category.bit();
-                            UiSettings::set_u32(&settings.trigger_categories, categories);
+                    let by_action = UiSettings::get(&settings.triggers_by_action);
+                    ui.text("Show by:");
+                    ui.same_line();
+                    if ui.radio_button_bool("What they do", by_action) {
+                        UiSettings::set(&settings.triggers_by_action, true);
+                    }
+                    ui.same_line();
+                    if ui.radio_button_bool("Name", !by_action) {
+                        UiSettings::set(&settings.triggers_by_action, false);
+                    }
+                    if by_action {
+                        let mut actions = UiSettings::get_u32(&settings.trigger_actions);
+                        if ui.small_button("All") {
+                            UiSettings::set_u32(&settings.trigger_actions, u32::MAX);
                         }
-                        style.pop();
+                        ui.same_line();
+                        if ui.small_button("None") {
+                            UiSettings::set_u32(&settings.trigger_actions, 0);
+                        }
+                        // Two columns, they're short
+                        for (i, action) in TRIGGER_ACTIONS.iter().enumerate() {
+                            if i % 2 == 1 {
+                                ui.same_line_with_pos(190.);
+                            }
+                            let mut value = actions & 1 << i != 0;
+                            if ui.checkbox(action, &mut value) {
+                                actions ^= 1 << i;
+                                UiSettings::set_u32(&settings.trigger_actions, actions);
+                            }
+                        }
+                    } else {
+                        let mut categories = UiSettings::get_u32(&settings.trigger_categories);
+                        for category in TriggerCategory::ALL {
+                            let (colour, label) = trigger_style(category);
+                            let mut value = categories & category.bit() != 0;
+                            let style = ui.push_style_color(StyleColor::Text, colour);
+                            if ui.checkbox(label, &mut value) {
+                                categories ^= category.bit();
+                                UiSettings::set_u32(&settings.trigger_categories, categories);
+                            }
+                            style.pop();
+                        }
                     }
                     ui.unindent();
                 }
