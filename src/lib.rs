@@ -9,6 +9,7 @@ mod position;
 
 use nalgebra::{Matrix4, Vector3, Vector4};
 use std::mem::{size_of, MaybeUninit};
+use std::sync::atomic::{AtomicBool, AtomicU32};
 use winapi::um::memoryapi::ReadProcessMemory;
 use winapi::um::processthreadsapi::GetCurrentProcess;
 
@@ -380,6 +381,21 @@ fn draw_triangle(
     }
 }
 
+fn checkbox(ui: &Ui, label: &str, setting: &AtomicBool) {
+    let mut value = UiSettings::get(setting);
+    if ui.checkbox(label, &mut value) {
+        UiSettings::set(setting, value);
+    }
+}
+
+// For an f32 setting
+fn slider(ui: &Ui, label: &str, min: f32, max: f32, format: &str, setting: &AtomicU32) {
+    let mut value = UiSettings::get_f32(setting);
+    if ui.slider_config(label, min, max).display_format(format).build(&mut value) {
+        UiSettings::set_f32(setting, value);
+    }
+}
+
 struct TombHelperHud {
     ui_memory_manager: SharedMemoryManager,
     // Last complete copy, used when the exe was mid write
@@ -448,24 +464,16 @@ impl ImguiRenderLoop for TombHelperHud {
         ui.window("Position")
             .position_pivot([1., 0.])
             .position([screen_width, 0.], Condition::Once)
-            .size([400., 480.], Condition::Once)
+            .size([400., 500.], Condition::Once)
             .build(|| {
                 ui.text_wrapped(format!("{:?}", ui_data.position));
                 ui.text(format!("{} objects", object_count));
-                ui.text(format!(
-                    "{} collision triangles ({:.1}ms to find, {:.1}ms to draw)",
-                    triangle_count, ui_data.triangle_milliseconds, self.draw_milliseconds
-                ));
                 for (label, setting) in [
-                    ("Lara's collision (F10)", &settings.lara_collision),
                     ("Interactable objects", &settings.interactables),
                     ("Characters and animals", &settings.npcs),
                     ("Trigger volumes", &settings.triggers),
                 ] {
-                    let mut value = UiSettings::get(setting);
-                    if ui.checkbox(label, &mut value) {
-                        UiSettings::set(setting, value);
-                    }
+                    checkbox(ui, label, setting);
                 }
                 if UiSettings::get(&settings.triggers) {
                     ui.indent();
@@ -482,43 +490,36 @@ impl ImguiRenderLoop for TombHelperHud {
                     }
                     ui.unindent();
                 }
-                for (label, setting, radius_label, radius) in [
-                    ("Movement collision (F11)", &settings.coarse_meshes, "Radius##coarse", &settings.coarse_radius),
-                    ("Detailed collision (F12)", &settings.detailed_meshes, "Radius##detailed", &settings.detailed_radius),
-                ] {
-                    let mut value = UiSettings::get(setting);
-                    if ui.checkbox(label, &mut value) {
-                        UiSettings::set(setting, value);
+                checkbox(ui, "Collision meshes (F10)", &settings.collision);
+                if UiSettings::get(&settings.collision) {
+                    ui.indent();
+                    ui.text(format!(
+                        "{} triangles ({:.1}ms to find, {:.1}ms to draw)",
+                        triangle_count, ui_data.triangle_milliseconds, self.draw_milliseconds
+                    ));
+                    checkbox(ui, "Lara's collision", &settings.lara_collision);
+                    for (label, setting, radius_label, radius) in [
+                        ("Movement collision", &settings.coarse_meshes, "Radius##coarse", &settings.coarse_radius),
+                        ("Detailed collision", &settings.detailed_meshes, "Radius##detailed", &settings.detailed_radius),
+                    ] {
+                        checkbox(ui, label, setting);
+                        slider(ui, radius_label, 0.0, MAX_MESH_RADIUS, "%.0f", radius);
                     }
-                    let mut value = UiSettings::get_f32(radius);
-                    if ui.slider_config(radius_label, 0.0, MAX_MESH_RADIUS).display_format("%.0f").build(&mut value) {
-                        UiSettings::set_f32(radius, value);
-                    }
-                }
-                let mut opacity = UiSettings::get_f32(&settings.mesh_opacity);
-                if ui.slider_config("Opacity", 0.0, 1.0).display_format("%.2f").build(&mut opacity) {
-                    UiSettings::set_f32(&settings.mesh_opacity, opacity);
-                }
-                let mut fade = UiSettings::get(&settings.fade_with_distance);
-                if ui.checkbox("Fade with distance from Lara", &mut fade) {
-                    UiSettings::set(&settings.fade_with_distance, fade);
-                }
-                let mut strength = UiSettings::get_f32(&settings.fade_strength);
-                if ui.slider_config("Fade strength", 1.0, MAX_FADE_STRENGTH).display_format("%.1f").build(&mut strength) {
-                    UiSettings::set_f32(&settings.fade_strength, strength);
-                }
-                let mut cull = UiSettings::get(&settings.cull_hidden);
-                if ui.checkbox("Hide triangles behind others", &mut cull) {
-                    UiSettings::set(&settings.cull_hidden, cull);
+                    slider(ui, "Opacity", 0.0, 1.0, "%.2f", &settings.mesh_opacity);
+                    checkbox(ui, "Fade with distance from Lara", &settings.fade_with_distance);
+                    slider(ui, "Fade strength", 1.0, MAX_FADE_STRENGTH, "%.1f", &settings.fade_strength);
+                    checkbox(ui, "Hide triangles behind others", &settings.cull_hidden);
+                    ui.unindent();
                 }
             });
         // Read again so changes show straight away, rather than once the exe has caught up
-        let lara_collision = UiSettings::get(&settings.lara_collision);
+        let collision = UiSettings::get(&settings.collision);
+        let lara_collision = collision && UiSettings::get(&settings.lara_collision);
         let interactables = UiSettings::get(&settings.interactables);
         let npcs = UiSettings::get(&settings.npcs);
         let triggers = UiSettings::get(&settings.triggers);
-        let coarse_meshes = UiSettings::get(&settings.coarse_meshes);
-        let detailed_meshes = UiSettings::get(&settings.detailed_meshes);
+        let coarse_meshes = collision && UiSettings::get(&settings.coarse_meshes);
+        let detailed_meshes = collision && UiSettings::get(&settings.detailed_meshes);
         let mesh_opacity = UiSettings::get_f32(&settings.mesh_opacity);
         let fade_with_distance = UiSettings::get(&settings.fade_with_distance);
         let fade_strength = UiSettings::get_f32(&settings.fade_strength);

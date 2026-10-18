@@ -75,6 +75,7 @@ impl OverlayHandler {
         // Kept when the handler is recreated (e.g. when the offsets change)
         let settings = &ui_memory_manager.get().settings;
         if !UiSettings::get(&settings.initialised) {
+            UiSettings::set(&settings.collision, config.collision);
             UiSettings::set(&settings.lara_collision, true);
             UiSettings::set(&settings.coarse_meshes, config.collision_meshes);
             UiSettings::set(&settings.detailed_meshes, config.detailed_collision_meshes);
@@ -311,8 +312,12 @@ impl Handler for OverlayHandler {
         self.camera_lens.fetch_from_game(self.handle)?;
 
         let settings = &self.ui_memory_manager.get().settings;
-        let lara_collision = UiSettings::get(&settings.lara_collision);
-        let mesh_settings = (UiSettings::get(&settings.coarse_meshes), UiSettings::get(&settings.detailed_meshes));
+        let collision = UiSettings::get(&settings.collision);
+        let lara_collision = collision && UiSettings::get(&settings.lara_collision);
+        let mesh_settings = (
+            collision && UiSettings::get(&settings.coarse_meshes),
+            collision && UiSettings::get(&settings.detailed_meshes),
+        );
         let show_meshes = mesh_settings.0 || mesh_settings.1;
         let coarse_radius = UiSettings::get_f32(&settings.coarse_radius);
         let detailed_radius = UiSettings::get_f32(&settings.detailed_radius);
@@ -480,6 +485,7 @@ impl Handler for OverlayHandler {
             Action::ToggleInteractables {} => UiSettings::toggle(&self.ui_memory_manager.get().settings.interactables),
             Action::ToggleTriggers {} => UiSettings::toggle(&self.ui_memory_manager.get().settings.triggers),
             Action::ToggleNpcs {} => UiSettings::toggle(&self.ui_memory_manager.get().settings.npcs),
+            Action::ToggleCollision {} => UiSettings::toggle(&self.ui_memory_manager.get().settings.collision),
             _ => (),
         }
         Ok(())
