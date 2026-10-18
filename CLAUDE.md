@@ -69,6 +69,10 @@ User docs (hotkeys, config, cutscene timing generation) live in `README.md`.
 | `src/collision.rs` | Lara's collision, see "Lara's collision" below: hit capsules (`read_capsule_shapes`/`place_capsules`), ground probes (`read_probes`), and her movement proxy with the camera/weapon proxies attached to it (`read_proxy`), including which of them is pushing her (contacts on their surface). Has unit tests for the capsule geometry |
 | `src/collision_mesh.rs` | The level's collision meshes (see "Level collision" below): `CollisionMeshes::refresh` walks the scene's instance list (dropping duplicates), `triangles_near` caches each mesh's vertices/triangles and returns the world space triangles near Lara, closest first, tagged floor/wall/ceiling by their normal |
 | `src/trigger.rs` | What an instance is from its component table (`read_kinds`: interactable via Interactable/Loot/Collectible components, trigger via TriggerComponent, character/animal via Npc or Health + Corpse components; RTTI checked), resources by name (`is_resource`), trigger categories by name (`categorise`), trigger shapes (`read_shape`: box, plane, sphere, polygon volume) and their world space outlines |
+| `src/layout.rs` | `Layout`: where everything the overlay reads is in the game's structures (instance, drawable, collide, proxy, body, physics shape, probes, camera, collision scene/instance/mesh, trigger shape), ROTTR Steam's by default, overridable per version in the offsets file's `layout` section. `layout::current()` is set on connecting |
+| `src/components.rs` | Components by RTTI class name: `Classes` (vtable -> class name via the CompleteObjectLocator), `Components::get` learns each class's slot from a table (budgeted per `start_refresh`) and checks class + back pointer. Class name constants |
+| `src/discover.rs` | `discover [--save]`: finds GameRender (camera), TR9MultibodyClient (-> CollisionSceneClient) and the instance array statics through what they point to, optionally writing them to the offsets file |
+| `src/check.rs` | `check`: reads everything the overlay does from the running game and checks it makes sense, to port the layout |
 | `src/ui_ipc_data.rs` | Shared-memory IPC (`shared_memory` crate, os_id `"TombHelperIPC-<size of UiDoubleBuffer>"` so a stale mapping from another layout is never opened): `UiData` (camera, `ObjectBox`es, `Capsule`s, `Probe`s, collision `Triangle`s), `UiDoubleBuffer` with a sequence counter per buffer, changed and read in place since `UiData` is ~7MB, copying only the triangles in use, plus `UiSettings` (atomic show/hide toggles, mesh radii, opacity, fade and hidden triangle culling, which the DLL's checkboxes/sliders and the exe's hotkeys change) (`update`; the reader uses `try_read` into a scratch box and keeps its last good copy, since the exe never waits), `SharedMemoryManager` (exe is owner) |
 | `src/lib.rs` | Injected overlay: `TombHelperHud` implements `ImguiRenderLoop`; opens a console only if `config.overlay.console`; shows a position window and draws (near-plane clipped, in world space via `Projector`) a box + name per `ObjectBox`, Lara's capsules, probes, a circle at her feet and the level's collision triangles (filled faintly, under everything, without anti-aliasing,
 skipping back faces and ones off screen, and optionally ones behind others via a quarter resolution software ID buffer
@@ -77,6 +81,8 @@ at addresses the exe sends) since the exe's copy lags and made everything judder
 
 ## Common changes
 
+- **Port the overlay:** `discover --save`, then `check`, fixing that version's `layout` until it passes (README "Porting
+  the overlay"). New fields read from the game go in `Layout` (with ROTTR's value as the default), not constants.
 - **Support a new game version:** run `tomb-helper derive <known exe> running` to get most of the entry, then add it to
   `offsets.json` (test it first in `tomb-helper-offsets.json` next to the exe, which hot reloads). Use `image_size`
   when the version string is shared between stores. Only include the `AddressType`s you've found — handlers
@@ -94,8 +100,8 @@ at addresses the exe sends) since the exe's copy lags and made everything judder
 ## Game memory notes (ROTTR Steam, Foundation/cdc engine)
 
 Everything below was found in ROTTR Steam (`(Steam) v1.0 build 0.0_64`, image size 58654720), the only version with
-the overlay offsets (`CameraView`, `CameraLens`, `InstanceArray`, `PlayerInstance`, `PlayerProbes`,
-`ProxyComponentType`, `CollisionScene`). Offsets are hex, `mod+` means relative to the exe's base. Other versions will need them found
+the overlay offsets (`CameraView`, `CameraLens`, `InstanceArray`, `PlayerProbes`, `CollisionScene`; the layout
+defaults in `layout.rs` are ROTTR Steam's too). All the RTTI classes used exist in SOTTR 492 under the same names. Offsets are hex, `mod+` means relative to the exe's base. Other versions will need them found
 again (`derive` plus live checks).
 
 ### Finding your way around
@@ -105,10 +111,9 @@ again (`derive` plus live checks).
 - Objects are *instances* in a static array (`InstanceArray`, mod+0x24EEAD0, 0x120 byte slots, 8267 of them, all
   with header 2, then zeros). A slot is used if +0xE0 (TransformComponent) is set. +0x10 position and +0x30 Euler
   rotation (radians, Rx*Ry*Rz) are live; +0x78 -> placement record (+0x48 short name, +0x50 full name; null for
-  spawned instances like Lara); +0xD8 -> component table with a fixed slot per component type (+0x40
-  DrawableComponent, +0x50 CollideComponent; the proxy's slot is the u32 at `ProxyComponentType` mod+0x1101D20).
-  Components are heap objects whose +0x8 points back at the instance. Which slot Lara uses changes when she's
-  reloaded, so always go through `PlayerInstance` ([0x100C6B0, 0, 0x31A8, 0] = Player+0x31A8).
+  spawned instances like Lara); +0xD8 -> component table with a fixed slot per component type (`components` learns
+  them by class). Components are heap objects whose +0x8 points back at the instance. Which slot Lara uses changes
+  when she's reloaded; she's the instance with a PlayerComponent (also Player+0x31A8, [0x100C6B0, 0, 0x31A8, 0]).
 - `TransformComponent` +0x30 is a world matrix, but it isn't kept up to date for everything (Lara's stays where she
   loaded in), so the overlay only takes its scale. Its +0x80 -> Lara's live bone matrices (world space, bone n of a
   shape is matrix n + 1).
@@ -159,9 +164,10 @@ again (`derive` plus live checks).
 
 ### Interactables and triggers
 - An instance's component table (+0xD8) has a fixed slot per component type, but many instances' tables are shorter
-  and the slot then holds something else, so `trigger` checks the RTTI class of what's there (u64 index): 8 Drawable, 10 Collide, 12
-  TriggerComponent, 14 cdc::ShapeComponent, 18 InteractableComponent, 34 cdc::ProxyComponent (`ProxyComponentType`), 64
-  LootComponent, 84 CheckpointComponent, 111 CollectibleComponent. Type ids are static u32s round mod+0x1101D00.
+  and the slot then holds something else, so `components` checks the RTTI class and back pointer of what's there.
+  ROTTR's slots (u64 index, for reference; they're learnt at runtime): 8 Drawable, 10 Collide, 12 TriggerComponent, 14
+  cdc::ShapeComponent, 18 InteractableComponent, 30 Health, 31 Npc, 34 cdc::ProxyComponent, 64 LootComponent, 76
+  Corpse, 84 CheckpointComponent, 111 CollectibleComponent. Type ids are static u32s round mod+0x1101D00.
 - Interactable: InteractableComponent (campfires, search markers, tethers, throwables, corpses to loot), LootComponent
   (pickups, documents, relics, survival caches), CollectibleComponent (documents, relics, cave markers). Resources to
   gather (herb/berry plants, mushrooms, feathers, coins, saplings) are spawned instances (`craftable_resource_*`) with

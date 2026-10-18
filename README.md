@@ -104,11 +104,12 @@ Each version looks like:
 - `offsets` are pointer chains: the first is relative to the game's exe, the rest are followed as pointers. Values a version doesn't have can be left out, and features that need them won't load
 - `witnesses` are optional, see [Finding offsets for a new game version](#finding-offsets-for-a-new-game-version)
 - `unverified` is ignored, and is where the tools put offsets they couldn't confirm
+- `layout` is optional: where things are in the game's structures, for the overlay, where they differ from Rise of the Tomb Raider (Steam)'s. E.g. `"layout": {"instance": {"position": "0x20"}, "collide": {"capsule_radius": "0x30"}}`. The groups and their fields are in `src/layout.rs`, with what each is. See [Porting the overlay](#porting-the-overlay)
 
 ## Overlay
 
 The overlay (`ToggleUI`) draws a box around game objects near Lara, labelled with the object's name.
-It currently needs the `CameraView`, `CameraLens` and `InstanceArray` (and `PlayerInstance`/`PlayerProbes`/`ProxyComponentType` for Lara's collision, `CollisionScene` for the level's) offsets, which only Rise of the Tomb Raider (Steam) has so far.
+It currently needs the `CameraView`, `CameraLens` and `InstanceArray` (and `PlayerProbes` for Lara's ground probes, `CollisionScene` for the level's collision) offsets, which only Rise of the Tomb Raider (Steam) has so far; see [Porting the overlay](#porting-the-overlay).
 - `interactables`: draw a box (teal) round each thing Lara can interact with, labelled with its name: campfires, pickups, documents, relics, caches, crates, tether points, throwables, plants and other things to gather crafting resources from, ... On by default
 - `npcs`: draw a box (red) round each character and animal (enemies, friendly characters, hares, squirrels, birds, ...), labelled with what it is (e.g. `rem_smg` or `trx_mountain_hare`). The box is round the capsules the game uses for hitting them, so it follows their pose. On by default
 - `triggers`: draw the trigger volumes, labelled with their names: boxes, spheres, planes and the polygon volumes the game streams the level with. Off by default
@@ -215,3 +216,14 @@ tomb-helper watch CutscenePrompt CutsceneStatus CutsceneLength --delay 15 --seco
 This attaches to the game as a debugger and puts hardware breakpoints on up to 4 values, then detaches. The game pauses when it isn't focused, so use `--delay` to give yourself time to switch back to it (and get the values in use, e.g. start a cutscene). It prints a `"witnesses"` block to add to that version's entry in the offsets file; `derive` matches those instructions in the new build to find where each field moved to (`witness` in its output).
 
 `tomb-helper trace <exe> <static address>` prints the chains the code accesses from every reference to a static address, which helps when investigating by hand.
+
+## Porting the overlay
+
+Most of what the overlay reads is found through the game's RTTI class names (e.g. `InteractableComponent`, `cdc::CollisionSceneClient`), which are the same between patches and in Shadow of the Tomb Raider, so there's less to port than for the other offsets:
+
+1. Load into a level, then run `tomb-helper discover --save`. It finds the camera, instance array and collision scene through the classes of what they point to, and saves them to the [offsets file](#offsets-file) next to the exe (which tomb-helper reloads while running). `PlayerProbes` can't be found this way, so use `derive` for it.
+2. With Lara standing somewhere ordinary, run `tomb-helper check`. It reads everything the way the overlay does and checks the results make sense, e.g. that instances' transforms are TransformComponents, there's a collision floor under Lara, her capsules are her size and on her. Each check that fails points at a group of the `layout`.
+3. Fix the failing groups in that version's `layout` (the file is reloaded, rerun `check`) until everything passes. `tomb-helper disasm <pid> <address>` and the notes in `CLAUDE.md` on how each structure was found help with finding a field that moved.
+
+Components are found by class too, so their slots never need porting: each type's slot is learnt from the first component table it's seen in.
+

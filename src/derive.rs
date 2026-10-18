@@ -55,6 +55,13 @@ Usage:
       than pointer scanned chains.
   tomb-helper probe [--version <version>] [--watch]
       Print the current value of each known offset for the running game.
+  tomb-helper discover [--version <version>] [--save]
+      With the game running and loaded into a level, find the overlay's static addresses (the camera,
+      instance array and collision scene) through the RTTI class names of what they point to, which
+      don't change between versions. --save writes them to the offsets file next to the exe.
+  tomb-helper check [--version <version>]
+      With the game running and Lara somewhere ordinary in a level, test the overlay's offsets and
+      layout against it, e.g. after `discover` or editing the layout for a new version.
   tomb-helper trace <image> <static address in hex>
       Print the pointer chains the code accesses from each reference to a static address.
   tomb-helper watch <address type>... [--version <version>] [--seconds <n>] [--delay <n>] [--write]
@@ -69,6 +76,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
     let mut seconds = 5;
     let mut delay = 0;
     let mut write_only = false;
+    let mut save = false;
     let mut rest = args.iter();
     while let Some(arg) = rest.next() {
         match arg.as_str() {
@@ -77,6 +85,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
             }
             "--watch" => watch = true,
             "--write" => write_only = true,
+            "--save" => save = true,
             "--delay" => delay = rest.next().and_then(|s| s.parse().ok()).ok_or("--delay needs a number")?,
             "--seconds" => {
                 seconds = rest
@@ -99,6 +108,8 @@ pub fn run(args: &[String]) -> Result<(), String> {
         ["derive", from, to] => derive(from, to, version.as_deref()),
         ["chains"] => chains::find_code_chains(version),
         ["probe"] => chains::probe(version, watch),
+        ["discover"] => crate::discover::discover(version, save),
+        ["check"] => crate::check::check(version),
         ["trace", image, address] => trace(image, address),
         _ => Err(USAGE.to_string()),
     }
