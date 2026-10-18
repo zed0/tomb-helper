@@ -36,6 +36,9 @@ fn default_hotkeys() -> Vec<Hotkey> {
         Hotkey::new(KeyCode::F7, Action::RestorePosition {}),
         Hotkey::new(KeyCode::F8, Action::ResetSkipCutsceneTracker {}),
         Hotkey::new(KeyCode::F9, Action::ToggleUI {}),
+        Hotkey::new(KeyCode::F10, Action::ToggleLaraCollision {}),
+        Hotkey::new(KeyCode::F11, Action::ToggleCoarseCollision {}),
+        Hotkey::new(KeyCode::F12, Action::ToggleDetailedCollision {}),
         Hotkey::new(KeyCode::Space, Action::SkipCutscene {}),
         Hotkey::new(KeyCode::W, Action::Forward { distance: 100.0 }),
         Hotkey::new(KeyCode::S, Action::Backward { distance: 100.0 }),
@@ -152,12 +155,17 @@ pub struct OverlayConfig {
     // Draw the capsule the game moves Lara with
     #[serde(default = "default_lara_proxy")]
     pub lara_proxy: bool,
-    // Draw the level's collision near Lara
+    // Draw the level's collision near Lara that she collides with (to start with, it can be toggled)
     #[serde(default = "default_collision_meshes")]
     pub collision_meshes: bool,
-    // How far from Lara to draw it
+    // How far from Lara to draw them (to start with, they can be changed)
     #[serde(default = "default_collision_mesh_radius")]
     pub collision_mesh_radius: f32,
+    #[serde(default = "default_collision_mesh_radius")]
+    pub detailed_collision_mesh_radius: f32,
+    // Also draw the level's collision meshes Lara doesn't collide with (to start with, they can be toggled)
+    #[serde(default)]
+    pub detailed_collision_meshes: bool,
     // Open a console in the game for the overlay's logs
     #[serde(default)]
     pub console: bool,

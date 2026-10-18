@@ -1,5 +1,5 @@
 use std::ptr;
-use std::sync::atomic::{fence, AtomicUsize, Ordering};
+use std::sync::atomic::{fence, AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use shared_memory::{Shmem, ShmemConf, ShmemError};
 use crate::position::Position;
 
@@ -76,6 +76,8 @@ pub enum SurfaceKind {
 pub struct Triangle {
     pub corners: [Position; 3],
     pub kind: SurfaceKind,
+    // From a mesh Lara doesn't collide with (e.g. every log of a pile, where she collides with a rough box round them)
+    pub detailed: bool,
 }
 
 // All zeros is a valid (empty) value, which `zeroed` relies on
@@ -147,8 +149,47 @@ pub fn projection_from_lens(lens: &[f32; 8]) -> [f32; 16] {
     ]
 }
 
+// What to show, which the overlay's window and the exe's hotkeys change. Kept apart from the buffers since the exe
+// overwrites those.
+#[repr(C)]
+pub struct UiSettings {
+    // Whether the exe has set the starting values from its config
+    pub initialised: AtomicBool,
+    // Lara's capsules and probes
+    pub lara_collision: AtomicBool,
+    // The level's collision meshes Lara collides with, and the rest
+    pub coarse_meshes: AtomicBool,
+    pub detailed_meshes: AtomicBool,
+    // How far from Lara to draw each of them (f32 bits)
+    pub coarse_radius: AtomicU32,
+    pub detailed_radius: AtomicU32,
+}
+
+impl UiSettings {
+    pub fn get(setting: &AtomicBool) -> bool {
+        setting.load(Ordering::Relaxed)
+    }
+
+    pub fn set(setting: &AtomicBool, value: bool) {
+        setting.store(value, Ordering::Relaxed);
+    }
+
+    pub fn toggle(setting: &AtomicBool) {
+        setting.fetch_xor(true, Ordering::Relaxed);
+    }
+
+    pub fn get_f32(setting: &AtomicU32) -> f32 {
+        f32::from_bits(setting.load(Ordering::Relaxed))
+    }
+
+    pub fn set_f32(setting: &AtomicU32, value: f32) {
+        setting.store(value.to_bits(), Ordering::Relaxed);
+    }
+}
+
 #[repr(C)]
 pub struct UiDoubleBuffer {
+    pub settings: UiSettings,
     active_buffer: AtomicUsize,
     // Odd while the matching buffer is being written
     sequences: [AtomicUsize; 2],

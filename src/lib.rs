@@ -1,7 +1,7 @@
 use imgui::*;
 use hudhook::*;
 use hudhook::hooks::dx12::ImguiDx12Hooks;
-use crate::ui_ipc_data::{projection_from_lens, BoxKind, Capsule, ObjectBox, Probe, SharedMemoryManager, SurfaceKind, Triangle, UiData};
+use crate::ui_ipc_data::{projection_from_lens, BoxKind, Capsule, ObjectBox, Probe, SharedMemoryManager, SurfaceKind, Triangle, UiData, UiSettings};
 use crate::tracing::{error, warn};
 
 mod ui_ipc_data;
@@ -33,6 +33,10 @@ const PROBE_HIT_SIZE: f32 = 4.0;
 const FLOOR_COLOUR: [f32; 4] = [0.2, 1.0, 0.2, 0.5];
 const WALL_COLOUR: [f32; 4] = [1.0, 0.55, 0.1, 0.5];
 const CEILING_COLOUR: [f32; 4] = [0.3, 0.6, 1.0, 0.5];
+// Range of the sliders for how far from Lara collision meshes are drawn
+const MAX_MESH_RADIUS: f32 = 5000.0;
+// Meshes Lara doesn't collide with, whichever way they face
+const DETAILED_COLOUR: [f32; 4] = [0.85, 0.4, 1.0, 0.5];
 const SURFACE_FILL_ALPHA: f32 = 0.12;
 
 // The game stores matrices row-major for row vectors (`v * M`). Reading the same floats column-major
@@ -210,6 +214,7 @@ fn draw_probe(draw_list: &DrawListMut, projector: &Projector, probe: &Probe) {
 
 fn draw_triangle(draw_list: &DrawListMut, projector: &Projector, triangle: &Triangle) {
     let colour = match triangle.kind {
+        _ if triangle.detailed => DETAILED_COLOUR,
         SurfaceKind::Floor => FLOOR_COLOUR,
         SurfaceKind::Wall => WALL_COLOUR,
         SurfaceKind::Ceiling => CEILING_COLOUR,
@@ -304,11 +309,12 @@ impl ImguiRenderLoop for TombHelperHud {
         let screen_height = ui.io().display_size[1];
         let object_count = ui_data.object_count.min(ui_data.objects.len());
         let triangle_count = ui_data.triangle_count.min(ui_data.triangles.len());
+        let settings = &self.ui_memory_manager.get().settings;
 
         ui.window("Position")
             .position_pivot([1., 0.])
             .position([screen_width, 0.], Condition::Once)
-            .size([400., 200.], Condition::Once)
+            .size([400., 260.], Condition::Once)
             .build(|| {
                 ui.text_wrapped(format!("{:?}", ui_data.position));
                 ui.text(format!("{} objects", object_count));
@@ -316,7 +322,28 @@ impl ImguiRenderLoop for TombHelperHud {
                     "{} collision triangles ({:.1}ms to find, {:.1}ms to draw)",
                     triangle_count, ui_data.triangle_milliseconds, self.draw_milliseconds
                 ));
+                let mut lara = UiSettings::get(&settings.lara_collision);
+                if ui.checkbox("Lara's collision (F10)", &mut lara) {
+                    UiSettings::set(&settings.lara_collision, lara);
+                }
+                for (label, setting, radius_label, radius) in [
+                    ("Collision Lara hits (F11)", &settings.coarse_meshes, "Radius##coarse", &settings.coarse_radius),
+                    ("Detailed collision (F12)", &settings.detailed_meshes, "Radius##detailed", &settings.detailed_radius),
+                ] {
+                    let mut value = UiSettings::get(setting);
+                    if ui.checkbox(label, &mut value) {
+                        UiSettings::set(setting, value);
+                    }
+                    let mut value = UiSettings::get_f32(radius);
+                    if ui.slider_config(radius_label, 0.0, MAX_MESH_RADIUS).display_format("%.0f").build(&mut value) {
+                        UiSettings::set_f32(radius, value);
+                    }
+                }
             });
+        // Read again so changes show straight away, rather than once the exe has caught up
+        let lara_collision = UiSettings::get(&settings.lara_collision);
+        let coarse_meshes = UiSettings::get(&settings.coarse_meshes);
+        let detailed_meshes = UiSettings::get(&settings.detailed_meshes);
 
         let view = game_matrix(&read_game(ui_data.camera_view_address).unwrap_or(ui_data.camera_view));
         let projection = read_game(ui_data.camera_lens_address)
@@ -336,28 +363,32 @@ impl ImguiRenderLoop for TombHelperHud {
             | imgui::sys::ImDrawListFlags_AntiAliasedLinesUseTex
             | imgui::sys::ImDrawListFlags_AntiAliasedFill) as i32);
         for triangle in ui_data.triangles[..triangle_count].iter().rev() {
-            draw_triangle(&draw_list, &projector, triangle);
+            if (triangle.detailed && detailed_meshes) || (!triangle.detailed && coarse_meshes) {
+                draw_triangle(&draw_list, &projector, triangle);
+            }
         }
         *flags = anti_aliased;
         for object in &ui_data.objects[..object_count] {
             draw_box(&draw_list, &projector, object);
         }
-        for capsule in &ui_data.capsules[..ui_data.capsule_count.min(ui_data.capsules.len())] {
-            draw_capsule(&draw_list, &projector, capsule, LARA_COLOUR);
-        }
-        for probe in &ui_data.probes[..ui_data.probe_count.min(ui_data.probes.len())] {
-            draw_probe(&draw_list, &projector, probe);
-        }
-        let proxy_count = ui_data.proxy_count.min(ui_data.proxies.len());
-        for (i, (proxy, colour)) in ui_data.proxies[..proxy_count].iter().zip(PROXY_COLOURS).enumerate() {
-            let colour = if i == 0 && ui_data.proxy_touching { PUSHING_COLOUR } else { colour };
-            draw_capsule(&draw_list, &projector, proxy, colour);
-        }
-        // The camera and weapon only collide while she aims
-        if ui_data.attached_active {
-            let attached_count = ui_data.attached_count.min(ui_data.attached.len());
-            for (capsule, touching) in ui_data.attached[..attached_count].iter().zip(ui_data.attached_touching) {
-                draw_capsule(&draw_list, &projector, capsule, if touching { PUSHING_COLOUR } else { COLLISION_COLOUR });
+        if lara_collision {
+            for capsule in &ui_data.capsules[..ui_data.capsule_count.min(ui_data.capsules.len())] {
+                draw_capsule(&draw_list, &projector, capsule, LARA_COLOUR);
+            }
+            for probe in &ui_data.probes[..ui_data.probe_count.min(ui_data.probes.len())] {
+                draw_probe(&draw_list, &projector, probe);
+            }
+            let proxy_count = ui_data.proxy_count.min(ui_data.proxies.len());
+            for (i, (proxy, colour)) in ui_data.proxies[..proxy_count].iter().zip(PROXY_COLOURS).enumerate() {
+                let colour = if i == 0 && ui_data.proxy_touching { PUSHING_COLOUR } else { colour };
+                draw_capsule(&draw_list, &projector, proxy, colour);
+            }
+            // The camera and weapon only collide while she aims
+            if ui_data.attached_active {
+                let attached_count = ui_data.attached_count.min(ui_data.attached.len());
+                for (capsule, touching) in ui_data.attached[..attached_count].iter().zip(ui_data.attached_touching) {
+                    draw_capsule(&draw_list, &projector, capsule, if touching { PUSHING_COLOUR } else { COLLISION_COLOUR });
+                }
             }
         }
 
