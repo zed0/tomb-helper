@@ -70,6 +70,10 @@ impl OverlayHandler {
             UiSettings::set(&settings.detailed_meshes, config.detailed_collision_meshes);
             UiSettings::set_f32(&settings.coarse_radius, config.collision_mesh_radius);
             UiSettings::set_f32(&settings.detailed_radius, config.detailed_collision_mesh_radius);
+            UiSettings::set_f32(&settings.mesh_opacity, config.collision_opacity);
+            UiSettings::set(&settings.fade_with_distance, config.collision_mesh_fade);
+            UiSettings::set_f32(&settings.fade_strength, config.collision_mesh_fade_strength);
+            UiSettings::set(&settings.cull_hidden, config.collision_mesh_cull_hidden);
             UiSettings::set(&settings.initialised, true);
         }
         ui_memory_manager.get_mut().update(|val| {

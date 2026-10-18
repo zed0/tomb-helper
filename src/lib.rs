@@ -38,6 +38,13 @@ const MAX_MESH_RADIUS: f32 = 5000.0;
 // Meshes Lara doesn't collide with, whichever way they face
 const DETAILED_COLOUR: [f32; 4] = [0.85, 0.4, 1.0, 0.5];
 const SURFACE_FILL_ALPHA: f32 = 0.12;
+// Range of the slider for how quickly meshes fade with distance
+const MAX_FADE_STRENGTH: f32 = 8.0;
+// Triangles faded more than this aren't drawn
+const MIN_OPACITY: f32 = 0.005;
+// When culling hidden triangles, they're rasterised into a buffer this many times smaller than the screen, keeping
+// the nearest at each pixel, and only those nearest somewhere are drawn. Smaller triangles can be missed.
+const OCCLUSION_SCALE: f32 = 4.0;
 
 // The game stores matrices row-major for row vectors (`v * M`). Reading the same floats column-major
 // gives the transposed matrix, which is the equivalent for nalgebra's column vectors (`M * v`).
@@ -60,6 +67,98 @@ fn read_game<T: Copy>(address: usize) -> Option<T> {
         return None;
     }
     Some(unsafe { value.assume_init() })
+}
+
+// The part of the convex polygon (in clip space) in front of the near plane
+fn clip_polygon(corners: &[Vector4<f32>]) -> Vec<Vector4<f32>> {
+    let mut clipped = vec![];
+    for (i, &a) in corners.iter().enumerate() {
+        let b = corners[(i + 1) % corners.len()];
+        if a.w >= NEAR_CLIP_W {
+            clipped.push(a);
+        }
+        if (a.w >= NEAR_CLIP_W) != (b.w >= NEAR_CLIP_W) {
+            let t = (a.w - NEAR_CLIP_W) / (a.w - b.w);
+            clipped.push(a + (b - a) * t);
+        }
+    }
+    clipped
+}
+
+// Keeps which triangle is nearest the camera at each pixel, at a lower resolution than the screen
+#[derive(Default)]
+struct OcclusionBuffer {
+    width: usize,
+    height: usize,
+    // 1 / w, which is linear across the screen, so bigger is nearer
+    depth: Vec<f32>,
+    ids: Vec<u32>,
+}
+
+impl OcclusionBuffer {
+    fn reset(&mut self, screen_width: f32, screen_height: f32) {
+        self.width = (screen_width / OCCLUSION_SCALE).ceil().max(1.0) as usize;
+        self.height = (screen_height / OCCLUSION_SCALE).ceil().max(1.0) as usize;
+        self.depth.clear();
+        self.depth.resize(self.width * self.height, 0.0);
+        self.ids.clear();
+        self.ids.resize(self.width * self.height, u32::MAX);
+    }
+
+    // `corners` are in clip space
+    fn add(&mut self, id: u32, projector: &Projector, corners: &[Vector4<f32>; 3]) {
+        let points: Vec<[f32; 3]> = clip_polygon(corners)
+            .into_iter()
+            .map(|c| {
+                let [x, y] = projector.to_screen(c);
+                [x / OCCLUSION_SCALE, y / OCCLUSION_SCALE, 1.0 / c.w]
+            })
+            .collect();
+        for i in 2..points.len() {
+            self.rasterise(id, [points[0], points[i - 1], points[i]]);
+        }
+    }
+
+    fn rasterise(&mut self, id: u32, p: [[f32; 3]; 3]) {
+        let edge = |a: [f32; 3], b: [f32; 3], x: f32, y: f32| (b[0] - a[0]) * (y - a[1]) - (b[1] - a[1]) * (x - a[0]);
+        let area = edge(p[0], p[1], p[2][0], p[2][1]);
+        if area.abs() < 1e-6 {
+            return;
+        }
+        let min_x = p.iter().map(|c| c[0]).fold(f32::MAX, f32::min).floor().max(0.0) as i64;
+        let max_x = p.iter().map(|c| c[0]).fold(f32::MIN, f32::max).ceil().min(self.width as f32 - 1.0) as i64;
+        let min_y = p.iter().map(|c| c[1]).fold(f32::MAX, f32::min).floor().max(0.0) as i64;
+        let max_y = p.iter().map(|c| c[1]).fold(f32::MIN, f32::max).ceil().min(self.height as f32 - 1.0) as i64;
+        for y in min_y..=max_y {
+            for x in min_x..=max_x {
+                let (px, py) = (x as f32 + 0.5, y as f32 + 0.5);
+                // Barycentric weights, all positive inside whichever way it's wound
+                let w0 = edge(p[1], p[2], px, py) / area;
+                let w1 = edge(p[2], p[0], px, py) / area;
+                let w2 = edge(p[0], p[1], px, py) / area;
+                if w0 < 0.0 || w1 < 0.0 || w2 < 0.0 {
+                    continue;
+                }
+                let depth = w0 * p[0][2] + w1 * p[1][2] + w2 * p[2][2];
+                let i = y as usize * self.width + x as usize;
+                if depth > self.depth[i] {
+                    self.depth[i] = depth;
+                    self.ids[i] = id;
+                }
+            }
+        }
+    }
+
+    // Which of the first `count` ids are nearest at some pixel
+    fn visible(&self, count: usize) -> Vec<bool> {
+        let mut visible = vec![false; count];
+        for &id in &self.ids {
+            if let Some(v) = visible.get_mut(id as usize) {
+                *v = true;
+            }
+        }
+        visible
+    }
 }
 
 struct Projector {
@@ -98,18 +197,7 @@ impl Projector {
     // Clips the convex polygon against the near plane, returns its corners on screen (none if it's entirely behind
     // the camera)
     fn project_polygon(&self, corners: &[Vector4<f32>]) -> Vec<[f32; 2]> {
-        let mut screen = vec![];
-        for (i, &a) in corners.iter().enumerate() {
-            let b = corners[(i + 1) % corners.len()];
-            if a.w >= NEAR_CLIP_W {
-                screen.push(self.to_screen(a));
-            }
-            if (a.w >= NEAR_CLIP_W) != (b.w >= NEAR_CLIP_W) {
-                let t = (a.w - NEAR_CLIP_W) / (a.w - b.w);
-                screen.push(self.to_screen(a + (b - a) * t));
-            }
-        }
-        screen
+        clip_polygon(corners).into_iter().map(|c| self.to_screen(c)).collect()
     }
 
     // Clips the line against the near plane, returns None if it's entirely behind the camera
@@ -200,30 +288,37 @@ fn draw_capsule(draw_list: &DrawListMut, projector: &Projector, capsule: &Capsul
     }
 }
 
-fn draw_probe(draw_list: &DrawListMut, projector: &Projector, probe: &Probe) {
+fn draw_probe(draw_list: &DrawListMut, projector: &Projector, probe: &Probe, colour: [f32; 4]) {
     let vector = |p: &crate::position::Position| Vector3::new(p.x, p.y, p.z);
-    draw_world_line(draw_list, projector, vector(&probe.start), vector(&probe.end), PROBE_COLOUR);
+    draw_world_line(draw_list, projector, vector(&probe.start), vector(&probe.end), colour);
     if probe.has_hit {
         let hit = vector(&probe.hit);
         for axis in [Vector3::x(), Vector3::y(), Vector3::z()] {
             let offset = axis * PROBE_HIT_SIZE;
-            draw_world_line(draw_list, projector, hit - offset, hit + offset, PROBE_COLOUR);
+            draw_world_line(draw_list, projector, hit - offset, hit + offset, colour);
         }
     }
 }
 
-fn draw_triangle(draw_list: &DrawListMut, projector: &Projector, triangle: &Triangle) {
-    let colour = match triangle.kind {
-        _ if triangle.detailed => DETAILED_COLOUR,
-        SurfaceKind::Floor => FLOOR_COLOUR,
-        SurfaceKind::Wall => WALL_COLOUR,
-        SurfaceKind::Ceiling => CEILING_COLOUR,
-    };
+fn with_opacity(colour: [f32; 4], opacity: f32) -> [f32; 4] {
+    [colour[0], colour[1], colour[2], colour[3] * opacity]
+}
+
+// How far the point is from the nearest part of the box round the triangle, like the exe's choice of triangles
+fn triangle_distance(point: &Vector3<f32>, triangle: &Triangle) -> f32 {
+    let corners = triangle.corners.map(|c| Vector3::new(c.x, c.y, c.z));
+    let min = corners[0].inf(&corners[1]).inf(&corners[2]);
+    let max = corners[0].sup(&corners[1]).sup(&corners[2]);
+    (min - point).sup(&(point - max)).sup(&Vector3::zeros()).norm()
+}
+
+// The triangle's corners in clip space, unless it's seen from behind or can't be on screen
+fn triangle_on_screen(projector: &Projector, triangle: &Triangle) -> Option<[Vector4<f32>; 3]> {
     let world = triangle.corners.map(|c| Vector3::new(c.x, c.y, c.z));
-    // Seen from behind. Triangles are wound anticlockwise seen from the side they face.
+    // Triangles are wound anticlockwise seen from the side they face
     let normal = (world[1] - world[0]).cross(&(world[2] - world[0]));
     if normal.dot(&(projector.camera_position - world[0])) <= 0.0 {
-        return;
+        return None;
     }
     let corners = world.map(|c| projector.world_to_clip(c));
     // All off the same side of the screen, or behind the camera
@@ -234,11 +329,29 @@ fn draw_triangle(draw_list: &DrawListMut, projector: &Projector, triangle: &Tria
         || outside(|c| c.y > c.w)
         || outside(|c| c.w < NEAR_CLIP_W)
     {
-        return;
+        return None;
     }
+    Some(corners)
+}
 
-    let fill = [colour[0], colour[1], colour[2], SURFACE_FILL_ALPHA];
-    let polygon = projector.project_polygon(&corners);
+// `corners` are from `triangle_on_screen`, and `opacity` scales the colours' own
+fn draw_triangle(
+    draw_list: &DrawListMut,
+    projector: &Projector,
+    triangle: &Triangle,
+    corners: &[Vector4<f32>; 3],
+    opacity: f32,
+) {
+    let mut colour = match triangle.kind {
+        _ if triangle.detailed => DETAILED_COLOUR,
+        SurfaceKind::Floor => FLOOR_COLOUR,
+        SurfaceKind::Wall => WALL_COLOUR,
+        SurfaceKind::Ceiling => CEILING_COLOUR,
+    };
+    colour[3] *= opacity;
+
+    let fill = [colour[0], colour[1], colour[2], SURFACE_FILL_ALPHA * opacity];
+    let polygon = projector.project_polygon(corners);
     for i in 2..polygon.len() {
         draw_list.add_triangle(polygon[0], polygon[i - 1], polygon[i], fill).filled(true).build();
     }
@@ -258,6 +371,8 @@ struct TombHelperHud {
     ejecting: bool,
     // How long the last frame's drawing took
     draw_milliseconds: f32,
+    // Reused between frames
+    occlusion: OcclusionBuffer,
 }
 
 impl TombHelperHud {
@@ -288,6 +403,7 @@ impl TombHelperHud {
             scratch: UiData::zeroed(),
             ejecting: false,
             draw_milliseconds: 0.0,
+            occlusion: OcclusionBuffer::default(),
         }
     }
 }
@@ -314,7 +430,7 @@ impl ImguiRenderLoop for TombHelperHud {
         ui.window("Position")
             .position_pivot([1., 0.])
             .position([screen_width, 0.], Condition::Once)
-            .size([400., 260.], Condition::Once)
+            .size([400., 360.], Condition::Once)
             .build(|| {
                 ui.text_wrapped(format!("{:?}", ui_data.position));
                 ui.text(format!("{} objects", object_count));
@@ -327,7 +443,7 @@ impl ImguiRenderLoop for TombHelperHud {
                     UiSettings::set(&settings.lara_collision, lara);
                 }
                 for (label, setting, radius_label, radius) in [
-                    ("Collision Lara hits (F11)", &settings.coarse_meshes, "Radius##coarse", &settings.coarse_radius),
+                    ("Movement collision (F11)", &settings.coarse_meshes, "Radius##coarse", &settings.coarse_radius),
                     ("Detailed collision (F12)", &settings.detailed_meshes, "Radius##detailed", &settings.detailed_radius),
                 ] {
                     let mut value = UiSettings::get(setting);
@@ -339,11 +455,32 @@ impl ImguiRenderLoop for TombHelperHud {
                         UiSettings::set_f32(radius, value);
                     }
                 }
+                let mut opacity = UiSettings::get_f32(&settings.mesh_opacity);
+                if ui.slider_config("Opacity", 0.0, 1.0).display_format("%.2f").build(&mut opacity) {
+                    UiSettings::set_f32(&settings.mesh_opacity, opacity);
+                }
+                let mut fade = UiSettings::get(&settings.fade_with_distance);
+                if ui.checkbox("Fade with distance from Lara", &mut fade) {
+                    UiSettings::set(&settings.fade_with_distance, fade);
+                }
+                let mut strength = UiSettings::get_f32(&settings.fade_strength);
+                if ui.slider_config("Fade strength", 1.0, MAX_FADE_STRENGTH).display_format("%.1f").build(&mut strength) {
+                    UiSettings::set_f32(&settings.fade_strength, strength);
+                }
+                let mut cull = UiSettings::get(&settings.cull_hidden);
+                if ui.checkbox("Hide triangles behind others", &mut cull) {
+                    UiSettings::set(&settings.cull_hidden, cull);
+                }
             });
         // Read again so changes show straight away, rather than once the exe has caught up
         let lara_collision = UiSettings::get(&settings.lara_collision);
         let coarse_meshes = UiSettings::get(&settings.coarse_meshes);
         let detailed_meshes = UiSettings::get(&settings.detailed_meshes);
+        let mesh_opacity = UiSettings::get_f32(&settings.mesh_opacity);
+        let fade_with_distance = UiSettings::get(&settings.fade_with_distance);
+        let fade_strength = UiSettings::get_f32(&settings.fade_strength);
+        let cull_hidden = UiSettings::get(&settings.cull_hidden);
+        let radii = [UiSettings::get_f32(&settings.coarse_radius), UiSettings::get_f32(&settings.detailed_radius)];
 
         let view = game_matrix(&read_game(ui_data.camera_view_address).unwrap_or(ui_data.camera_view));
         let projection = read_game(ui_data.camera_lens_address)
@@ -362,37 +499,67 @@ impl ImguiRenderLoop for TombHelperHud {
         *flags &= !((imgui::sys::ImDrawListFlags_AntiAliasedLines
             | imgui::sys::ImDrawListFlags_AntiAliasedLinesUseTex
             | imgui::sys::ImDrawListFlags_AntiAliasedFill) as i32);
+        let lara = Vector3::new(ui_data.position.x, ui_data.position.y, ui_data.position.z);
+        let mut shown = vec![];
         for triangle in ui_data.triangles[..triangle_count].iter().rev() {
-            if (triangle.detailed && detailed_meshes) || (!triangle.detailed && coarse_meshes) {
-                draw_triangle(&draw_list, &projector, triangle);
+            if !((triangle.detailed && detailed_meshes) || (!triangle.detailed && coarse_meshes)) {
+                continue;
             }
+            let mut opacity = mesh_opacity;
+            if fade_with_distance {
+                let radius = radii[triangle.detailed as usize].max(1.0);
+                let t = (triangle_distance(&lara, triangle) / radius).min(1.0);
+                opacity *= (1.0 - t).powf(fade_strength);
+            }
+            if opacity < MIN_OPACITY {
+                continue;
+            }
+            if let Some(corners) = triangle_on_screen(&projector, triangle) {
+                shown.push((triangle, corners, opacity));
+            }
+        }
+        if cull_hidden {
+            self.occlusion.reset(screen_width, screen_height);
+            for (i, (_, corners, _)) in shown.iter().enumerate() {
+                self.occlusion.add(i as u32, &projector, corners);
+            }
+            let visible = self.occlusion.visible(shown.len());
+            let mut i = 0;
+            shown.retain(|_| {
+                i += 1;
+                visible[i - 1]
+            });
+        }
+        for (triangle, corners, opacity) in &shown {
+            draw_triangle(&draw_list, &projector, triangle, corners, *opacity);
         }
         *flags = anti_aliased;
         for object in &ui_data.objects[..object_count] {
             draw_box(&draw_list, &projector, object);
         }
         if lara_collision {
+            let opacity = |colour| with_opacity(colour, mesh_opacity);
             for capsule in &ui_data.capsules[..ui_data.capsule_count.min(ui_data.capsules.len())] {
-                draw_capsule(&draw_list, &projector, capsule, LARA_COLOUR);
+                draw_capsule(&draw_list, &projector, capsule, opacity(LARA_COLOUR));
             }
             for probe in &ui_data.probes[..ui_data.probe_count.min(ui_data.probes.len())] {
-                draw_probe(&draw_list, &projector, probe);
+                draw_probe(&draw_list, &projector, probe, opacity(PROBE_COLOUR));
             }
             let proxy_count = ui_data.proxy_count.min(ui_data.proxies.len());
             for (i, (proxy, colour)) in ui_data.proxies[..proxy_count].iter().zip(PROXY_COLOURS).enumerate() {
                 let colour = if i == 0 && ui_data.proxy_touching { PUSHING_COLOUR } else { colour };
-                draw_capsule(&draw_list, &projector, proxy, colour);
+                draw_capsule(&draw_list, &projector, proxy, opacity(colour));
             }
             // The camera and weapon only collide while she aims
             if ui_data.attached_active {
                 let attached_count = ui_data.attached_count.min(ui_data.attached.len());
                 for (capsule, touching) in ui_data.attached[..attached_count].iter().zip(ui_data.attached_touching) {
-                    draw_capsule(&draw_list, &projector, capsule, if touching { PUSHING_COLOUR } else { COLLISION_COLOUR });
+                    let colour = if touching { PUSHING_COLOUR } else { COLLISION_COLOUR };
+                    draw_capsule(&draw_list, &projector, capsule, opacity(colour));
                 }
             }
         }
 
-        let lara = Vector3::new(ui_data.position.x, ui_data.position.y, ui_data.position.z);
         if let Some(point) = projector.project(lara) {
             draw_list.add_circle(point, 6.0, LARA_COLOUR).thickness(2.0).build();
         }
@@ -401,3 +568,19 @@ impl ImguiRenderLoop for TombHelperHud {
 }
 
 hudhook::hudhook!(ImguiDx12Hooks, TombHelperHud::new());
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nearer_triangles_hide_ones_behind_them() {
+        let mut buffer = OcclusionBuffer::default();
+        buffer.reset(40.0 * OCCLUSION_SCALE, 40.0 * OCCLUSION_SCALE);
+        // Depth is 1 / w, so 0.5 is nearer than 0.1. The far one is entirely behind the near one, the other only partly.
+        buffer.rasterise(0, [[5., 5., 0.1], [15., 5., 0.1], [5., 15., 0.1]]);
+        buffer.rasterise(1, [[0., 0., 0.5], [30., 0., 0.5], [0., 30., 0.5]]);
+        buffer.rasterise(2, [[20., 20., 0.1], [39., 20., 0.1], [20., 39., 0.1]]);
+        assert_eq!(buffer.visible(3), [false, true, true]);
+    }
+}
