@@ -84,6 +84,12 @@ impl Game {
 pub fn check(version: Option<String>) -> Result<(), String> {
     let (_pid, handle, base_address, details) = chains::connect(version)?;
     println!("Found {} {}", details.name, details.version.version);
+    run(handle, base_address, details)
+}
+
+/// Checks the offsets and layout in `details` against the game
+pub fn run(handle: ProcessHandle, base_address: usize, details: ProcessDetails) -> Result<(), String> {
+    crate::layout::set(details.layout.clone());
     let game = Game { handle, base_address, details };
     let mut report = Report::default();
     let mut components = Components::new(base_address);

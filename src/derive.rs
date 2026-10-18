@@ -40,6 +40,11 @@ const SPANS: [usize; 2] = [0x40, 0x400];
 const USAGE: &str = "\
 Usage:
   tomb-helper                         Run normally
+  tomb-helper update-offsets [--from <exe or dump> [--from-version <version>]] [--dry-run]
+      Get the offsets for the running game, e.g. after a patch, and save them to the offsets file next
+      to the exe. Load into a level first. It finds the overlay's offsets, Lara's position, the ground
+      probes and the version string on its own; for the rest (e.g. cutscenes) pass the previous build's
+      exe or a dump of it with --from. Then it checks them. --dry-run doesn't save.
   tomb-helper export-offsets [<out.json>]
       Write the offsets tomb-helper is using to a file to edit. By default this is
       tomb-helper-offsets.json next to the exe, which tomb-helper then uses instead of its built in
@@ -77,6 +82,8 @@ pub fn run(args: &[String]) -> Result<(), String> {
     let mut delay = 0;
     let mut write_only = false;
     let mut save = false;
+    let mut from = None;
+    let mut dry_run = false;
     let mut rest = args.iter();
     while let Some(arg) = rest.next() {
         match arg.as_str() {
@@ -86,6 +93,8 @@ pub fn run(args: &[String]) -> Result<(), String> {
             "--watch" => watch = true,
             "--write" => write_only = true,
             "--save" => save = true,
+            "--dry-run" => dry_run = true,
+            "--from" => from = Some(rest.next().ok_or("--from needs a path")?.clone()),
             "--delay" => delay = rest.next().and_then(|s| s.parse().ok()).ok_or("--delay needs a number")?,
             "--seconds" => {
                 seconds = rest
@@ -110,6 +119,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
         ["probe"] => chains::probe(version, watch),
         ["discover"] => crate::discover::discover(version, save),
         ["check"] => crate::check::check(version),
+        ["update-offsets"] => crate::update_offsets::update_offsets(from, version, dry_run),
         ["trace", image, address] => trace(image, address),
         _ => Err(USAGE.to_string()),
     }
@@ -148,7 +158,7 @@ fn running_game() -> Result<(PeImage, String), String> {
     Err("No known game is running".to_string())
 }
 
-fn load(source: &str) -> Result<PeImage, String> {
+pub fn load(source: &str) -> Result<PeImage, String> {
     if source == "running" {
         return running_game().map(|(image, _)| image);
     }
@@ -190,7 +200,7 @@ fn trace(image: &str, address: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn reference_details(image: &PeImage, from_version: Option<&str>) -> Result<ProcessDetails, String> {
+pub fn reference_details(image: &PeImage, from_version: Option<&str>) -> Result<ProcessDetails, String> {
     let known = known_process_details();
     let found = match from_version {
         Some(version) => known.iter().find(|d| d.version.version == version),
@@ -654,25 +664,16 @@ pub fn print_entry(
     println!("{}", to_json(&entry));
 }
 
-fn derive(from: &str, to: &str, from_version: Option<&str>) -> Result<(), String> {
-    let old = load(from)?;
-    // A running game can be identified the same way the main tool does, including by version string
-    let running = match (from, from_version) {
-        ("running", None) => find_process::find_process(known_process_details(), None).map(|(_, _, _, d)| d),
-        _ => None,
-    };
-    let details = match running {
-        Some(details) => details,
-        None => reference_details(&old, from_version)?,
-    };
-    let new = load(to)?;
-    if old.is_64 != new.is_64 {
-        return Err("<from> and <to> have different architectures".to_string());
-    }
-
+/// The offsets of `details` (a version whose image is `old`) in the `new` image: (type, chain if found, whether it's
+/// sure, how each level was found)
+pub fn derive_lines(
+    old: &PeImage,
+    details: &ProcessDetails,
+    new: &PeImage,
+) -> Vec<(AddressType, Option<Vec<usize>>, bool, String)> {
     println!("Indexing references...");
-    let old_refs = References::new(&old);
-    let new_refs = References::new(&new);
+    let old_refs = References::new(old);
+    let new_refs = References::new(new);
 
     // Several address types usually share a static address (e.g. X/Y/Z position)
     let mut by_base: BTreeMap<usize, Vec<AddressType>> = BTreeMap::new();
@@ -699,7 +700,7 @@ fn derive(from: &str, to: &str, from_version: Option<&str>) -> Result<(), String
             if candidates.is_empty() { "none".to_string() } else { candidates.join(", ") },
             if derivation.best().is_none() || derivation.confident() { "" } else { "[UNSURE]" },
         );
-        let votes = chain_votes(&old, &new, &derivation.pairs);
+        let votes = chain_votes(old, new, &derivation.pairs);
         derived.insert(*base, (derivation, votes));
     }
 
@@ -713,7 +714,7 @@ fn derive(from: &str, to: &str, from_version: Option<&str>) -> Result<(), String
             Some(offsets) => *offsets.last().unwrap() as i64,
             None => continue,
         };
-        let matches = witness::match_witnesses(&old, &new, rvas);
+        let matches = witness::match_witnesses(old, new, rvas);
         let mut votes: HashMap<i64, f64> = HashMap::new();
         for m in matches.iter().flatten() {
             *votes.entry(last + m.new_displacement - m.old_displacement).or_default() += m.score;
@@ -735,7 +736,7 @@ fn derive(from: &str, to: &str, from_version: Option<&str>) -> Result<(), String
         );
     }
 
-    let lines: Vec<(AddressType, Option<Vec<usize>>, bool, String)> = entries
+    entries
         .into_iter()
         .map(|(address_type, offsets)| {
             let (derivation, votes) = &derived[&offsets[0]];
@@ -759,8 +760,26 @@ fn derive(from: &str, to: &str, from_version: Option<&str>) -> Result<(), String
                 None => (*address_type, None, false, String::new()),
             }
         })
-        .collect();
+        .collect()
+}
 
+fn derive(from: &str, to: &str, from_version: Option<&str>) -> Result<(), String> {
+    let old = load(from)?;
+    // A running game can be identified the same way the main tool does, including by version string
+    let running = match (from, from_version) {
+        ("running", None) => find_process::find_process(known_process_details(), None).map(|(_, _, _, d)| d),
+        _ => None,
+    };
+    let details = match running {
+        Some(details) => details,
+        None => reference_details(&old, from_version)?,
+    };
+    let new = load(to)?;
+    if old.is_64 != new.is_64 {
+        return Err("<from> and <to> have different architectures".to_string());
+    }
+
+    let lines = derive_lines(&old, &details, &new);
     println!(
         "\n// Derived from {} {}. Levels marked `code` were matched in the game's code, `shifted`\n\
          // levels moved like a neighbouring field, `witness` levels came from matching instructions\n\

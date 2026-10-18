@@ -134,34 +134,17 @@ fn code_chains(image: &PeImage, resolver: CallResolver) -> HashMap<Vec<i64>, Sta
         })
 }
 
-pub fn find_code_chains(version: Option<String>) -> Result<(), String> {
-    let (pid, handle, base_addr, details) = connect(version)?;
-    println!("Found {} {}", details.name, details.version.version);
-    let mut memory = Memory::new(handle, base_addr, details.arch);
-
-    let mut entries: Vec<(AddressType, Vec<usize>)> = details
-        .address_offsets
-        .iter()
-        .map(|(t, o)| (*t, o.clone()))
-        .collect();
-    entries.sort_by_key(|(t, _)| *t);
-
-    let targets: Vec<(AddressType, Option<usize>)> = entries
-        .iter()
-        .map(|(t, offsets)| (*t, memory.resolve(&to_chain(offsets))))
-        .collect();
-    for (t, address) in &targets {
-        if address.is_none() {
-            println!("  {:?}: current chain doesn't resolve, skipping", t);
-        }
-    }
-    if targets.iter().all(|(_, a)| a.is_none()) {
-        return Err("None of the current chains resolve. Load into a level and try again.".to_string());
-    }
-
-    println!("Dumping the game...");
-    let image = PeImage::dump(pid).map_err(|e| format!("Could not dump the game: {}", e))?;
+/// For each target address, the chains the game's code uses to reach it, best first: exact accesses, then chains used
+/// in several places (so they can be matched in other versions), then shorter chains
+fn candidate_chains(
+    image: &PeImage,
+    handle: ProcessHandle,
+    base_addr: usize,
+    arch: Architecture,
+    targets: &[(AddressType, usize)],
+) -> HashMap<AddressType, Vec<Candidate>> {
     let shared = SharedHandle(handle);
+    let mut memory = Memory::new(handle, base_addr, arch);
     let pointer_size = memory.pointer_size;
     let image_size = image.size_of_image();
     let resolver = move |chain: &[i64]| -> Option<usize> {
@@ -196,16 +179,12 @@ pub fn find_code_chains(version: Option<String>) -> Result<(), String> {
         } else {
             None
         };
-        for (t, target) in &targets {
-            let target = match target {
-                Some(target) => *target,
-                None => continue,
-            };
+        for &(t, target) in targets {
             if address <= target && target < address + size {
                 let mut found = chain.clone();
                 *found.last_mut().unwrap() += (target - address) as i64;
                 add(
-                    *t,
+                    t,
                     Candidate {
                         chain: found,
                         exact: address == target,
@@ -218,7 +197,7 @@ pub fn find_code_chains(version: Option<String>) -> Result<(), String> {
                 let mut found = chain.clone();
                 found.push(0);
                 add(
-                    *t,
+                    t,
                     Candidate {
                         chain: found,
                         exact: true,
@@ -230,17 +209,68 @@ pub fn find_code_chains(version: Option<String>) -> Result<(), String> {
         }
     }
 
+    candidates
+        .into_iter()
+        .map(|(t, found)| {
+            let mut found: Vec<Candidate> = found.into_values().collect();
+            found.sort_by_key(|c| (!c.exact, c.sites < 2, c.chain.len(), std::cmp::Reverse(c.sites)));
+            (t, found)
+        })
+        .collect()
+}
+
+/// The best chain the game's code uses to reach each target address, with how many places use it
+pub fn best_code_chains(
+    image: &PeImage,
+    handle: ProcessHandle,
+    base_addr: usize,
+    arch: Architecture,
+    targets: &[(AddressType, usize)],
+) -> HashMap<AddressType, (Vec<usize>, u32)> {
+    candidate_chains(image, handle, base_addr, arch, targets)
+        .into_iter()
+        .filter_map(|(t, found)| {
+            let best = found.into_iter().next()?;
+            Some((t, (best.chain.iter().map(|o| *o as usize).collect(), best.sites)))
+        })
+        .collect()
+}
+
+pub fn find_code_chains(version: Option<String>) -> Result<(), String> {
+    let (pid, handle, base_addr, details) = connect(version)?;
+    println!("Found {} {}", details.name, details.version.version);
+    let mut memory = Memory::new(handle, base_addr, details.arch);
+
+    let mut entries: Vec<(AddressType, Vec<usize>)> = details
+        .address_offsets
+        .iter()
+        .map(|(t, o)| (*t, o.clone()))
+        .collect();
+    entries.sort_by_key(|(t, _)| *t);
+
+    let targets: Vec<(AddressType, Option<usize>)> = entries
+        .iter()
+        .map(|(t, offsets)| (*t, memory.resolve(&to_chain(offsets))))
+        .collect();
+    for (t, address) in &targets {
+        if address.is_none() {
+            println!("  {:?}: current chain doesn't resolve, skipping", t);
+        }
+    }
+    if targets.iter().all(|(_, a)| a.is_none()) {
+        return Err("None of the current chains resolve. Load into a level and try again.".to_string());
+    }
+
+    println!("Dumping the game...");
+    let image = PeImage::dump(pid).map_err(|e| format!("Could not dump the game: {}", e))?;
+    let known: Vec<(AddressType, usize)> = targets.iter().filter_map(|(t, a)| a.map(|a| (*t, a))).collect();
+    let mut candidates = candidate_chains(&image, handle, base_addr, details.arch, &known);
+
     let mut lines = vec![];
     println!();
     for ((t, offsets), (_, target)) in entries.iter().zip(&targets) {
         println!("{:?}: current {} -> {}", t, format_offsets(offsets), target.map_or("unresolved".to_string(), |a| format!("{:#X}", a)));
-        let mut found: Vec<Candidate> = candidates
-            .remove(t)
-            .map(|c| c.into_values().collect())
-            .unwrap_or_default();
-        // Prefer exact accesses, then chains used in several places (so they can be matched in
-        // other versions), then shorter chains
-        found.sort_by_key(|c| (!c.exact, c.sites < 2, c.chain.len(), std::cmp::Reverse(c.sites)));
+        let found: Vec<Candidate> = candidates.remove(t).unwrap_or_default();
         if found.is_empty() {
             println!("    no code chains found");
         }
