@@ -105,7 +105,11 @@ User docs (hotkeys, config, cutscene timing generation) live in `README.md`.
   the likely cause of the aim + roll wall clip. The physics capsule actually swept is at proxy+0x148 -> +0x20.
   Bodies are listed (+0x30 next, +0x48 parent, +0x50 -> owner proxy+0x120); attached to Lara's are the camera (radius 30 /
   length 30, offset (0,-15,90), moving to (0,30,90) when aiming) and her weapon (radius 3.5 / 90 long rod). Both only
-  collide while she aims (found by experiment); no flag for that has been found yet.
+  collide while she aims (not rolling, although Lara's proxy +0x18 bit 0x20 clears for both). A physics shape's byte +0x99 is nonzero (0x2F)
+  while it's touching something: always for Lara's, while aiming for the camera (it overlaps her capsule), and only
+  against walls for the weapon, which matches how far she's held from walls while aiming. Lara's proxy's contacts
+  (counts +0x164/+0x168, 0x60 byte records from +0x190, world point first) include those of the attached proxies, so
+  a contact on the camera capsule's surface means it's pushing her.
   Found by `watch XPosition --write` -> player move (+0x83B330) <- +0x840460, which collides via +0x82B770.
 - Model bounds are in each `Mesh` resource header ("Mesh" magic, +0x10 sphere centre, +0x20/+0x30 box min/max,
   +0x50 sphere radius); terrain meshes are in world space, others in object space. Instances that aren't drawn

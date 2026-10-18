@@ -16,6 +16,8 @@ use crate::ui_ipc_data::{BoxKind, ObjectBox, SharedMemoryManager, MAX_CAPSULES, 
 
 // How often to rescan the instance array for objects matching the filters
 const OBJECT_REFRESH_INTERVAL: time::Duration = time::Duration::from_secs(1);
+// Lara's contacts are often caught mid update, so keep showing an attached proxy as touching for this long
+const TOUCHING_HOLD: time::Duration = time::Duration::from_millis(150);
 
 pub struct OverlayHandler {
     active: bool,
@@ -33,6 +35,8 @@ pub struct OverlayHandler {
     proxy_type_offsets: Option<Vec<usize>>,
     object_list: Option<ObjectList>,
     objects: Vec<(Instance, BoxKind)>,
+    proxy_last_touching: Option<time::Instant>,
+    attached_last_touching: [Option<time::Instant>; MAX_ATTACHED],
     // Lara's instance and her capsules in bone space
     lara: Option<(usize, Vec<CapsuleShape>)>,
     last_object_refresh: Option<time::Instant>,
@@ -91,6 +95,8 @@ impl OverlayHandler {
             objects: vec![],
             lara: None,
             last_object_refresh: None,
+            proxy_last_touching: None,
+            attached_last_touching: [None; MAX_ATTACHED],
             ui_memory_manager,
         })
     }
@@ -203,10 +209,13 @@ impl Handler for OverlayHandler {
             }
             _ => None,
         };
-        let (proxies, attached) = match proxies {
-            Some(p) => (p.shapes, p.attached),
-            None => (vec![], vec![]),
+        let (proxies, proxy_touching, attached, attached_active) = match proxies {
+            Some(p) => (p.shapes, p.touching, p.attached, p.attached_active),
+            None => (vec![], false, vec![], false),
         };
+        if proxy_touching {
+            self.proxy_last_touching = Some(time::Instant::now());
+        }
 
         let manager = self.ui_memory_manager.get_mut();
         let mut val = manager.current();
@@ -248,9 +257,15 @@ impl Handler for OverlayHandler {
             *slot = *proxy;
         }
         val.proxy_count = proxies.len().min(MAX_PROXIES);
-        for (slot, capsule) in val.attached.iter_mut().zip(attached.iter().take(MAX_ATTACHED)) {
-            *slot = *capsule;
+        val.proxy_touching = self.proxy_last_touching.map_or(false, |t| t.elapsed() < TOUCHING_HOLD);
+        for (i, (capsule, touching)) in attached.iter().take(MAX_ATTACHED).enumerate() {
+            val.attached[i] = *capsule;
+            if *touching {
+                self.attached_last_touching[i] = Some(time::Instant::now());
+            }
+            val.attached_touching[i] = self.attached_last_touching[i].map_or(false, |t| t.elapsed() < TOUCHING_HOLD);
         }
+        val.attached_active = attached_active;
         val.attached_count = attached.len().min(MAX_ATTACHED);
 
         val.capsule_count = 0;

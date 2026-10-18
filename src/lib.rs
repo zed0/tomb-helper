@@ -19,9 +19,11 @@ const ESTIMATED_COLOUR: [f32; 4] = [1.0, 1.0, 0.0, 1.0];
 const LARA_COLOUR: [f32; 4] = [1.0, 0.0, 1.0, 1.0];
 const PROBE_COLOUR: [f32; 4] = [0.0, 1.0, 1.0, 1.0];
 // Lara's movement capsule, and the shape it's changing to
-const PROXY_COLOURS: [[f32; 4]; 2] = [[1.0, 0.5, 0.0, 1.0], [1.0, 0.0, 0.0, 1.0]];
-// Proxies attached to Lara's
-const ATTACHED_COLOUR: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
+const PROXY_COLOURS: [[f32; 4]; 2] = [COLLISION_COLOUR, [1.0, 0.0, 0.0, 1.0]];
+// Her collision capsules (her own, and those attached to it while they're used), normally and while they're pushing
+// her off something
+const COLLISION_COLOUR: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
+const PUSHING_COLOUR: [f32; 4] = [1.0, 1.0, 0.0, 1.0];
 // Half size of the cross drawn where a probe hit
 const PROBE_HIT_SIZE: f32 = 4.0;
 
@@ -237,11 +239,17 @@ impl ImguiRenderLoop for TombHelperHud {
         for probe in &ui_data.probes[..ui_data.probe_count.min(ui_data.probes.len())] {
             draw_probe(&draw_list, &projector, probe);
         }
-        for (proxy, colour) in ui_data.proxies[..ui_data.proxy_count.min(ui_data.proxies.len())].iter().zip(PROXY_COLOURS) {
+        let proxy_count = ui_data.proxy_count.min(ui_data.proxies.len());
+        for (i, (proxy, colour)) in ui_data.proxies[..proxy_count].iter().zip(PROXY_COLOURS).enumerate() {
+            let colour = if i == 0 && ui_data.proxy_touching { PUSHING_COLOUR } else { colour };
             draw_capsule(&draw_list, &projector, proxy, colour);
         }
-        for capsule in &ui_data.attached[..ui_data.attached_count.min(ui_data.attached.len())] {
-            draw_capsule(&draw_list, &projector, capsule, ATTACHED_COLOUR);
+        // The camera and weapon only collide while she aims
+        if ui_data.attached_active {
+            let attached_count = ui_data.attached_count.min(ui_data.attached.len());
+            for (capsule, touching) in ui_data.attached[..attached_count].iter().zip(ui_data.attached_touching) {
+                draw_capsule(&draw_list, &projector, capsule, if touching { PUSHING_COLOUR } else { COLLISION_COLOUR });
+            }
         }
 
         let lara = Vector3::new(ui_data.position.x, ui_data.position.y, ui_data.position.z);
