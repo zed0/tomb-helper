@@ -40,6 +40,8 @@ const MAX_SLOTS: usize = 192;
 const SLOTS_PER_READ: usize = 16;
 // Tables to look through per `start_refresh` while some classes' slots are unknown
 const SCANS_PER_REFRESH: usize = 48;
+// Tables already looked through are remembered (so each refresh looks at new ones) up to this many
+const MAX_SCANNED: usize = 100_000;
 
 /// RTTI class names of objects, cached by vtable
 pub struct Classes {
@@ -62,12 +64,13 @@ impl Classes {
         self.names
             .entry(vtable)
             .or_insert_with(|| {
+                // Garbage pointers can be anywhere, and reading from them just fails
                 let locator = read_usize(handle, vtable.checked_sub(8)?)?;
                 let mut rva = [0u8; 4];
-                handle.copy_address(locator + LOCATOR_TYPE_DESCRIPTOR, &mut rva).ok()?;
+                handle.copy_address(locator.wrapping_add(LOCATOR_TYPE_DESCRIPTOR), &mut rva).ok()?;
                 let mut name = [0u8; MAX_CLASS_NAME];
-                let descriptor = base_address + u32::from_le_bytes(rva) as usize;
-                handle.copy_address(descriptor + TYPE_DESCRIPTOR_NAME, &mut name).ok()?;
+                let descriptor = base_address.wrapping_add(u32::from_le_bytes(rva) as usize);
+                handle.copy_address(descriptor.wrapping_add(TYPE_DESCRIPTOR_NAME), &mut name).ok()?;
                 let end = name.iter().position(|&c| c == 0)?;
                 let name = String::from_utf8_lossy(&name[..end]).into_owned();
                 Some(name).filter(|n| n.starts_with(".?A"))
@@ -81,7 +84,7 @@ pub struct Components {
     // Learnt slot of each component class
     slots: HashMap<String, usize>,
     scans_left: usize,
-    // Tables already looked through since `start_refresh`
+    // Tables already looked through, which aren't looked through again
     scanned: HashSet<usize>,
 }
 
@@ -97,8 +100,15 @@ impl Components {
 
     /// Allows another few tables to be looked through for slots that aren't known yet
     pub fn start_refresh(&mut self) {
-        self.scans_left = SCANS_PER_REFRESH;
-        self.scanned.clear();
+        self.allow_scans(SCANS_PER_REFRESH);
+    }
+
+    /// Allows this many more tables to be looked through for slots that aren't known yet
+    pub fn allow_scans(&mut self, scans: usize) {
+        self.scans_left = scans;
+        if self.scanned.len() > MAX_SCANNED {
+            self.scanned.clear();
+        }
     }
 
     /// The slots learnt so far, by class
@@ -108,7 +118,7 @@ impl Components {
 
     /// The instance's component of the class, if it has one
     pub fn get(&mut self, handle: ProcessHandle, instance: usize, class: &str) -> Option<usize> {
-        let table = read_usize(handle, instance + layout::current().instance.components)?;
+        let table = read_usize(handle, instance.wrapping_add(layout::current().instance.components))?;
         if !self.slots.contains_key(class) {
             if self.scans_left == 0 || !self.scanned.insert(table) {
                 return None;
@@ -117,8 +127,8 @@ impl Components {
             self.learn(handle, instance, table);
         }
         let slot = *self.slots.get(class)?;
-        let component = read_usize(handle, table + slot * 8)?;
-        let back = read_usize(handle, component + layout::current().component.instance)?;
+        let component = read_usize(handle, table.wrapping_add(slot * 8))?;
+        let back = read_usize(handle, component.wrapping_add(layout::current().component.instance))?;
         if back != instance || self.classes.name(handle, component).as_deref() != Some(class) {
             return None;
         }
@@ -130,12 +140,12 @@ impl Components {
         let back_offset = layout::current().component.instance;
         for first in (0..MAX_SLOTS).step_by(SLOTS_PER_READ) {
             let mut bytes = [0u8; SLOTS_PER_READ * 8];
-            if handle.copy_address(table + first * 8, &mut bytes).is_err() {
+            if handle.copy_address(table.wrapping_add(first * 8), &mut bytes).is_err() {
                 return;
             }
             for (i, pointer) in bytes.chunks_exact(8).enumerate() {
                 let component = u64::from_le_bytes(pointer.try_into().unwrap()) as usize;
-                if component == 0 || read_usize(handle, component + back_offset) != Some(instance) {
+                if component == 0 || read_usize(handle, component.wrapping_add(back_offset)) != Some(instance) {
                     continue;
                 }
                 if let Some(name) = self.classes.name(handle, component) {

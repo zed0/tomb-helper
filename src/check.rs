@@ -87,6 +87,8 @@ pub fn check(version: Option<String>) -> Result<(), String> {
     let game = Game { handle, base_address, details };
     let mut report = Report::default();
     let mut components = Components::new(base_address);
+    // So that every component type near Lara has its slot learnt
+    components.allow_scans(NEARBY * 4);
 
     let lara_position = check_position(&game, &mut report);
     let instances = check_instances(&game, &mut report);
@@ -279,10 +281,11 @@ fn check_probes(game: &Game, report: &mut Report, lara: &Position) {
     };
     match collision::read_probes(game.handle, address) {
         Ok(probes) => {
-            let near = probes.iter().filter(|p| distance(&p.start, lara) < NEAR_LARA).count();
+            // Other characters' are in the same list
+            let near = collision::probes_near(&probes, lara).len();
             report.result(
                 "ground probes",
-                !probes.is_empty() && near == probes.len(),
+                near > 0,
                 format!("{} probes, {} starting near Lara", probes.len(), near),
             );
         }
