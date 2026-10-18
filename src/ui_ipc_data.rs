@@ -9,6 +9,7 @@ pub const MAX_PROBES: usize = 8;
 pub const MAX_PROXIES: usize = 2;
 pub const MAX_ATTACHED: usize = 8;
 pub const OBJECT_NAME_LENGTH: usize = 64;
+pub const MAX_TRIANGLES: usize = 16384;
 
 #[repr(u32)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -59,6 +60,25 @@ pub struct Probe {
     pub has_hit: bool,
 }
 
+#[repr(u32)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum SurfaceKind {
+    // Facing up enough to stand on
+    Floor,
+    Wall,
+    // Facing down
+    Ceiling,
+}
+
+// A world space triangle of the level's collision, wound anticlockwise seen from the side it faces
+#[repr(C)]
+#[derive(Copy, Clone, Debug)]
+pub struct Triangle {
+    pub corners: [Position; 3],
+    pub kind: SurfaceKind,
+}
+
+// All zeros is a valid (empty) value, which `zeroed` relies on
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
 pub struct UiData {
@@ -86,6 +106,25 @@ pub struct UiData {
     pub attached_touching: [bool; MAX_ATTACHED],
     // They only collide while Lara aims
     pub attached_active: bool,
+    // The level's collision near Lara, closest first
+    pub triangle_count: usize,
+    // How long the exe took to find them
+    pub triangle_milliseconds: f32,
+    pub triangles: [Triangle; MAX_TRIANGLES],
+}
+
+impl UiData {
+    // Too big to build on the stack (especially the game's render thread's), so it's kept boxed
+    pub fn zeroed() -> Box<UiData> {
+        let layout = std::alloc::Layout::new::<UiData>();
+        unsafe {
+            let data = std::alloc::alloc_zeroed(layout) as *mut UiData;
+            if data.is_null() {
+                std::alloc::handle_alloc_error(layout);
+            }
+            Box::from_raw(data)
+        }
+    }
 }
 
 #[repr(C)]
@@ -97,36 +136,37 @@ pub struct UiDoubleBuffer {
 }
 
 impl UiDoubleBuffer {
-    pub fn set_next(&mut self, next_value: UiData) {
-        let next = 1 - self.active_buffer.load(Ordering::Relaxed);
+    // Copies the current value into the other buffer, changes it there, then makes that one current. Done in
+    // place since `UiData` is too big to pass around by value.
+    pub fn update(&mut self, change: impl FnOnce(&mut UiData)) {
+        let current = self.active_buffer.load(Ordering::Relaxed);
+        let next = 1 - current;
         self.sequences[next].fetch_add(1, Ordering::Relaxed);
         fence(Ordering::Release);
-        unsafe { ptr::write_volatile(&mut self.buffers[next], next_value) };
+        let buffers = self.buffers.as_mut_ptr();
+        unsafe {
+            ptr::copy_nonoverlapping(buffers.add(current), buffers.add(next), 1);
+            change(&mut *buffers.add(next));
+        }
         self.sequences[next].fetch_add(1, Ordering::Release);
         self.active_buffer.store(next, Ordering::Release);
     }
 
     // The writer is in another process and doesn't wait for readers, so it can start rewriting a buffer
-    // while it's being copied. Returns None if that happened.
-    pub fn try_current(&self) -> Option<UiData> {
+    // while it's being copied. Returns false if that happened, in which case `out` is left part written.
+    pub fn try_read(&self, out: &mut UiData) -> bool {
         let current = self.active_buffer.load(Ordering::Acquire);
         let before = self.sequences[current].load(Ordering::Acquire);
         if before % 2 == 1 {
-            return None;
+            return false;
         }
-        let value = unsafe { ptr::read_volatile(&self.buffers[current]) };
+        unsafe { ptr::copy_nonoverlapping(&self.buffers[current], out, 1) };
         fence(Ordering::Acquire);
-        if self.sequences[current].load(Ordering::Relaxed) != before {
-            return None;
-        }
-        Some(value)
+        self.sequences[current].load(Ordering::Relaxed) == before
     }
 
-    pub fn current(&self) -> UiData {
-        loop {
-            if let Some(value) = self.try_current() {
-                return value;
-            }
+    pub fn read(&self, out: &mut UiData) {
+        while !self.try_read(out) {
             std::hint::spin_loop();
         }
     }

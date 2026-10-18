@@ -107,7 +107,8 @@
         "InstanceArray": ["0x24EEAD0"],
         "PlayerInstance": ["0x100C6B0", "0x0", "0x31A8", "0x0"],
         "PlayerProbes": ["0x1A8C720"],
-        "ProxyComponentType": ["0x1101D20"]
+        "ProxyComponentType": ["0x1101D20"],
+        "CollisionScene": ["0x2D57440", "0x10", "0x0"]
       },
       "witnesses": {
         "XPosition": ["0x5B68A1", "0x84BF7C", "0x84C113", "0x113C61", "0x3DEDFC", "0x622FEB", "0x84B38D", "0x44C23E"],

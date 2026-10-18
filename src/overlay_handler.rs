@@ -1,4 +1,5 @@
 use crate::collision::{self, CapsuleShape};
+use crate::collision_mesh::CollisionMeshes;
 use crate::config::OverlayConfig;
 use crate::object_list::{self, Instance, ObjectList};
 use crate::position::Position;
@@ -12,7 +13,7 @@ use std::{env, fmt, io, time};
 use std::error::Error;
 use hudhook::inject::Process;
 use process_memory::{Architecture, CopyAddress, DataMember, Memory, Pid, ProcessHandle};
-use crate::ui_ipc_data::{BoxKind, ObjectBox, SharedMemoryManager, MAX_CAPSULES, MAX_OBJECTS, MAX_ATTACHED, MAX_PROBES, MAX_PROXIES, OBJECT_NAME_LENGTH};
+use crate::ui_ipc_data::{BoxKind, ObjectBox, SharedMemoryManager, MAX_ATTACHED, MAX_OBJECTS, MAX_TRIANGLES, OBJECT_NAME_LENGTH};
 
 // How often to rescan the instance array for objects matching the filters
 const OBJECT_REFRESH_INTERVAL: time::Duration = time::Duration::from_secs(1);
@@ -33,6 +34,8 @@ pub struct OverlayHandler {
     player_instance_offsets: Option<Vec<usize>>,
     player_probes_offsets: Option<Vec<usize>>,
     proxy_type_offsets: Option<Vec<usize>>,
+    collision_scene_offsets: Option<Vec<usize>>,
+    collision_meshes: CollisionMeshes,
     object_list: Option<ObjectList>,
     objects: Vec<(Instance, BoxKind)>,
     proxy_last_touching: Option<time::Instant>,
@@ -55,12 +58,12 @@ impl OverlayHandler {
         println!("Loading overlay handler...");
 
         let mut ui_memory_manager = SharedMemoryManager::new(true);
-        let manager = ui_memory_manager.get_mut();
-        let mut val = manager.current();
-        val.debug = config.console;
-        val.should_exit = false;
-        val.object_count = 0;
-        manager.set_next(val);
+        ui_memory_manager.get_mut().update(|val| {
+            val.debug = config.console;
+            val.should_exit = false;
+            val.object_count = 0;
+            val.triangle_count = 0;
+        });
 
         Some(OverlayHandler {
             active: false,
@@ -91,6 +94,8 @@ impl OverlayHandler {
             player_instance_offsets: address_offsets.get(&AddressType::PlayerInstance).cloned(),
             player_probes_offsets: address_offsets.get(&AddressType::PlayerProbes).cloned(),
             proxy_type_offsets: address_offsets.get(&AddressType::ProxyComponentType).cloned(),
+            collision_scene_offsets: address_offsets.get(&AddressType::CollisionScene).cloned(),
+            collision_meshes: CollisionMeshes::default(),
             object_list: None,
             objects: vec![],
             lara: None,
@@ -168,6 +173,13 @@ impl OverlayHandler {
     }
 }
 
+// Copies as many items as fit, returns how many that was
+fn fill<T: Copy>(slots: &mut [T], items: &[T]) -> usize {
+    let count = items.len().min(slots.len());
+    slots[..count].copy_from_slice(&items[..count]);
+    count
+}
+
 // The game's projection matrix is reused for another pass with a narrower fov part way through each
 // frame, so build the main camera's from its lens instead: near, far, near, far, fov, aspect, fov, aspect.
 // The second copies are the more stable ones.
@@ -197,6 +209,9 @@ impl Handler for OverlayHandler {
         if self.last_object_refresh.map_or(true, |t| t.elapsed() > OBJECT_REFRESH_INTERVAL) {
             self.last_object_refresh = Some(time::Instant::now());
             self.refresh_objects()?;
+            if let (true, Some(offsets)) = (self.config.collision_meshes, &self.collision_scene_offsets) {
+                self.collision_meshes.refresh(self.handle, self.resolve(offsets)?)?;
+            }
         }
 
         let probes = match (self.config.lara_probes, &self.player_probes_offsets) {
@@ -217,14 +232,8 @@ impl Handler for OverlayHandler {
             self.proxy_last_touching = Some(time::Instant::now());
         }
 
-        let manager = self.ui_memory_manager.get_mut();
-        let mut val = manager.current();
-        val.position = self.position.to_position();
-        val.camera_view = self.camera_view.to_array();
-        val.camera_projection = projection_from_lens(&self.camera_lens.data);
-
         let size = self.config.object_box_size;
-        let mut count = 0;
+        let mut objects = vec![];
         for (object, kind) in &self.objects {
             // Objects can be unloaded between refreshes
             let transform = match object_list::read_transform(self.handle, object.address) {
@@ -238,45 +247,56 @@ impl Handler for OverlayHandler {
                 Position { x: -size, y: -size, z: -size },
                 Position { x: size, y: size, z: size },
             ));
-            val.objects[count] = ObjectBox {
+            objects.push(ObjectBox {
                 transform,
                 min,
                 max,
                 kind: *kind,
                 name,
-            };
-            count += 1;
+            });
         }
-        val.object_count = count;
 
-        for (slot, probe) in val.probes.iter_mut().zip(probes.iter().take(MAX_PROBES)) {
-            *slot = *probe;
-        }
-        val.probe_count = probes.len().min(MAX_PROBES);
-        for (slot, proxy) in val.proxies.iter_mut().zip(proxies.iter().take(MAX_PROXIES)) {
-            *slot = *proxy;
-        }
-        val.proxy_count = proxies.len().min(MAX_PROXIES);
-        val.proxy_touching = self.proxy_last_touching.map_or(false, |t| t.elapsed() < TOUCHING_HOLD);
-        for (i, (capsule, touching)) in attached.iter().take(MAX_ATTACHED).enumerate() {
-            val.attached[i] = *capsule;
+        let proxy_touching = self.proxy_last_touching.map_or(false, |t| t.elapsed() < TOUCHING_HOLD);
+        let mut attached_touching = [false; MAX_ATTACHED];
+        for (i, (_, touching)) in attached.iter().take(MAX_ATTACHED).enumerate() {
             if *touching {
                 self.attached_last_touching[i] = Some(time::Instant::now());
             }
-            val.attached_touching[i] = self.attached_last_touching[i].map_or(false, |t| t.elapsed() < TOUCHING_HOLD);
+            attached_touching[i] = self.attached_last_touching[i].map_or(false, |t| t.elapsed() < TOUCHING_HOLD);
         }
-        val.attached_active = attached_active;
-        val.attached_count = attached.len().min(MAX_ATTACHED);
+        let attached: Vec<_> = attached.iter().map(|(capsule, _)| *capsule).collect();
 
-        val.capsule_count = 0;
-        if let Some((address, shapes)) = &self.lara {
-            let capsules = collision::place_capsules(self.handle, *address, shapes)?;
-            for (slot, capsule) in val.capsules.iter_mut().zip(capsules.iter().take(MAX_CAPSULES)) {
-                *slot = *capsule;
-            }
-            val.capsule_count = capsules.len().min(MAX_CAPSULES);
-        }
-        manager.set_next(val);
+        let capsules = match &self.lara {
+            Some((address, shapes)) => collision::place_capsules(self.handle, *address, shapes)?,
+            None => vec![],
+        };
+
+        let position = self.position.to_position();
+        let started = time::Instant::now();
+        let triangles = if self.config.collision_meshes {
+            self.collision_meshes.triangles_near(self.handle, &position, self.config.collision_mesh_radius, MAX_TRIANGLES)
+        } else {
+            vec![]
+        };
+        let triangle_milliseconds = started.elapsed().as_secs_f32() * 1000.0;
+
+        let camera_view = self.camera_view.to_array();
+        let camera_projection = projection_from_lens(&self.camera_lens.data);
+        self.ui_memory_manager.get_mut().update(|val| {
+            val.position = position;
+            val.camera_view = camera_view;
+            val.camera_projection = camera_projection;
+            val.object_count = fill(&mut val.objects, &objects);
+            val.probe_count = fill(&mut val.probes, &probes);
+            val.proxy_count = fill(&mut val.proxies, &proxies);
+            val.proxy_touching = proxy_touching;
+            val.attached_count = fill(&mut val.attached, &attached);
+            val.attached_touching = attached_touching;
+            val.attached_active = attached_active;
+            val.capsule_count = fill(&mut val.capsules, &capsules);
+            val.triangle_count = fill(&mut val.triangles, &triangles);
+            val.triangle_milliseconds = triangle_milliseconds;
+        });
         Ok(())
     }
     fn handle_action(&mut self, action: Action) -> Result<(), Box<dyn Error>> {
@@ -285,10 +305,7 @@ impl Handler for OverlayHandler {
                 self.active = !self.active;
 
                 if self.active {
-                    let manager = self.ui_memory_manager.get_mut();
-                    let mut val = manager.current();
-                    val.should_exit = false;
-                    manager.set_next(val);
+                    self.ui_memory_manager.get_mut().update(|val| val.should_exit = false);
 
                     println!("Injecting overlay dll");
                     let dll_path = env::current_exe().unwrap().with_file_name("tomb_helper_ui.dll");
@@ -298,10 +315,7 @@ impl Handler for OverlayHandler {
                         .unwrap();
                 } else {
                     println!("Ejecting injected overlay dll");
-                    let manager = self.ui_memory_manager.get_mut();
-                    let mut val = manager.current();
-                    val.should_exit = true;
-                    manager.set_next(val);
+                    self.ui_memory_manager.get_mut().update(|val| val.should_exit = true);
                     println!("done");
                 }
             },
@@ -314,10 +328,7 @@ impl Handler for OverlayHandler {
 impl Drop for OverlayHandler {
     fn drop(&mut self) {
         println!("Ejecting injected overlay dll");
-        let manager = self.ui_memory_manager.get_mut();
-        let mut val = manager.current();
-        val.should_exit = true;
-        manager.set_next(val);
+        self.ui_memory_manager.get_mut().update(|val| val.should_exit = true);
         println!("done");
     }
 }

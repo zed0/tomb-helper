@@ -124,6 +124,14 @@ fn default_lara_proxy() -> bool {
     true
 }
 
+fn default_collision_meshes() -> bool {
+    true
+}
+
+fn default_collision_mesh_radius() -> f32 {
+    400.0
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct OverlayConfig {
     // Objects whose placement name contains any of these (case insensitive) get a box. "" matches everything.
@@ -144,6 +152,12 @@ pub struct OverlayConfig {
     // Draw the capsule the game moves Lara with
     #[serde(default = "default_lara_proxy")]
     pub lara_proxy: bool,
+    // Draw the level's collision near Lara
+    #[serde(default = "default_collision_meshes")]
+    pub collision_meshes: bool,
+    // How far from Lara to draw it
+    #[serde(default = "default_collision_mesh_radius")]
+    pub collision_mesh_radius: f32,
     // Open a console in the game for the overlay's logs
     #[serde(default)]
     pub console: bool,

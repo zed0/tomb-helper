@@ -31,6 +31,9 @@ pub enum AddressType {
     PlayerProbes,
     // u32 id of cdc::ProxyComponent, i.e. its slot in each instance's component table
     ProxyComponentType,
+    // The cdc::CollisionSceneClient listing the level's collision meshes (resolves to its address), see
+    // `collision_mesh`
+    CollisionScene,
     CutscenePrompt,
     CutsceneStatus,
     CutsceneTimeline,
