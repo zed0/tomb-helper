@@ -3,13 +3,15 @@ use std::sync::atomic::{fence, AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use shared_memory::{Shmem, ShmemConf, ShmemError};
 use crate::position::Position;
 
-pub const MAX_OBJECTS: usize = 64;
+pub const MAX_OBJECTS: usize = 256;
 pub const MAX_CAPSULES: usize = 32;
 pub const MAX_PROBES: usize = 8;
 pub const MAX_PROXIES: usize = 2;
 pub const MAX_ATTACHED: usize = 8;
 pub const OBJECT_NAME_LENGTH: usize = 64;
 pub const MAX_TRIANGLES: usize = 163_840;
+pub const MAX_TRIGGERS: usize = 256;
+pub const MAX_TRIGGER_LINES: usize = 16384;
 
 #[repr(u32)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -21,6 +23,16 @@ pub enum BoxKind {
     Lara,
 }
 
+// Why an object is shown, which sets its colour
+#[repr(u32)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum ObjectCategory {
+    // Matched the configured name filters
+    Named,
+    // Something Lara can interact with (campfires, pickups, documents, ...)
+    Interactable,
+}
+
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
 pub struct ObjectBox {
@@ -30,14 +42,114 @@ pub struct ObjectBox {
     pub min: Position,
     pub max: Position,
     pub kind: BoxKind,
+    pub category: ObjectCategory,
     // Nul padded placement name
     pub name: [u8; OBJECT_NAME_LENGTH],
 }
 
 impl ObjectBox {
     pub fn name(&self) -> &str {
-        let end = self.name.iter().position(|&c| c == 0).unwrap_or(self.name.len());
-        std::str::from_utf8(&self.name[..end]).unwrap_or("?")
+        name_from(&self.name)
+    }
+}
+
+// What a trigger is for, going by its name (see `trigger::categorise`)
+#[repr(u32)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum TriggerCategory {
+    Checkpoint,
+    Death,
+    Streaming,
+    Combat,
+    // Anything whose name doesn't say, e.g. the level scripts' unnamed `triggerplane`s
+    Unknown,
+    Camera,
+    Effects,
+    Hints,
+    // Attached to bushes, collectibles, throwables, campfires, ...
+    Objects,
+}
+
+impl TriggerCategory {
+    pub const ALL: [TriggerCategory; 9] = [
+        TriggerCategory::Checkpoint,
+        TriggerCategory::Death,
+        TriggerCategory::Streaming,
+        TriggerCategory::Combat,
+        TriggerCategory::Unknown,
+        TriggerCategory::Camera,
+        TriggerCategory::Effects,
+        TriggerCategory::Hints,
+        TriggerCategory::Objects,
+    ];
+
+    // As used in the config
+    pub fn name(self) -> &'static str {
+        match self {
+            TriggerCategory::Checkpoint => "checkpoints",
+            TriggerCategory::Death => "death",
+            TriggerCategory::Streaming => "streaming",
+            TriggerCategory::Combat => "combat",
+            TriggerCategory::Unknown => "unknown",
+            TriggerCategory::Camera => "camera",
+            TriggerCategory::Effects => "effects",
+            TriggerCategory::Hints => "hints",
+            TriggerCategory::Objects => "objects",
+        }
+    }
+
+    pub fn bit(self) -> u32 {
+        1 << self as u32
+    }
+
+    // The bits for the named categories
+    pub fn mask(names: &[String]) -> u32 {
+        TriggerCategory::ALL
+            .iter()
+            .filter(|c| names.iter().any(|n| n.eq_ignore_ascii_case(c.name())))
+            .map(|c| c.bit())
+            .sum()
+    }
+}
+
+// A trigger's name and where to put it, its outline is in `UiData::trigger_lines`
+#[repr(C)]
+#[derive(Copy, Clone, Debug)]
+pub struct TriggerLabel {
+    pub position: Position,
+    pub category: TriggerCategory,
+    pub name: [u8; OBJECT_NAME_LENGTH],
+}
+
+impl TriggerLabel {
+    pub fn name(&self) -> &str {
+        name_from(&self.name)
+    }
+}
+
+// Part of a trigger's outline, in world space
+#[repr(C)]
+#[derive(Copy, Clone, Debug)]
+pub struct Line {
+    pub a: Position,
+    pub b: Position,
+    pub category: TriggerCategory,
+}
+
+// Nul padded
+pub fn name_bytes(name: &str) -> [u8; OBJECT_NAME_LENGTH] {
+    let mut bytes = [0u8; OBJECT_NAME_LENGTH];
+    let length = name.len().min(OBJECT_NAME_LENGTH - 1);
+    bytes[..length].copy_from_slice(&name.as_bytes()[..length]);
+    bytes
+}
+
+fn name_from(bytes: &[u8]) -> &str {
+    let end = bytes.iter().position(|&c| c == 0).unwrap_or(bytes.len());
+    // A name cut short can end part way through a character
+    match std::str::from_utf8(&bytes[..end]) {
+        Ok(name) => name,
+        Err(e) => std::str::from_utf8(&bytes[..e.valid_up_to()]).unwrap_or("?"),
     }
 }
 
@@ -112,6 +224,11 @@ pub struct UiData {
     pub attached_touching: [bool; MAX_ATTACHED],
     // They only collide while Lara aims
     pub attached_active: bool,
+    // Trigger volumes near Lara
+    pub trigger_count: usize,
+    pub triggers: [TriggerLabel; MAX_TRIGGERS],
+    pub trigger_line_count: usize,
+    pub trigger_lines: [Line; MAX_TRIGGER_LINES],
     // The level's collision near Lara, closest first. Last, as only the used part of it is copied.
     pub triangle_count: usize,
     // How long the exe took to find them
@@ -181,6 +298,11 @@ pub struct UiSettings {
     pub fade_strength: AtomicU32,
     // Only draw the triangles not hidden behind others
     pub cull_hidden: AtomicBool,
+    // Boxes round things Lara can interact with, and trigger volumes
+    pub interactables: AtomicBool,
+    pub triggers: AtomicBool,
+    // Which `TriggerCategory`s to show, as bits
+    pub trigger_categories: AtomicU32,
 }
 
 impl UiSettings {
@@ -194,6 +316,14 @@ impl UiSettings {
 
     pub fn toggle(setting: &AtomicBool) {
         setting.fetch_xor(true, Ordering::Relaxed);
+    }
+
+    pub fn get_u32(setting: &AtomicU32) -> u32 {
+        setting.load(Ordering::Relaxed)
+    }
+
+    pub fn set_u32(setting: &AtomicU32, value: u32) {
+        setting.store(value, Ordering::Relaxed);
     }
 
     pub fn get_f32(setting: &AtomicU32) -> f32 {

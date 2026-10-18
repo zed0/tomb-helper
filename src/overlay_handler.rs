@@ -13,7 +13,8 @@ use std::{env, fmt, io, time};
 use std::error::Error;
 use hudhook::inject::Process;
 use process_memory::{Architecture, CopyAddress, DataMember, Memory, Pid, ProcessHandle};
-use crate::ui_ipc_data::{projection_from_lens, BoxKind, ObjectBox, SharedMemoryManager, UiSettings, MAX_ATTACHED, MAX_OBJECTS, MAX_TRIANGLES, OBJECT_NAME_LENGTH};
+use crate::trigger::{self, Shape};
+use crate::ui_ipc_data::{name_bytes, projection_from_lens, BoxKind, Line, ObjectBox, ObjectCategory, SharedMemoryManager, TriggerCategory, TriggerLabel, UiSettings, MAX_ATTACHED, MAX_OBJECTS, MAX_TRIANGLES, MAX_TRIGGERS};
 
 // How often to rescan the instance array for objects matching the filters
 const OBJECT_REFRESH_INTERVAL: time::Duration = time::Duration::from_secs(1);
@@ -41,7 +42,11 @@ pub struct OverlayHandler {
     // Coarse and detailed, as of the last refresh
     mesh_settings: (bool, bool),
     object_list: Option<ObjectList>,
-    objects: Vec<(Instance, BoxKind)>,
+    objects: Vec<(Instance, BoxKind, ObjectCategory)>,
+    triggers: Vec<(Instance, Shape, TriggerCategory)>,
+    classes: trigger::Classes,
+    // Interactables, triggers and trigger categories, as of the last refresh
+    object_settings: (bool, bool, u32),
     proxy_last_touching: Option<time::Instant>,
     attached_last_touching: [Option<time::Instant>; MAX_ATTACHED],
     // Lara's instance and her capsules in bone space
@@ -74,6 +79,9 @@ impl OverlayHandler {
             UiSettings::set(&settings.fade_with_distance, config.collision_mesh_fade);
             UiSettings::set_f32(&settings.fade_strength, config.collision_mesh_fade_strength);
             UiSettings::set(&settings.cull_hidden, config.collision_mesh_cull_hidden);
+            UiSettings::set(&settings.interactables, config.interactables);
+            UiSettings::set(&settings.triggers, config.triggers);
+            UiSettings::set_u32(&settings.trigger_categories, TriggerCategory::mask(&config.trigger_categories));
             UiSettings::set(&settings.initialised, true);
         }
         ui_memory_manager.get_mut().update(|val| {
@@ -119,6 +127,9 @@ impl OverlayHandler {
             mesh_settings: (false, false),
             object_list: None,
             objects: vec![],
+            triggers: vec![],
+            classes: trigger::Classes::new(*base_addr),
+            object_settings: (false, false, 0),
             lara: None,
             last_object_refresh: None,
             proxy_last_touching: None,
@@ -135,7 +146,7 @@ impl OverlayHandler {
             .get_offset()
     }
 
-    fn refresh_objects(&mut self) -> Result<(), Box<dyn Error>> {
+    fn refresh_objects(&mut self, interactables: bool, triggers: bool, categories: u32) -> Result<(), Box<dyn Error>> {
         if self.object_list.is_none() {
             self.object_list = Some(ObjectList::new(self.resolve(&self.instance_array_offsets)?));
         }
@@ -146,17 +157,38 @@ impl OverlayHandler {
             ((p.x - lara.x).powi(2) + (p.y - lara.y).powi(2) + (p.z - lara.z).powi(2)).sqrt()
         };
 
-        let mut objects: Vec<Instance> = self.object_list.as_mut().unwrap()
+        let mut nearby: Vec<Instance> = self.object_list.as_mut().unwrap()
             .instances(self.handle)?
             .into_iter()
             .filter(|i| distance(&i.position) <= self.config.object_radius)
-            .filter(|i| {
-                let name = i.name.to_lowercase();
-                let full_name = i.full_name.to_lowercase();
-                filters.iter().any(|f| name.contains(f.as_str()) || full_name.contains(f.as_str()))
-            })
             .collect();
-        objects.sort_by(|a, b| distance(&a.position).total_cmp(&distance(&b.position)));
+        nearby.sort_by(|a, b| distance(&a.position).total_cmp(&distance(&b.position)));
+
+        let mut objects = vec![];
+        let mut trigger_shapes = vec![];
+        for instance in nearby {
+            let name = instance.name.to_lowercase();
+            let full_name = instance.full_name.to_lowercase();
+            let named = filters.iter().any(|f| name.contains(f.as_str()) || full_name.contains(f.as_str()));
+            let kinds = if interactables || triggers {
+                trigger::read_kinds(self.handle, &mut self.classes, instance.address)
+            } else {
+                trigger::Kinds::default()
+            };
+            let category = trigger::categorise(&instance.name, &instance.full_name);
+            let wanted = categories & category.bit() != 0;
+            if triggers && kinds.trigger && wanted && trigger_shapes.len() < MAX_TRIGGERS {
+                if let Some(shape) = trigger::read_shape(self.handle, &mut self.classes, instance.address) {
+                    trigger_shapes.push((instance.clone(), shape, category));
+                }
+            }
+            if named {
+                objects.push((instance, ObjectCategory::Named));
+            } else if interactables && (kinds.interactable || trigger::is_resource(&instance.name)) {
+                objects.push((instance, ObjectCategory::Interactable));
+            }
+        }
+        self.triggers = trigger_shapes;
 
         let mut boxes = vec![];
         self.lara = None;
@@ -174,16 +206,17 @@ impl OverlayHandler {
                         bounds: None,
                     },
                     BoxKind::Lara,
+                    ObjectCategory::Named,
                 ));
             } else {
                 self.lara = Some((address, shapes));
             }
         }
-        boxes.extend(objects.into_iter().map(|o| (o, BoxKind::Model)));
+        boxes.extend(objects.into_iter().map(|(o, category)| (o, BoxKind::Model, category)));
         boxes.truncate(MAX_OBJECTS);
 
         // Models can change (e.g. Lara's outfit), so these are refreshed with the list
-        for (object, kind) in &mut boxes {
+        for (object, kind, _) in &mut boxes {
             object.bounds = object_list::read_bounds(self.handle, object.address);
             if object.bounds.is_none() && *kind == BoxKind::Model {
                 *kind = BoxKind::Estimated;
@@ -218,10 +251,19 @@ impl Handler for OverlayHandler {
         let coarse_radius = UiSettings::get_f32(&settings.coarse_radius);
         let detailed_radius = UiSettings::get_f32(&settings.detailed_radius);
 
+        let object_settings = (
+            UiSettings::get(&settings.interactables),
+            UiSettings::get(&settings.triggers),
+            UiSettings::get_u32(&settings.trigger_categories),
+        );
+
         let refresh_due = self.last_object_refresh.map_or(true, |t| t.elapsed() > OBJECT_REFRESH_INTERVAL);
-        if refresh_due {
+        // Straight away when they're toggled too
+        if refresh_due || object_settings != self.object_settings {
             self.last_object_refresh = Some(time::Instant::now());
-            self.refresh_objects()?;
+            self.object_settings = object_settings;
+            let (interactables, triggers, categories) = object_settings;
+            self.refresh_objects(interactables, triggers, categories)?;
         }
         // Straight away when they're toggled
         if refresh_due || mesh_settings != self.mesh_settings {
@@ -252,15 +294,13 @@ impl Handler for OverlayHandler {
 
         let size = self.config.object_box_size;
         let mut objects = vec![];
-        for (object, kind) in &self.objects {
+        for (object, kind, category) in &self.objects {
             // Objects can be unloaded between refreshes
             let transform = match object_list::read_transform(self.handle, object.address) {
                 Ok(t) => t,
                 Err(_) => continue,
             };
-            let mut name = [0u8; OBJECT_NAME_LENGTH];
-            let length = object.name.len().min(OBJECT_NAME_LENGTH - 1);
-            name[..length].copy_from_slice(&object.name.as_bytes()[..length]);
+            let name = name_bytes(&object.name);
             let (min, max) = object.bounds.unwrap_or((
                 Position { x: -size, y: -size, z: -size },
                 Position { x: size, y: size, z: size },
@@ -270,8 +310,25 @@ impl Handler for OverlayHandler {
                 min,
                 max,
                 kind: *kind,
+                category: *category,
                 name,
             });
+        }
+
+        let mut trigger_labels = vec![];
+        let mut trigger_lines = vec![];
+        for (trigger, shape, category) in &self.triggers {
+            let transform = match object_list::read_transform(self.handle, trigger.address) {
+                Ok(t) => t,
+                Err(_) => continue,
+            };
+            trigger_labels.push(TriggerLabel {
+                position: Position { x: transform[12], y: transform[13], z: transform[14] },
+                category: *category,
+                name: name_bytes(&trigger.name),
+            });
+            let outline = trigger::outline(shape, &transform);
+            trigger_lines.extend(outline.into_iter().map(|(a, b)| Line { a, b, category: *category }));
         }
 
         let proxy_touching = self.proxy_last_touching.map_or(false, |t| t.elapsed() < TOUCHING_HOLD);
@@ -316,6 +373,8 @@ impl Handler for OverlayHandler {
             val.attached_touching = attached_touching;
             val.attached_active = attached_active;
             val.capsule_count = fill(&mut val.capsules, &capsules);
+            val.trigger_count = fill(&mut val.triggers, &trigger_labels);
+            val.trigger_line_count = fill(&mut val.trigger_lines, &trigger_lines);
             val.triangle_count = fill(&mut val.triangles, &triangles);
             val.triangle_milliseconds = triangle_milliseconds;
         });
@@ -344,6 +403,8 @@ impl Handler for OverlayHandler {
             Action::ToggleLaraCollision {} => UiSettings::toggle(&self.ui_memory_manager.get().settings.lara_collision),
             Action::ToggleCoarseCollision {} => UiSettings::toggle(&self.ui_memory_manager.get().settings.coarse_meshes),
             Action::ToggleDetailedCollision {} => UiSettings::toggle(&self.ui_memory_manager.get().settings.detailed_meshes),
+            Action::ToggleInteractables {} => UiSettings::toggle(&self.ui_memory_manager.get().settings.interactables),
+            Action::ToggleTriggers {} => UiSettings::toggle(&self.ui_memory_manager.get().settings.triggers),
             _ => (),
         }
         Ok(())

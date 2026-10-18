@@ -68,6 +68,7 @@ User docs (hotkeys, config, cutscene timing generation) live in `README.md`.
 | `src/object_list.rs` | Reads the game's static instance array (`InstanceArray`, 0x120 byte records until a zero header): position, placement names, world matrix (built from the instance's position + Rx*Ry*Rz Euler rotation, with only the scale from `cdc::TransformComponent`, which goes stale for Lara), and model bounds (`read_bounds`: component table -> DrawableComponent -> InstanceDrawable -> CommonRenderModelInstance -> CommonRenderModel -> `Mesh` header min/max). Layout offsets are constants found in ROTTR Steam |
 | `src/collision.rs` | Lara's collision, see "Lara's collision" below: hit capsules (`read_capsule_shapes`/`place_capsules`), ground probes (`read_probes`), and her movement proxy with the camera/weapon proxies attached to it (`read_proxy`), including which of them is pushing her (contacts on their surface). Has unit tests for the capsule geometry |
 | `src/collision_mesh.rs` | The level's collision meshes (see "Level collision" below): `CollisionMeshes::refresh` walks the scene's instance list (dropping duplicates), `triangles_near` caches each mesh's vertices/triangles and returns the world space triangles near Lara, closest first, tagged floor/wall/ceiling by their normal |
+| `src/trigger.rs` | What an instance is from its component table (`read_kinds`: interactable via Interactable/Loot/Collectible components, trigger via TriggerComponent), trigger shapes (`read_shape`: box, plane, sphere, polygon volume) and their world space outlines |
 | `src/ui_ipc_data.rs` | Shared-memory IPC (`shared_memory` crate, os_id `"TombHelperIPC-<size of UiDoubleBuffer>"` so a stale mapping from another layout is never opened): `UiData` (camera, `ObjectBox`es, `Capsule`s, `Probe`s, collision `Triangle`s), `UiDoubleBuffer` with a sequence counter per buffer, changed and read in place since `UiData` is ~7MB, copying only the triangles in use, plus `UiSettings` (atomic show/hide toggles, mesh radii, opacity, fade and hidden triangle culling, which the DLL's checkboxes/sliders and the exe's hotkeys change) (`update`; the reader uses `try_read` into a scratch box and keeps its last good copy, since the exe never waits), `SharedMemoryManager` (exe is owner) |
 | `src/lib.rs` | Injected overlay: `TombHelperHud` implements `ImguiRenderLoop`; opens a console only if `config.overlay.console`; shows a position window and draws (near-plane clipped, in world space via `Projector`) a box + name per `ObjectBox`, Lara's capsules, probes, a circle at her feet and the level's collision triangles (filled faintly, under everything, without anti-aliasing,
 skipping back faces and ones off screen, and optionally ones behind others via a quarter resolution software ID buffer
@@ -155,6 +156,26 @@ again (`derive` plus live checks).
 - **How it was found:** `watch XPosition --write` -> the player move (+0x83B330, adds a delta to her position) <- 55
   callers, the main one +0x840460 which collides via +0x82B770 on the proxy; the half length's only reader is the
   easing at +0x1DD0B0, which sets the physics shape's radius/length (+0x193FD0/+0x193F80).
+
+### Interactables and triggers
+- An instance's component table (+0xD8) has a fixed slot per component type, but many instances' tables are shorter
+  and the slot then holds something else, so `trigger` checks the RTTI class of what's there (u64 index): 8 Drawable, 10 Collide, 12
+  TriggerComponent, 14 cdc::ShapeComponent, 18 InteractableComponent, 34 cdc::ProxyComponent (`ProxyComponentType`), 64
+  LootComponent, 84 CheckpointComponent, 111 CollectibleComponent. Type ids are static u32s round mod+0x1101D00.
+- Interactable: InteractableComponent (campfires, search markers, tethers, throwables, corpses to loot), LootComponent
+  (pickups, documents, relics, survival caches), CollectibleComponent (documents, relics, cave markers). Resources to
+  gather (herb/berry plants, mushrooms, magnesite veins, feathers) have none of these (nor any markup component, only
+  Lara has MarkupDetectionComponent), so they're found by name: the last part starts with `craftable_resource`.
+- Triggers (~920 placed `triggervolume_*`/`triggerplane_*`/`triggersphere_*`/`triggerpolyvolume_*`/`streaming_*`):
+  ShapeComponent +0x18 -> 0x38 byte shape record in instance space, u32 type: 1 box (+0x8 three sizes), 3 plane (+0x8 two
+  sizes, the x/y plane), 4 sphere (+0x8 radius), 5 polygon volume (+0x8 u32 count, +0x10 -> 0x20 byte entries: corner
+  x, y, z, 1 then the vector it's swept along, e.g. (0, 0, 1000); +0x18/+0x1C two more floats, unknown). Whether box and
+  plane sizes are half sizes is unverified. Slot 14 holds other things on non-triggers.
+- Nothing in the TriggerComponent says what a trigger is for, so `trigger::categorise` goes by words in its name and
+  its parent's (e.g. `bendy_bv_young_pine.triggersphere`). About a third are unnamed `triggerplane`/`triggervolume`s
+  in the level/mission masters, which end up with anything else unrecognised as unknown.
+- NPCs: none were loaded when this was explored (no live AiControllerComponent/NpcComponent); spawned instances have no
+  placement name, and no name string was found within 3 pointers of Lara's instance.
 
 ### Level collision
 - Static collision is triangle meshes, separate from the render meshes. `cdc::CollisionSceneClient` lists their

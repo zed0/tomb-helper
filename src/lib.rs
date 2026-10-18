@@ -1,7 +1,7 @@
 use imgui::*;
 use hudhook::*;
 use hudhook::hooks::dx12::ImguiDx12Hooks;
-use crate::ui_ipc_data::{projection_from_lens, BoxKind, Capsule, ObjectBox, Probe, SharedMemoryManager, SurfaceKind, Triangle, UiData, UiSettings};
+use crate::ui_ipc_data::{projection_from_lens, BoxKind, Capsule, ObjectBox, ObjectCategory, Probe, SharedMemoryManager, SurfaceKind, Triangle, TriggerCategory, UiData, UiSettings};
 use crate::tracing::{error, warn};
 
 mod ui_ipc_data;
@@ -20,6 +20,21 @@ const CAPSULE_SEGMENTS: usize = 16;
 const MODEL_COLOUR: [f32; 4] = [0.0, 1.0, 0.0, 1.0];
 const ESTIMATED_COLOUR: [f32; 4] = [1.0, 1.0, 0.0, 1.0];
 const LARA_COLOUR: [f32; 4] = [1.0, 0.0, 1.0, 1.0];
+const INTERACTABLE_COLOUR: [f32; 4] = [0.3, 1.0, 0.8, 1.0];
+// Triggers by category, and what they're called in the overlay's window
+fn trigger_style(category: TriggerCategory) -> ([f32; 4], &'static str) {
+    match category {
+        TriggerCategory::Checkpoint => ([0.3, 1.0, 0.3, 1.0], "Checkpoints"),
+        TriggerCategory::Death => ([1.0, 0.2, 0.2, 1.0], "Death"),
+        TriggerCategory::Streaming => ([0.4, 0.7, 1.0, 1.0], "Level streaming"),
+        TriggerCategory::Combat => ([1.0, 0.6, 0.1, 1.0], "Combat & AI"),
+        TriggerCategory::Unknown => ([1.0, 0.45, 0.7, 1.0], "Unknown"),
+        TriggerCategory::Camera => ([0.7, 0.7, 0.7, 1.0], "Camera"),
+        TriggerCategory::Effects => ([0.8, 0.6, 1.0, 1.0], "Effects & sound"),
+        TriggerCategory::Hints => ([1.0, 1.0, 0.5, 1.0], "Hints"),
+        TriggerCategory::Objects => ([0.6, 0.5, 0.35, 1.0], "Objects (bushes, pickups, ...)"),
+    }
+}
 const PROBE_COLOUR: [f32; 4] = [0.0, 1.0, 1.0, 1.0];
 // Lara's movement capsule, and the shape it's changing to
 const PROXY_COLOURS: [[f32; 4]; 2] = [COLLISION_COLOUR, [1.0, 0.0, 0.0, 1.0]];
@@ -216,10 +231,11 @@ impl Projector {
 }
 
 fn draw_box(draw_list: &DrawListMut, projector: &Projector, object: &ObjectBox) {
-    let colour = match object.kind {
-        BoxKind::Model => MODEL_COLOUR,
-        BoxKind::Estimated => ESTIMATED_COLOUR,
-        BoxKind::Lara => LARA_COLOUR,
+    let colour = match (object.category, object.kind) {
+        (ObjectCategory::Interactable, _) => INTERACTABLE_COLOUR,
+        (_, BoxKind::Model) => MODEL_COLOUR,
+        (_, BoxKind::Estimated) => ESTIMATED_COLOUR,
+        (_, BoxKind::Lara) => LARA_COLOUR,
     };
     let model = game_matrix(&object.transform);
     let (min, max) = (object.min, object.max);
@@ -430,7 +446,7 @@ impl ImguiRenderLoop for TombHelperHud {
         ui.window("Position")
             .position_pivot([1., 0.])
             .position([screen_width, 0.], Condition::Once)
-            .size([400., 360.], Condition::Once)
+            .size([400., 460.], Condition::Once)
             .build(|| {
                 ui.text_wrapped(format!("{:?}", ui_data.position));
                 ui.text(format!("{} objects", object_count));
@@ -438,9 +454,30 @@ impl ImguiRenderLoop for TombHelperHud {
                     "{} collision triangles ({:.1}ms to find, {:.1}ms to draw)",
                     triangle_count, ui_data.triangle_milliseconds, self.draw_milliseconds
                 ));
-                let mut lara = UiSettings::get(&settings.lara_collision);
-                if ui.checkbox("Lara's collision (F10)", &mut lara) {
-                    UiSettings::set(&settings.lara_collision, lara);
+                for (label, setting) in [
+                    ("Lara's collision (F10)", &settings.lara_collision),
+                    ("Interactable objects", &settings.interactables),
+                    ("Trigger volumes", &settings.triggers),
+                ] {
+                    let mut value = UiSettings::get(setting);
+                    if ui.checkbox(label, &mut value) {
+                        UiSettings::set(setting, value);
+                    }
+                }
+                if UiSettings::get(&settings.triggers) {
+                    ui.indent();
+                    let mut categories = UiSettings::get_u32(&settings.trigger_categories);
+                    for category in TriggerCategory::ALL {
+                        let (colour, label) = trigger_style(category);
+                        let mut value = categories & category.bit() != 0;
+                        let style = ui.push_style_color(StyleColor::Text, colour);
+                        if ui.checkbox(label, &mut value) {
+                            categories ^= category.bit();
+                            UiSettings::set_u32(&settings.trigger_categories, categories);
+                        }
+                        style.pop();
+                    }
+                    ui.unindent();
                 }
                 for (label, setting, radius_label, radius) in [
                     ("Movement collision (F11)", &settings.coarse_meshes, "Radius##coarse", &settings.coarse_radius),
@@ -474,6 +511,8 @@ impl ImguiRenderLoop for TombHelperHud {
             });
         // Read again so changes show straight away, rather than once the exe has caught up
         let lara_collision = UiSettings::get(&settings.lara_collision);
+        let interactables = UiSettings::get(&settings.interactables);
+        let triggers = UiSettings::get(&settings.triggers);
         let coarse_meshes = UiSettings::get(&settings.coarse_meshes);
         let detailed_meshes = UiSettings::get(&settings.detailed_meshes);
         let mesh_opacity = UiSettings::get_f32(&settings.mesh_opacity);
@@ -535,7 +574,21 @@ impl ImguiRenderLoop for TombHelperHud {
         }
         *flags = anti_aliased;
         for object in &ui_data.objects[..object_count] {
-            draw_box(&draw_list, &projector, object);
+            if object.category != ObjectCategory::Interactable || interactables {
+                draw_box(&draw_list, &projector, object);
+            }
+        }
+        if triggers {
+            let line_count = ui_data.trigger_line_count.min(ui_data.trigger_lines.len());
+            for line in &ui_data.trigger_lines[..line_count] {
+                let vector = |p: &crate::position::Position| Vector3::new(p.x, p.y, p.z);
+                draw_world_line(&draw_list, &projector, vector(&line.a), vector(&line.b), trigger_style(line.category).0);
+            }
+            for label in &ui_data.triggers[..ui_data.trigger_count.min(ui_data.triggers.len())] {
+                if let Some(point) = projector.project(Vector3::new(label.position.x, label.position.y, label.position.z)) {
+                    draw_list.add_text(point, trigger_style(label.category).0, label.name());
+                }
+            }
         }
         if lara_collision {
             let opacity = |colour| with_opacity(colour, mesh_opacity);
