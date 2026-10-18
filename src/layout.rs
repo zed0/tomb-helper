@@ -146,8 +146,10 @@ group! {
         entry_id = 0x8,
         /// -> shape in bone space
         entry_shape = 0x10,
-        /// The other types are spheres (attacks on Lara, heads on people)
-        capsule_type = 0x8A,
+        /// Capsules are this type (after `capsule_type_mask`), the others spheres. The top bit is set on Lara's and
+        /// ROTTR's characters' (0x8A, spheres 0x81) but not on SOTTR's villagers' (0x0A).
+        capsule_type = 0x0A,
+        capsule_type_mask = 0x7F,
         capsule_centre = 0x0,
         /// Quaternion x, y, z, w; the capsule runs along its z axis
         capsule_rotation = 0x10,
@@ -179,9 +181,10 @@ group! {
         /// -> physics body the proxy is swept as
         body = 0x148,
         size = 0x150,
-        /// What it hit this frame (including through the proxies attached to it): two u32 counts, and records
-        /// starting with the world space point of contact
-        contact_counts = 0x164,
+        /// What it hit this frame (including through the proxies attached to it): two u32 counts (next to each other
+        /// in ROTTR, not in SOTTR), and records starting with the world space point of contact
+        contact_count = 0x164,
+        second_contact_count = 0x168,
         contacts = 0x190,
         contact_size = 0x60,
     }

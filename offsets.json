@@ -233,6 +233,11 @@
         "ZPosition": ["0x14B5BD8", "0x0", "0x33E8", "0x18"],
         "CameraSin": ["0x36ABA00", "0x70"],
         "CameraCos": ["0x36ABA00", "0x74"],
+        "CameraView": ["0x36ABA00", "0x2F0"],
+        "CameraLens": ["0x36ABA00", "0x30"],
+        "InstanceArray": ["0x301D0C0"],
+        "PlayerProbes": ["0x23CF500"],
+        "CollisionScene": ["0x35C9140", "0x10", "0x0"],
         "CutscenePrompt": ["0x14B3140", "0x10"],
         "CutsceneStatus": ["0x14B3140", "0x129"],
         "CutsceneTimeline": ["0x14B3140", "0x60"],
@@ -245,6 +250,19 @@
         "CutscenePrompt": ["0x417CA2", "0x41B7EF", "0x41A821", "0x41B887"],
         "CutsceneStatus": ["0x413E10"],
         "CutsceneLength": ["0x41AD75"]
+      },
+      "layout": {
+        "instance": {"object_name": ["0x80", "0x8", "0x60", "0x8"]},
+        "drawable": {"instance_drawable": "0xA8", "model_instance": "0x78", "mesh": "0x38"},
+        "camera": {"view": "0x2F0"},
+        "trigger_shape": {"shape": "0xA0"},
+        "collide": {"shapes": "0x78", "shape_count": "0x80"},
+        "body": {"next": "0x38", "parent": "0x50"},
+        "proxy": {
+          "centre": "0x70", "in_use_size": "0xA0", "in_use_offset": "0xB0", "in_use_local_rotation": "0xE0", "in_use_rotation": "0xF0",
+          "next_size": "0x120", "next_offset": "0x130", "next_local_rotation": "0x150", "next_rotation": "0x160",
+          "body": "0x1A8", "size": "0x1B0", "contact_count": "0x1C4", "second_contact_count": "0x1CC", "contacts": "0x200"
+        }
       }
     }
   ]
