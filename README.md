@@ -58,6 +58,7 @@ Currently the available actions are:
 - `SkipCutscene`
 - `ResetSkipCutsceneTracker` (reset the total amount of time of cutscenes skipped, prints out the previous total, suggest binding this to the same key you use to reset livesplit)
 - `ToggleUI` (inject or remove the in-game overlay; experimental, DirectX 12 only)
+- `ToggleLaraCollision`, `ToggleCoarseCollision`, `ToggleDetailedCollision` (show or hide Lara's collision, the level's collision she collides with, and the rest of it, in the overlay)
 - `Forward` (can take a distance, which defaults to `100.0`)
 - `Backward` (can take a distance, which defaults to `100.0`)
 - `Left` (can take a distance, which defaults to `100.0`)
@@ -111,8 +112,11 @@ It currently needs the `CameraView`, `CameraLens` and `InstanceArray` (and `Play
 - `object_box_size`: objects with a model get a green box showing its bounds, the rest (triggers, markers, ...) get a yellow box this size (half width)
 - `lara_capsules`: also draw Lara's hit capsules (in magenta), which follow her pose. Off by default as it's slow
 - `lara_probes`: also draw the ground probes the game casts for her feet and body (cyan lines, with a cross where they hit)
-- `collision_meshes`: draw the level's collision (the ground, walls, rocks, buildings and anything else fixed in place) near Lara: floors in green, walls in orange and surfaces facing down in blue. Physics props (barrels, buckets, breakables, ...) aren't included. On by default
-- `collision_mesh_radius`: how far from Lara's feet the collision is drawn (default 400, i.e. 4m). The closest 16384 triangles are drawn, so this gets slow with a large radius
+- `collision_meshes`: draw the level's collision that Lara collides with (the ground, walls, rocks, buildings, invisible walls and anything else fixed in place) near her: floors in green, walls in orange and surfaces facing down in blue. Physics props (barrels, buckets, breakables, ...) aren't included. On by default
+- `detailed_collision_meshes`: also draw the level's collision she doesn't collide with, in purple. Many objects have a detailed mesh (probably for projectiles, e.g. one for each log of a pile) as well as the rough one she collides with. Off by default
+
+These, and Lara's own collision (`lara_capsules`/`lara_probes`/`lara_proxy`), can be turned on and off while playing with the checkboxes in the overlay's window or the `ToggleLaraCollision`/`ToggleCoarseCollision`/`ToggleDetailedCollision` hotkeys (F10, F11 and F12 by default; F12 is also Steam's screenshot key). The settings above are what they start as.
+- `collision_mesh_radius`, `detailed_collision_mesh_radius`: how far from Lara's feet the collision she collides with and the detailed collision are drawn (default 400 each, i.e. 4m; they can also be changed with sliders in the overlay's window). The closest 16384 triangles are drawn, so this gets slow with a large radius
 - `console`: open a console window in the game showing the overlay's logs, for debugging it
 - `lara_proxy`: also draw the capsule the game moves Lara with, i.e. what she collides with walls with (white, or yellow while it's pushing her off something). When it changes shape (e.g. when she starts aiming) the shape it's changing to is drawn in red. While she aims, the proxies attached to Lara's also collide, and are drawn the same way: the camera, which moves behind her, and her weapon (a thin rod), which is what holds her further from walls in front of her
 

@@ -36,4 +36,8 @@ pub enum Action {
         distance: f32,
     },
     ToggleUI {},
+    // What the overlay shows
+    ToggleLaraCollision {},
+    ToggleCoarseCollision {},
+    ToggleDetailedCollision {},
 }

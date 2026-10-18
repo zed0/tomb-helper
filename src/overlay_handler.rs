@@ -13,7 +13,7 @@ use std::{env, fmt, io, time};
 use std::error::Error;
 use hudhook::inject::Process;
 use process_memory::{Architecture, CopyAddress, DataMember, Memory, Pid, ProcessHandle};
-use crate::ui_ipc_data::{projection_from_lens, BoxKind, ObjectBox, SharedMemoryManager, MAX_ATTACHED, MAX_OBJECTS, MAX_TRIANGLES, OBJECT_NAME_LENGTH};
+use crate::ui_ipc_data::{projection_from_lens, BoxKind, ObjectBox, SharedMemoryManager, UiSettings, MAX_ATTACHED, MAX_OBJECTS, MAX_TRIANGLES, OBJECT_NAME_LENGTH};
 
 // How often to rescan the instance array for objects matching the filters
 const OBJECT_REFRESH_INTERVAL: time::Duration = time::Duration::from_secs(1);
@@ -38,6 +38,8 @@ pub struct OverlayHandler {
     proxy_type_offsets: Option<Vec<usize>>,
     collision_scene_offsets: Option<Vec<usize>>,
     collision_meshes: CollisionMeshes,
+    // Coarse and detailed, as of the last refresh
+    mesh_settings: (bool, bool),
     object_list: Option<ObjectList>,
     objects: Vec<(Instance, BoxKind)>,
     proxy_last_touching: Option<time::Instant>,
@@ -60,6 +62,16 @@ impl OverlayHandler {
         println!("Loading overlay handler...");
 
         let mut ui_memory_manager = SharedMemoryManager::new(true);
+        // Kept when the handler is recreated (e.g. when the offsets change)
+        let settings = &ui_memory_manager.get().settings;
+        if !UiSettings::get(&settings.initialised) {
+            UiSettings::set(&settings.lara_collision, true);
+            UiSettings::set(&settings.coarse_meshes, config.collision_meshes);
+            UiSettings::set(&settings.detailed_meshes, config.detailed_collision_meshes);
+            UiSettings::set_f32(&settings.coarse_radius, config.collision_mesh_radius);
+            UiSettings::set_f32(&settings.detailed_radius, config.detailed_collision_mesh_radius);
+            UiSettings::set(&settings.initialised, true);
+        }
         ui_memory_manager.get_mut().update(|val| {
             val.debug = config.console;
             val.should_exit = false;
@@ -100,6 +112,7 @@ impl OverlayHandler {
             proxy_type_offsets: address_offsets.get(&AddressType::ProxyComponentType).cloned(),
             collision_scene_offsets: address_offsets.get(&AddressType::CollisionScene).cloned(),
             collision_meshes: CollisionMeshes::default(),
+            mesh_settings: (false, false),
             object_list: None,
             objects: vec![],
             lara: None,
@@ -194,19 +207,32 @@ impl Handler for OverlayHandler {
         self.camera_view.fetch_from_game(self.handle)?;
         self.camera_lens.fetch_from_game(self.handle)?;
 
-        if self.last_object_refresh.map_or(true, |t| t.elapsed() > OBJECT_REFRESH_INTERVAL) {
+        let settings = &self.ui_memory_manager.get().settings;
+        let lara_collision = UiSettings::get(&settings.lara_collision);
+        let mesh_settings = (UiSettings::get(&settings.coarse_meshes), UiSettings::get(&settings.detailed_meshes));
+        let show_meshes = mesh_settings.0 || mesh_settings.1;
+        let coarse_radius = UiSettings::get_f32(&settings.coarse_radius);
+        let detailed_radius = UiSettings::get_f32(&settings.detailed_radius);
+
+        let refresh_due = self.last_object_refresh.map_or(true, |t| t.elapsed() > OBJECT_REFRESH_INTERVAL);
+        if refresh_due {
             self.last_object_refresh = Some(time::Instant::now());
             self.refresh_objects()?;
-            if let (true, Some(offsets)) = (self.config.collision_meshes, &self.collision_scene_offsets) {
-                self.collision_meshes.refresh(self.handle, self.resolve(offsets)?)?;
+        }
+        // Straight away when they're toggled
+        if refresh_due || mesh_settings != self.mesh_settings {
+            self.mesh_settings = mesh_settings;
+            if let (true, Some(offsets)) = (show_meshes, &self.collision_scene_offsets) {
+                let (coarse, detailed) = mesh_settings;
+                self.collision_meshes.refresh(self.handle, self.resolve(offsets)?, coarse, detailed)?;
             }
         }
 
-        let probes = match (self.config.lara_probes, &self.player_probes_offsets) {
+        let probes = match (lara_collision && self.config.lara_probes, &self.player_probes_offsets) {
             (true, Some(offsets)) => collision::read_probes(self.handle, self.resolve(offsets)?)?,
             _ => vec![],
         };
-        let proxies = match (self.config.lara_proxy, &self.player_instance_offsets, &self.proxy_type_offsets) {
+        let proxies = match (lara_collision && self.config.lara_proxy, &self.player_instance_offsets, &self.proxy_type_offsets) {
             (true, Some(instance), Some(type_id)) => {
                 Some(collision::read_proxy(self.handle, self.resolve(instance)?, self.resolve(type_id)?)?)
             }
@@ -254,15 +280,15 @@ impl Handler for OverlayHandler {
         }
         let attached: Vec<_> = attached.iter().map(|(capsule, _)| *capsule).collect();
 
-        let capsules = match &self.lara {
-            Some((address, shapes)) => collision::place_capsules(self.handle, *address, shapes)?,
-            None => vec![],
+        let capsules = match (lara_collision, &self.lara) {
+            (true, Some((address, shapes))) => collision::place_capsules(self.handle, *address, shapes)?,
+            _ => vec![],
         };
 
         let position = self.position.to_position();
         let started = time::Instant::now();
-        let triangles = if self.config.collision_meshes {
-            self.collision_meshes.triangles_near(self.handle, &position, self.config.collision_mesh_radius, MAX_TRIANGLES)
+        let triangles = if show_meshes {
+            self.collision_meshes.triangles_near(self.handle, &position, coarse_radius, detailed_radius, MAX_TRIANGLES)
         } else {
             vec![]
         };
@@ -311,6 +337,9 @@ impl Handler for OverlayHandler {
                     println!("done");
                 }
             },
+            Action::ToggleLaraCollision {} => UiSettings::toggle(&self.ui_memory_manager.get().settings.lara_collision),
+            Action::ToggleCoarseCollision {} => UiSettings::toggle(&self.ui_memory_manager.get().settings.coarse_meshes),
+            Action::ToggleDetailedCollision {} => UiSettings::toggle(&self.ui_memory_manager.get().settings.detailed_meshes),
             _ => (),
         }
         Ok(())

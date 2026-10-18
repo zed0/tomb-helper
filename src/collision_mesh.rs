@@ -17,9 +17,16 @@ const INSTANCE_MIN: usize = 0x40; // World space bounds
 const INSTANCE_MAX: usize = 0x50;
 // The matrix and bounds, which is what's reread each tick
 const INSTANCE_PLACEMENT_SIZE: usize = 0x60;
+// -> the instance's collision filter, shared by many
+const INSTANCE_FILTER: usize = 0x60;
 const INSTANCE_MESH: usize = 0x70;
 const INSTANCE_NEXT: usize = 0x88;
 const INSTANCE_FLAGS: usize = 0x90; // u16, bit 0 swaps the first two corners of each triangle
+// u32 of bits for which kinds of collision use the mesh. Everything Lara's movement proxy touched had bit 1 set (as did
+// the level's default, 0x2C7F), and objects often have both a detailed mesh without it (0x1C10, probably for
+// projectiles) and a rough one with it (0x204E). About 900 meshes are just 0x0002, presumably invisible walls.
+const FILTER_KINDS: usize = 0x4;
+const KIND_PLAYER: u32 = 0x2;
 const MESH_HEADER_SIZE: usize = 0x48;
 const MESH_VERTICES: usize = 0x10;
 const MESH_TRIANGLES: usize = 0x18;
@@ -43,6 +50,7 @@ struct Placement {
     address: usize,
     mesh: usize,
     flipped: bool,
+    detailed: bool,
     // World space bounds when the list was read
     min: Vector3<f32>,
     max: Vector3<f32>,
@@ -70,8 +78,9 @@ pub struct CollisionMeshes {
 }
 
 impl CollisionMeshes {
-    // Rereads the list of instances, which changes as the level streams in and out
-    pub fn refresh(&mut self, handle: ProcessHandle, scene_address: usize) -> io::Result<()> {
+    // Rereads the list of instances, which changes as the level streams in and out. Keeps those Lara collides with if
+    // `coarse`, and the rest if `detailed`.
+    pub fn refresh(&mut self, handle: ProcessHandle, scene_address: usize, coarse: bool, detailed: bool) -> io::Result<()> {
         let mut scene = [0u8; SCENE_COUNT + 4];
         handle.copy_address(scene_address, &mut scene)?;
         let count = (u32_at(&scene, SCENE_COUNT) as usize).min(MAX_INSTANCES);
@@ -80,6 +89,7 @@ impl CollisionMeshes {
         let mut old: HashMap<(usize, usize), Placement> =
             self.placements.drain(..).map(|p| ((p.address, p.mesh), p)).collect();
         let mut headers = HashMap::new();
+        let mut filters = HashMap::new();
         let mut placements = vec![];
         // Many meshes are loaded twice and placed in the same place
         let mut seen = HashSet::new();
@@ -89,6 +99,18 @@ impl CollisionMeshes {
         while address != 0 && visited < count {
             visited += 1;
             handle.copy_address(address, &mut bytes)?;
+            let next = usize_at(&bytes, INSTANCE_NEXT);
+            let filter = usize_at(&bytes, INSTANCE_FILTER);
+            if !filters.contains_key(&filter) {
+                let mut kind_bytes = [0u8; 4];
+                handle.copy_address(filter + FILTER_KINDS, &mut kind_bytes)?;
+                filters.insert(filter, u32::from_le_bytes(kind_bytes));
+            }
+            let is_detailed = filters[&filter] & KIND_PLAYER == 0;
+            if !(if is_detailed { detailed } else { coarse }) {
+                address = next;
+                continue;
+            }
             let mesh = usize_at(&bytes, INSTANCE_MESH);
             if !headers.contains_key(&mesh) {
                 headers.insert(mesh, self.mesh_header(handle, mesh)?);
@@ -105,12 +127,13 @@ impl CollisionMeshes {
                     address,
                     mesh,
                     flipped: u16_at(&bytes, INSTANCE_FLAGS) & 1 != 0,
+                    detailed: is_detailed,
                     min: vector_at(&bytes, INSTANCE_MIN),
                     max: vector_at(&bytes, INSTANCE_MAX),
                     placed,
                 });
             }
-            address = usize_at(&bytes, INSTANCE_NEXT);
+            address = next;
         }
 
         let used: HashSet<usize> = placements.iter().map(|p| p.mesh).collect();
@@ -129,11 +152,19 @@ impl CollisionMeshes {
         Ok(header)
     }
 
-    // The triangles that come within `radius` of `centre`, closest first
-    pub fn triangles_near(&mut self, handle: ProcessHandle, centre: &Position, radius: f32, max: usize) -> Vec<Triangle> {
+    // The triangles that come within the radius for their kind of mesh of `centre`, closest first
+    pub fn triangles_near(
+        &mut self,
+        handle: ProcessHandle,
+        centre: &Position,
+        coarse_radius: f32,
+        detailed_radius: f32,
+        max: usize,
+    ) -> Vec<Triangle> {
         let centre = Vector3::new(centre.x, centre.y, centre.z);
         let mut found = vec![];
         for placement in &mut self.placements {
+            let radius = if placement.detailed { detailed_radius } else { coarse_radius };
             if box_distance(&centre, &placement.min, &placement.max) > radius + NEARBY_MARGIN {
                 continue;
             }
@@ -155,7 +186,8 @@ impl CollisionMeshes {
             }
             let matrix = &bytes[INSTANCE_MATRIX..INSTANCE_MATRIX + 0x40];
             if placement.placed.as_ref().map_or(true, |(m, _)| m.as_slice() != matrix) {
-                let triangles = place_triangles(&self.meshes[&placement.mesh], matrix, placement.flipped);
+                let mesh = &self.meshes[&placement.mesh];
+                let triangles = place_triangles(mesh, matrix, placement.flipped, placement.detailed);
                 placement.placed = Some((matrix.to_vec(), triangles));
             }
             for placed in &placement.placed.as_ref().unwrap().1 {
@@ -207,7 +239,7 @@ fn read_mesh(handle: ProcessHandle, address: usize) -> io::Result<Mesh> {
 }
 
 // The mesh's triangles in world space
-fn place_triangles(mesh: &Mesh, matrix: &[u8], flipped: bool) -> Vec<PlacedTriangle> {
+fn place_triangles(mesh: &Mesh, matrix: &[u8], flipped: bool, detailed: bool) -> Vec<PlacedTriangle> {
     // `point * matrix` for the game's row-major matrices of row vectors
     let rows = [vector_at(matrix, 0), vector_at(matrix, 16), vector_at(matrix, 32), vector_at(matrix, 48)];
     let world: Vec<Vector3<f32>> = mesh
@@ -229,6 +261,7 @@ fn place_triangles(mesh: &Mesh, matrix: &[u8], flipped: bool) -> Vec<PlacedTrian
                 triangle: Triangle {
                     corners: corners.map(|c| Position { x: c.x, y: c.y, z: c.z }),
                     kind: surface_kind(&corners),
+                    detailed,
                 },
             }
         })
@@ -327,18 +360,19 @@ mod tests {
             [0., -1., 0., 0.],
             [0., 0., 100., 1.],
         ]);
-        let placed = place_triangles(&square_mesh(), &matrix, false);
+        let placed = place_triangles(&square_mesh(), &matrix, false, true);
         let triangle = &placed[0];
         assert!((box_distance(&Vector3::new(0., -20., 105.), &triangle.min, &triangle.max) - 20.).abs() < 1e-4);
         assert_eq!(triangle.triangle.corners[2].z, 110.);
         assert_eq!(triangle.triangle.kind, SurfaceKind::Wall);
+        assert!(triangle.triangle.detailed);
         assert_eq!(placed[1].min, Vector3::new(1000., 0., 1100.));
     }
 
     #[test]
     fn winding_gives_the_kind_and_flipping_reverses_it() {
         let identity = matrix_bytes([[1., 0., 0., 0.], [0., 1., 0., 0.], [0., 0., 1., 0.], [0., 0., 0., 1.]]);
-        let kind = |flipped| place_triangles(&square_mesh(), &identity, flipped)[0].triangle.kind;
+        let kind = |flipped| place_triangles(&square_mesh(), &identity, flipped, false)[0].triangle.kind;
         assert_eq!(kind(false), SurfaceKind::Floor);
         assert_eq!(kind(true), SurfaceKind::Ceiling);
     }
