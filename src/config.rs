@@ -111,7 +111,12 @@ fn default_object_box_size() -> f32 {
     50.0
 }
 
-fn default_lara_collision() -> bool {
+fn default_lara_capsules() -> bool {
+    // Slow to draw
+    false
+}
+
+fn default_lara_probes() -> bool {
     true
 }
 
@@ -127,8 +132,11 @@ pub struct OverlayConfig {
     #[serde(default = "default_object_box_size")]
     pub object_box_size: f32,
     // Draw Lara's hit capsules
-    #[serde(default = "default_lara_collision")]
-    pub lara_collision: bool,
+    #[serde(default = "default_lara_capsules")]
+    pub lara_capsules: bool,
+    // Draw the ground probes the game casts for Lara
+    #[serde(default = "default_lara_probes")]
+    pub lara_probes: bool,
 }
 
 impl Default for OverlayConfig {
