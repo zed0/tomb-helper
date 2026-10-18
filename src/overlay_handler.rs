@@ -13,7 +13,7 @@ use std::{env, fmt, io, time};
 use std::error::Error;
 use hudhook::inject::Process;
 use process_memory::{Architecture, CopyAddress, DataMember, Memory, Pid, ProcessHandle};
-use crate::ui_ipc_data::{BoxKind, ObjectBox, SharedMemoryManager, MAX_ATTACHED, MAX_OBJECTS, MAX_TRIANGLES, OBJECT_NAME_LENGTH};
+use crate::ui_ipc_data::{projection_from_lens, BoxKind, ObjectBox, SharedMemoryManager, MAX_ATTACHED, MAX_OBJECTS, MAX_TRIANGLES, OBJECT_NAME_LENGTH};
 
 // How often to rescan the instance array for objects matching the filters
 const OBJECT_REFRESH_INTERVAL: time::Duration = time::Duration::from_secs(1);
@@ -30,6 +30,8 @@ pub struct OverlayHandler {
     position: TrackedPosition,
     camera_view: TrackedCameraMatrix,
     camera_lens: TrackedMemory<[f32; 8]>,
+    camera_view_offsets: Vec<usize>,
+    camera_lens_offsets: Vec<usize>,
     instance_array_offsets: Vec<usize>,
     player_instance_offsets: Option<Vec<usize>>,
     player_probes_offsets: Option<Vec<usize>>,
@@ -90,6 +92,8 @@ impl OverlayHandler {
                 *arch,
                 *base_addr,
             ),
+            camera_view_offsets: address_offsets.get(&AddressType::CameraView)?.clone(),
+            camera_lens_offsets: address_offsets.get(&AddressType::CameraLens)?.clone(),
             instance_array_offsets: address_offsets.get(&AddressType::InstanceArray)?.clone(),
             player_instance_offsets: address_offsets.get(&AddressType::PlayerInstance).cloned(),
             player_probes_offsets: address_offsets.get(&AddressType::PlayerProbes).cloned(),
@@ -180,22 +184,6 @@ fn fill<T: Copy>(slots: &mut [T], items: &[T]) -> usize {
     count
 }
 
-// The game's projection matrix is reused for another pass with a narrower fov part way through each
-// frame, so build the main camera's from its lens instead: near, far, near, far, fov, aspect, fov, aspect.
-// The second copies are the more stable ones.
-fn projection_from_lens(lens: &[f32; 8]) -> [f32; 16] {
-    let (near, far, fov, aspect) = (lens[2], lens[3], lens[6], lens[7]);
-    let y = 1.0 / (fov / 2.0).tan();
-    let z = far / (far - near);
-    // Row-major for row vectors, like the game's
-    [
-        y / aspect, 0.0, 0.0, 0.0,
-        0.0, y, 0.0, 0.0,
-        0.0, 0.0, z, 1.0,
-        0.0, 0.0, -near * z, 0.0,
-    ]
-}
-
 impl Handler for OverlayHandler {
     fn handle_tick(&mut self) -> Result<(), Box<dyn Error>> {
         if !self.active {
@@ -282,10 +270,14 @@ impl Handler for OverlayHandler {
 
         let camera_view = self.camera_view.to_array();
         let camera_projection = projection_from_lens(&self.camera_lens.data);
+        let camera_view_address = self.resolve(&self.camera_view_offsets)?;
+        let camera_lens_address = self.resolve(&self.camera_lens_offsets)?;
         self.ui_memory_manager.get_mut().update(|val| {
             val.position = position;
             val.camera_view = camera_view;
             val.camera_projection = camera_projection;
+            val.camera_view_address = camera_view_address;
+            val.camera_lens_address = camera_lens_address;
             val.object_count = fill(&mut val.objects, &objects);
             val.probe_count = fill(&mut val.probes, &probes);
             val.proxy_count = fill(&mut val.proxies, &proxies);

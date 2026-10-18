@@ -88,6 +88,10 @@ pub struct UiData {
     // Row-major world-to-view and projection matrices as stored by the game (row vectors)
     pub camera_view: [f32; 16],
     pub camera_projection: [f32; 16],
+    // Where `CameraView` and `CameraLens` are in the game, so the overlay can read the camera for the frame it's
+    // drawing on. The ones above lag behind, which makes everything judder as the camera turns.
+    pub camera_view_address: usize,
+    pub camera_lens_address: usize,
     pub object_count: usize,
     pub objects: [ObjectBox; MAX_OBJECTS],
     // Lara's collision
@@ -125,6 +129,22 @@ impl UiData {
             Box::from_raw(data)
         }
     }
+}
+
+// The game's projection matrix is reused for another pass with a narrower fov part way through each
+// frame, so build the main camera's from its lens instead: near, far, near, far, fov, aspect, fov, aspect.
+// The second copies are the more stable ones.
+pub fn projection_from_lens(lens: &[f32; 8]) -> [f32; 16] {
+    let (near, far, fov, aspect) = (lens[2], lens[3], lens[6], lens[7]);
+    let y = 1.0 / (fov / 2.0).tan();
+    let z = far / (far - near);
+    // Row-major for row vectors, like the game's
+    [
+        y / aspect, 0.0, 0.0, 0.0,
+        0.0, y, 0.0, 0.0,
+        0.0, 0.0, z, 1.0,
+        0.0, 0.0, -near * z, 0.0,
+    ]
 }
 
 #[repr(C)]
