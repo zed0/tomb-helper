@@ -23,6 +23,7 @@ mod cutscene_handler;
 mod cutscene_timing_generator_handler;
 mod chains;
 mod collision;
+mod collision_mesh;
 mod code_trace;
 mod derive;
 mod pe_image;

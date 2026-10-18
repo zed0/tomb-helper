@@ -67,8 +67,10 @@ User docs (hotkeys, config, cutscene timing generation) live in `README.md`.
 | `src/overlay_handler.rs` | On `ToggleUI` injects `tomb_helper_ui.dll` into the game (`hudhook::inject`); each tick streams into shared memory: position, `CameraView`, a projection built from `CameraLens`, object boxes (objects matching `config.overlay` filters, rescanned every second), and Lara's collision from `collision.rs` (hit capsules, ground probes, proxy capsules, with a 150ms hold on "pushing"); sets `should_exit` to eject on toggle-off/drop. `TrackedCameraMatrix` reads a 4x4 matrix in one copy |
 | `src/object_list.rs` | Reads the game's static instance array (`InstanceArray`, 0x120 byte records until a zero header): position, placement names, world matrix (built from the instance's position + Rx*Ry*Rz Euler rotation, with only the scale from `cdc::TransformComponent`, which goes stale for Lara), and model bounds (`read_bounds`: component table -> DrawableComponent -> InstanceDrawable -> CommonRenderModelInstance -> CommonRenderModel -> `Mesh` header min/max). Layout offsets are constants found in ROTTR Steam |
 | `src/collision.rs` | Lara's collision, see "Lara's collision" below: hit capsules (`read_capsule_shapes`/`place_capsules`), ground probes (`read_probes`), and her movement proxy with the camera/weapon proxies attached to it (`read_proxy`), including which of them is pushing her (contacts on their surface). Has unit tests for the capsule geometry |
-| `src/ui_ipc_data.rs` | Shared-memory IPC (`shared_memory` crate, os_id `"TombHelperIPC-<size of UiDoubleBuffer>"` so a stale mapping from another layout is never opened): `UiData` (camera, `ObjectBox`es, `Capsule`s, `Probe`s), `UiDoubleBuffer` with a sequence counter per buffer (`set_next`; the reader uses `try_current` and keeps its last good copy, since the exe never waits), `SharedMemoryManager` (exe is owner) |
-| `src/lib.rs` | Injected overlay: `TombHelperHud` implements `ImguiRenderLoop`; opens a console only if `config.overlay.console`; shows a position window and draws (near-plane clipped, in world space via `Projector`) a box + name per `ObjectBox`, Lara's capsules, probes and a circle at her feet. Colours: model boxes green, estimated yellow, collision capsules white / yellow while pushing, proxy's next shape red, probes cyan. Calls `eject()` when `should_exit` is set |
+| `src/collision_mesh.rs` | The level's collision meshes (see "Level collision" below): `CollisionMeshes::refresh` walks the scene's instance list (dropping duplicates), `triangles_near` caches each mesh's vertices/triangles and returns the world space triangles near Lara, closest first, tagged floor/wall/ceiling by their normal |
+| `src/ui_ipc_data.rs` | Shared-memory IPC (`shared_memory` crate, os_id `"TombHelperIPC-<size of UiDoubleBuffer>"` so a stale mapping from another layout is never opened): `UiData` (camera, `ObjectBox`es, `Capsule`s, `Probe`s, collision `Triangle`s), `UiDoubleBuffer` with a sequence counter per buffer, changed and read in place since `UiData` is ~670KB (`update`; the reader uses `try_read` into a scratch box and keeps its last good copy, since the exe never waits), `SharedMemoryManager` (exe is owner) |
+| `src/lib.rs` | Injected overlay: `TombHelperHud` implements `ImguiRenderLoop`; opens a console only if `config.overlay.console`; shows a position window and draws (near-plane clipped, in world space via `Projector`) a box + name per `ObjectBox`, Lara's capsules, probes, a circle at her feet and the level's collision triangles (filled faintly, under everything, without anti-aliasing,
+skipping back faces and ones off screen; the position window shows how long they took to find and draw). Colours: model boxes green, estimated yellow, collision capsules white / yellow while pushing, proxy's next shape red, probes cyan, collision floors green / walls orange / ceilings blue. Calls `eject()` when `should_exit` is set |
 
 ## Common changes
 
@@ -90,7 +92,7 @@ User docs (hotkeys, config, cutscene timing generation) live in `README.md`.
 
 Everything below was found in ROTTR Steam (`(Steam) v1.0 build 0.0_64`, image size 58654720), the only version with
 the overlay offsets (`CameraView`, `CameraLens`, `InstanceArray`, `PlayerInstance`, `PlayerProbes`,
-`ProxyComponentType`). Offsets are hex, `mod+` means relative to the exe's base. Other versions will need them found
+`ProxyComponentType`, `CollisionScene`). Offsets are hex, `mod+` means relative to the exe's base. Other versions will need them found
 again (`derive` plus live checks).
 
 ### Finding your way around
@@ -151,6 +153,29 @@ again (`derive` plus live checks).
 - **How it was found:** `watch XPosition --write` -> the player move (+0x83B330, adds a delta to her position) <- 55
   callers, the main one +0x840460 which collides via +0x82B770 on the proxy; the half length's only reader is the
   easing at +0x1DD0B0, which sets the physics shape's radius/length (+0x193FD0/+0x193F80).
+
+### Level collision
+- Static collision is triangle meshes, separate from the render meshes. `cdc::CollisionSceneClient` lists their
+  instances: `CollisionScene` [mod+0x2D57440 (a `TR9MultibodyClient`, 420 code refs), +0x10, 0] -> +0x28 first instance,
+  +0x30 u32 count (5068 in the Siberia gulag area), instances linked by +0x88 (+0x80 the other way).
+- Instance (0xB0 bytes): +0x0 row-major object-to-world matrix (can be scaled), +0x40/+0x50 world bounds min/max,
+  +0x68 -> broadphase entry (bounds, then +0x28 back to the instance), +0x70 -> mesh, +0x90 u16 bit 0 swaps the first two
+  corners of every triangle, +0x98 optional material override.
+- Mesh: +0x10 -> vertices, +0x18 -> 0x10 byte triangles (3 u32 vertex indices, +0xC flags, 0x40 = skipped by the
+  collision tests, +0xD material index), +0x20 -> 12 byte materials (byte 0 a collision mask, always 3 here), +0x28 ->
+  BVH (0x1C byte nodes: min, max, +0x18 u16 first child/triangle, +0x1A u8 triangle count, 0 for inner nodes), +0x34 u32
+  triangle count, +0x38 u32 vertex count, +0x44 u16 vertex format (1 = 3 f32s, which is all that's been seen; 2 = 3 f16s).
+  Floors are wound so their normal points up.
+- About half the instances are a second copy of a mesh placed in the same place, so `collision_mesh` drops those. ~570
+  belong to objects: a `cdc::MeshInstanceComponent` (+0x8 -> its instance) holds one inline at +0x190, pointed to from
+  +0x170 (e.g. bendy trees). The rest is the level.
+- How it was found: `GeomTriangle`'s vtable is used by +0x18C5F0, the leaf test of a mesh query (query +0x40 ->
+  instance, +0xD0 triangles, +0xD8 materials), which decodes corners with +0x18C500 / +0x18C330. Its caller +0x191C90
+  walks the BVH. `JobHarness_JobMeshCollision` (+0x18B050) is the job running them.
+- Physics props (barrels, breakables, worklights, bendy foliage, ...) aren't in it: they're bodies like Lara's proxy
+  (0x70 byte pool, +0x30 next, +0x38 previous, +0x20 -> shape, +0x50 -> owner whose first qword is the instance), with
+  shape type byte +0x98: 0 box (+0x20 quaternion, +0x30 half extents?), 1 capsule, 3 (grass, bushes; unknown), 4
+  cylinder (+0x50 -> `cdc::GeomCylinder`). 1287 bodies; 1095 live `cdc::GeomHull`s are probably theirs too. Not drawn yet.
 
 ### Working with the live game
 - The user plays; ask them to switch to the game before anything that needs it running (it pauses when alt-tabbed),

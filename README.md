@@ -105,12 +105,14 @@ Each version looks like:
 ## Overlay
 
 The overlay (`ToggleUI`) draws a box around game objects near Lara, labelled with the object's name.
-It currently needs the `CameraView`, `CameraLens` and `InstanceArray` (and `PlayerInstance`/`PlayerProbes`/`ProxyComponentType` for Lara's collision) offsets, which only Rise of the Tomb Raider (Steam) has so far.
+It currently needs the `CameraView`, `CameraLens` and `InstanceArray` (and `PlayerInstance`/`PlayerProbes`/`ProxyComponentType` for Lara's collision, `CollisionScene` for the level's) offsets, which only Rise of the Tomb Raider (Steam) has so far.
 - `object_filters`: objects whose name contains any of these (case insensitive) get a box, `[""]` shows everything. The default, `campsite_base_trx-`, matches each base camp (at its campfire)
 - `object_radius`: only objects this close to Lara are shown (the closest 64 are drawn)
 - `object_box_size`: objects with a model get a green box showing its bounds, the rest (triggers, markers, ...) get a yellow box this size (half width)
 - `lara_capsules`: also draw Lara's hit capsules (in magenta), which follow her pose. Off by default as it's slow
 - `lara_probes`: also draw the ground probes the game casts for her feet and body (cyan lines, with a cross where they hit)
+- `collision_meshes`: draw the level's collision (the ground, walls, rocks, buildings and anything else fixed in place) near Lara: floors in green, walls in orange and surfaces facing down in blue. Physics props (barrels, buckets, breakables, ...) aren't included. On by default
+- `collision_mesh_radius`: how far from Lara's feet the collision is drawn (default 400, i.e. 4m). The closest 16384 triangles are drawn, so this gets slow with a large radius
 - `console`: open a console window in the game showing the overlay's logs, for debugging it
 - `lara_proxy`: also draw the capsule the game moves Lara with, i.e. what she collides with walls with (white, or yellow while it's pushing her off something). When it changes shape (e.g. when she starts aiming) the shape it's changing to is drawn in red. While she aims, the proxies attached to Lara's also collide, and are drawn the same way: the camera, which moves behind her, and her weapon (a thin rod), which is what holds her further from walls in front of her
 

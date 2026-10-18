@@ -1,7 +1,7 @@
 use imgui::*;
 use hudhook::*;
 use hudhook::hooks::dx12::ImguiDx12Hooks;
-use crate::ui_ipc_data::{BoxKind, Capsule, ObjectBox, Probe, SharedMemoryManager, UiData};
+use crate::ui_ipc_data::{BoxKind, Capsule, ObjectBox, Probe, SharedMemoryManager, SurfaceKind, Triangle, UiData};
 use crate::tracing::{error, warn};
 
 mod ui_ipc_data;
@@ -26,6 +26,11 @@ const COLLISION_COLOUR: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
 const PUSHING_COLOUR: [f32; 4] = [1.0, 1.0, 0.0, 1.0];
 // Half size of the cross drawn where a probe hit
 const PROBE_HIT_SIZE: f32 = 4.0;
+// The level's collision, by which way it faces. Edges are drawn in these, and the triangles filled in fainter.
+const FLOOR_COLOUR: [f32; 4] = [0.2, 1.0, 0.2, 0.5];
+const WALL_COLOUR: [f32; 4] = [1.0, 0.55, 0.1, 0.5];
+const CEILING_COLOUR: [f32; 4] = [0.3, 0.6, 1.0, 0.5];
+const SURFACE_FILL_ALPHA: f32 = 0.12;
 
 // The game stores matrices row-major for row vectors (`v * M`). Reading the same floats column-major
 // gives the transposed matrix, which is the equivalent for nalgebra's column vectors (`M * v`).
@@ -35,6 +40,7 @@ fn game_matrix(elements: &[f32; 16]) -> Matrix4<f32> {
 
 struct Projector {
     view_projection: Matrix4<f32>,
+    camera_position: Vector3<f32>,
     screen_width: f32,
     screen_height: f32,
 }
@@ -59,6 +65,23 @@ impl Projector {
             return None;
         }
         Some(self.to_screen(clip))
+    }
+
+    // Clips the convex polygon against the near plane, returns its corners on screen (none if it's entirely behind
+    // the camera)
+    fn project_polygon(&self, corners: &[Vector4<f32>]) -> Vec<[f32; 2]> {
+        let mut screen = vec![];
+        for (i, &a) in corners.iter().enumerate() {
+            let b = corners[(i + 1) % corners.len()];
+            if a.w >= NEAR_CLIP_W {
+                screen.push(self.to_screen(a));
+            }
+            if (a.w >= NEAR_CLIP_W) != (b.w >= NEAR_CLIP_W) {
+                let t = (a.w - NEAR_CLIP_W) / (a.w - b.w);
+                screen.push(self.to_screen(a + (b - a) * t));
+            }
+        }
+        screen
     }
 
     // Clips the line against the near plane, returns None if it's entirely behind the camera
@@ -162,17 +185,59 @@ fn draw_probe(draw_list: &DrawListMut, projector: &Projector, probe: &Probe) {
     }
 }
 
+fn draw_triangle(draw_list: &DrawListMut, projector: &Projector, triangle: &Triangle) {
+    let colour = match triangle.kind {
+        SurfaceKind::Floor => FLOOR_COLOUR,
+        SurfaceKind::Wall => WALL_COLOUR,
+        SurfaceKind::Ceiling => CEILING_COLOUR,
+    };
+    let world = triangle.corners.map(|c| Vector3::new(c.x, c.y, c.z));
+    // Seen from behind. Triangles are wound anticlockwise seen from the side they face.
+    let normal = (world[1] - world[0]).cross(&(world[2] - world[0]));
+    if normal.dot(&(projector.camera_position - world[0])) <= 0.0 {
+        return;
+    }
+    let identity = Matrix4::identity();
+    let corners = world.map(|c| projector.to_clip(&identity, c));
+    // All off the same side of the screen, or behind the camera
+    let outside = |test: fn(&Vector4<f32>) -> bool| corners.iter().all(test);
+    if outside(|c| c.x < -c.w)
+        || outside(|c| c.x > c.w)
+        || outside(|c| c.y < -c.w)
+        || outside(|c| c.y > c.w)
+        || outside(|c| c.w < NEAR_CLIP_W)
+    {
+        return;
+    }
+
+    let fill = [colour[0], colour[1], colour[2], SURFACE_FILL_ALPHA];
+    let polygon = projector.project_polygon(&corners);
+    for i in 2..polygon.len() {
+        draw_list.add_triangle(polygon[0], polygon[i - 1], polygon[i], fill).filled(true).build();
+    }
+    for i in 0..3 {
+        if let Some((from, to)) = projector.project_line(corners[i], corners[(i + 1) % 3]) {
+            draw_list.add_line(from, to, colour).build();
+        }
+    }
+}
+
 struct TombHelperHud {
     ui_memory_manager: SharedMemoryManager,
     // Last complete copy, used when the exe was mid write
-    ui_data: UiData,
+    ui_data: Box<UiData>,
+    // Where the next copy is read to
+    scratch: Box<UiData>,
     ejecting: bool,
+    // How long the last frame's drawing took
+    draw_milliseconds: f32,
 }
 
 impl TombHelperHud {
     fn new() -> Self {
         let ui_memory_manager = SharedMemoryManager::new(false);
-        let ui_data = ui_memory_manager.get().current();
+        let mut ui_data = UiData::zeroed();
+        ui_memory_manager.get().read(&mut ui_data);
 
         if ui_data.debug {
             if let Ok(_) = hudhook::alloc_console() {
@@ -193,17 +258,20 @@ impl TombHelperHud {
         Self {
             ui_memory_manager,
             ui_data,
+            scratch: UiData::zeroed(),
             ejecting: false,
+            draw_milliseconds: 0.0,
         }
     }
 }
 
 impl ImguiRenderLoop for TombHelperHud {
     fn render(&mut self, ui: &mut Ui) {
-        if let Some(ui_data) = self.ui_memory_manager.get().try_current() {
-            self.ui_data = ui_data;
+        let started = std::time::Instant::now();
+        if self.ui_memory_manager.get().try_read(&mut self.scratch) {
+            std::mem::swap(&mut self.ui_data, &mut self.scratch);
         }
-        let ui_data = self.ui_data;
+        let ui_data = &*self.ui_data;
         if !self.ejecting && ui_data.should_exit {
             self.ejecting = true;
             error!("ejecting!");
@@ -213,6 +281,7 @@ impl ImguiRenderLoop for TombHelperHud {
         let screen_width = ui.io().display_size[0];
         let screen_height = ui.io().display_size[1];
         let object_count = ui_data.object_count.min(ui_data.objects.len());
+        let triangle_count = ui_data.triangle_count.min(ui_data.triangles.len());
 
         ui.window("Position")
             .position_pivot([1., 0.])
@@ -221,15 +290,31 @@ impl ImguiRenderLoop for TombHelperHud {
             .build(|| {
                 ui.text_wrapped(format!("{:?}", ui_data.position));
                 ui.text(format!("{} objects", object_count));
+                ui.text(format!(
+                    "{} collision triangles ({:.1}ms to find, {:.1}ms to draw)",
+                    triangle_count, ui_data.triangle_milliseconds, self.draw_milliseconds
+                ));
             });
 
+        let view = game_matrix(&ui_data.camera_view);
         let projector = Projector {
-            view_projection: game_matrix(&ui_data.camera_projection) * game_matrix(&ui_data.camera_view),
+            view_projection: game_matrix(&ui_data.camera_projection) * view,
+            camera_position: view.try_inverse().map_or(Vector3::zeros(), |m| m.column(3).xyz()),
             screen_width,
             screen_height,
         };
 
         let draw_list = ui.get_background_draw_list();
+        // Under everything else, furthest first. Without anti-aliasing, which takes several times the vertices.
+        let flags = unsafe { &mut (*imgui::sys::igGetBackgroundDrawList()).Flags };
+        let anti_aliased = *flags;
+        *flags &= !((imgui::sys::ImDrawListFlags_AntiAliasedLines
+            | imgui::sys::ImDrawListFlags_AntiAliasedLinesUseTex
+            | imgui::sys::ImDrawListFlags_AntiAliasedFill) as i32);
+        for triangle in ui_data.triangles[..triangle_count].iter().rev() {
+            draw_triangle(&draw_list, &projector, triangle);
+        }
+        *flags = anti_aliased;
         for object in &ui_data.objects[..object_count] {
             draw_box(&draw_list, &projector, object);
         }
@@ -256,6 +341,7 @@ impl ImguiRenderLoop for TombHelperHud {
         if let Some(point) = projector.project(lara) {
             draw_list.add_circle(point, 6.0, LARA_COLOUR).thickness(2.0).build();
         }
+        self.draw_milliseconds = started.elapsed().as_secs_f32() * 1000.0;
     }
 }
 
