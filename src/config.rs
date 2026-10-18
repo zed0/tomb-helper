@@ -132,7 +132,23 @@ fn default_collision_meshes() -> bool {
 }
 
 fn default_collision_mesh_radius() -> f32 {
-    400.0
+    1500.0
+}
+
+fn default_collision_mesh_fade() -> bool {
+    true
+}
+
+fn default_collision_mesh_fade_strength() -> f32 {
+    2.0
+}
+
+fn default_collision_mesh_cull_hidden() -> bool {
+    true
+}
+
+fn default_collision_opacity() -> f32 {
+    0.25
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -166,6 +182,17 @@ pub struct OverlayConfig {
     // Also draw the level's collision meshes Lara doesn't collide with (to start with, they can be toggled)
     #[serde(default)]
     pub detailed_collision_meshes: bool,
+    // Draw the collision meshes fainter further from Lara, by (1 - distance / radius) ^ strength (to start with)
+    #[serde(default = "default_collision_mesh_fade")]
+    pub collision_mesh_fade: bool,
+    #[serde(default = "default_collision_mesh_fade_strength")]
+    pub collision_mesh_fade_strength: f32,
+    // Only draw collision triangles that aren't hidden behind others (to start with)
+    #[serde(default = "default_collision_mesh_cull_hidden")]
+    pub collision_mesh_cull_hidden: bool,
+    // Scales how opaque the collision meshes and Lara's collision are drawn, 0 to 1 (to start with)
+    #[serde(default = "default_collision_opacity")]
+    pub collision_opacity: f32,
     // Open a console in the game for the overlay's logs
     #[serde(default)]
     pub console: bool,

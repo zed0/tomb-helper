@@ -9,7 +9,7 @@ pub const MAX_PROBES: usize = 8;
 pub const MAX_PROXIES: usize = 2;
 pub const MAX_ATTACHED: usize = 8;
 pub const OBJECT_NAME_LENGTH: usize = 64;
-pub const MAX_TRIANGLES: usize = 16384;
+pub const MAX_TRIANGLES: usize = 163_840;
 
 #[repr(u32)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -112,7 +112,7 @@ pub struct UiData {
     pub attached_touching: [bool; MAX_ATTACHED],
     // They only collide while Lara aims
     pub attached_active: bool,
-    // The level's collision near Lara, closest first
+    // The level's collision near Lara, closest first. Last, as only the used part of it is copied.
     pub triangle_count: usize,
     // How long the exe took to find them
     pub triangle_milliseconds: f32,
@@ -120,6 +120,17 @@ pub struct UiData {
 }
 
 impl UiData {
+    // Bytes up to the end of the triangles in use, which is all that needs copying. The count is read
+    // volatile and clamped as it may be mid write.
+    unsafe fn used_size(data: *const UiData) -> usize {
+        let count = ptr::read_volatile(ptr::addr_of!((*data).triangle_count)).min(MAX_TRIANGLES);
+        std::mem::offset_of!(UiData, triangles) + count * size_of::<Triangle>()
+    }
+
+    unsafe fn copy_used(from: *const UiData, to: *mut UiData) {
+        ptr::copy_nonoverlapping(from as *const u8, to as *mut u8, UiData::used_size(from));
+    }
+
     // Too big to build on the stack (especially the game's render thread's), so it's kept boxed
     pub fn zeroed() -> Box<UiData> {
         let layout = std::alloc::Layout::new::<UiData>();
@@ -163,6 +174,13 @@ pub struct UiSettings {
     // How far from Lara to draw each of them (f32 bits)
     pub coarse_radius: AtomicU32,
     pub detailed_radius: AtomicU32,
+    // Scales how opaque the meshes and Lara's collision are drawn (f32 bits, 0 to 1)
+    pub mesh_opacity: AtomicU32,
+    // Draw the meshes fainter further from Lara, by (1 - distance / radius) to the power of the strength (f32 bits)
+    pub fade_with_distance: AtomicBool,
+    pub fade_strength: AtomicU32,
+    // Only draw the triangles not hidden behind others
+    pub cull_hidden: AtomicBool,
 }
 
 impl UiSettings {
@@ -206,7 +224,7 @@ impl UiDoubleBuffer {
         fence(Ordering::Release);
         let buffers = self.buffers.as_mut_ptr();
         unsafe {
-            ptr::copy_nonoverlapping(buffers.add(current), buffers.add(next), 1);
+            UiData::copy_used(buffers.add(current), buffers.add(next));
             change(&mut *buffers.add(next));
         }
         self.sequences[next].fetch_add(1, Ordering::Release);
@@ -214,14 +232,15 @@ impl UiDoubleBuffer {
     }
 
     // The writer is in another process and doesn't wait for readers, so it can start rewriting a buffer
-    // while it's being copied. Returns false if that happened, in which case `out` is left part written.
+    // while it's being copied. Returns false if that happened, in which case `out` is left part written. Triangles
+    // past `triangle_count` aren't copied.
     pub fn try_read(&self, out: &mut UiData) -> bool {
         let current = self.active_buffer.load(Ordering::Acquire);
         let before = self.sequences[current].load(Ordering::Acquire);
         if before % 2 == 1 {
             return false;
         }
-        unsafe { ptr::copy_nonoverlapping(&self.buffers[current], out, 1) };
+        unsafe { UiData::copy_used(&self.buffers[current], out) };
         fence(Ordering::Acquire);
         self.sequences[current].load(Ordering::Relaxed) == before
     }
@@ -271,3 +290,24 @@ impl SharedMemoryManager {
 
 unsafe impl Send for SharedMemoryManager {}
 unsafe impl Sync for SharedMemoryManager {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_the_triangles_in_use_are_copied() {
+        let corner = Position { x: 1.0, y: 2.0, z: 3.0 };
+        let triangle = Triangle { corners: [corner; 3], kind: SurfaceKind::Wall, detailed: true };
+        let mut from = UiData::zeroed();
+        from.triangle_count = 2;
+        from.triangles[..3].copy_from_slice(&[triangle; 3]);
+        from.position = corner;
+        let mut to = UiData::zeroed();
+        unsafe { UiData::copy_used(&*from, &mut *to) };
+        assert_eq!(to.triangle_count, 2);
+        assert_eq!(to.position.z, 3.0);
+        assert!(to.triangles[1].detailed);
+        assert!(!to.triangles[2].detailed);
+    }
+}
