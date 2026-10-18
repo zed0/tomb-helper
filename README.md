@@ -42,7 +42,7 @@ The default configuration is:
 	"cutscene_blacklist_file": "https://gist.githubusercontent.com/Atorizil/734a7649471f0fa0a2a9f92a167e294b/raw/Blacklist.json",
 	"cutscene_timing_file": "https://gist.githubusercontent.com/zed0/762a5790501af95189344834bc210616/raw/tomb-helper-timing-info.json",
 	"record_cutscene_timing": {"Off": {}},
-	"overlay": {"object_filters": ["campsite_base_trx-"], "object_radius": 5000.0, "object_box_size": 50.0, "lara_capsules": false, "lara_probes": true, "lara_proxy": true}
+	"overlay": {"object_filters": ["campsite_base_trx-"], "object_radius": 5000.0, "object_box_size": 50.0, "lara_capsules": false, "lara_probes": true, "lara_proxy": true, "console": false}
 }
 ```
 
@@ -111,6 +111,7 @@ It currently needs the `CameraView`, `CameraLens` and `InstanceArray` (and `Play
 - `object_box_size`: objects with a model get a green box showing its bounds, the rest (triggers, markers, ...) get a yellow box this size (half width)
 - `lara_capsules`: also draw Lara's hit capsules (in magenta), which follow her pose. Off by default as it's slow
 - `lara_probes`: also draw the ground probes the game casts for her feet and body (cyan lines, with a cross where they hit)
+- `console`: open a console window in the game showing the overlay's logs, for debugging it
 - `lara_proxy`: also draw the capsule the game moves Lara with, i.e. what she collides with walls with (white, or yellow while it's pushing her off something). When it changes shape (e.g. when she starts aiming) the shape it's changing to is drawn in red. While she aims, the proxies attached to Lara's also collide, and are drawn the same way: the camera, which moves behind her, and her weapon (a thin rod), which is what holds her further from walls in front of her
 
 ## Forcing a version

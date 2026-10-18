@@ -144,6 +144,9 @@ pub struct OverlayConfig {
     // Draw the capsule the game moves Lara with
     #[serde(default = "default_lara_proxy")]
     pub lara_proxy: bool,
+    // Open a console in the game for the overlay's logs
+    #[serde(default)]
+    pub console: bool,
 }
 
 impl Default for OverlayConfig {
