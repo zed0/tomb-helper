@@ -1,3 +1,5 @@
+use crate::components::{self, Components};
+use crate::layout;
 use crate::position::Position;
 use nalgebra::{Rotation3, Vector3};
 use process_memory::{CopyAddress, ProcessHandle};
@@ -5,32 +7,9 @@ use std::collections::HashMap;
 use std::convert::TryInto;
 use std::io;
 
-// Layout of the game's instance (game object) records, found in ROTTR (Steam) by following the RTTI
-// named components they point to. The records live in a static array; Lara is one of them.
-const INSTANCE_SIZE: usize = 0x120;
-const INSTANCE_HEADER: usize = 0x0; // 2 for every slot in the array, 0 after the end
-const INSTANCE_POSITION: usize = 0x10;
-const INSTANCE_ROTATION: usize = 0x30; // Euler angles in radians, applied as Rx * Ry * Rz
-const INSTANCE_PLACEMENT: usize = 0x78; // -> placement record, null for spawned instances
-// The name of the instance's object type, e.g. "trx_mountain_hare" or "laracroft_jacket_light", which is all spawned
-// instances have: instance +0x80 -> +0x8 -> +0x58 -> +0x8 -> name
-const OBJECT_NAME_CHAIN: [usize; 4] = [0x80, 0x8, 0x58, 0x8];
-pub const INSTANCE_TRANSFORM: usize = 0xE0; // -> cdc::TransformComponent, null for unused slots
-const PLACEMENT_NAME: usize = 0x48; // -> e.g. "fx_fire_campfire_prelight1-neberle2"
-const PLACEMENT_FULL_NAME: usize = 0x50; // -> e.g. "campsite_base_trx.fx_fire_campfire-neberle7"
-const TRANSFORM_MATRIX: usize = 0x30; // Row-major 4x4 object-to-world matrix, not always up to date
-
-// Object space bounds come from the render model's mesh: instance -> component table -> DrawableComponent
-// -> InstanceDrawable -> CommonRenderModelInstance -> CommonRenderModel -> Mesh
-pub const INSTANCE_COMPONENTS: usize = 0xD8;
-const COMPONENTS_DRAWABLE: usize = 0x40; // The table has a fixed slot per component type
-const DRAWABLE_INSTANCE_DRAWABLE: usize = 0x98; // Null for instances that aren't drawn (triggers, markers, ...)
-const INSTANCE_DRAWABLE_MODEL_INSTANCE: usize = 0xC8;
-const MODEL_INSTANCE_MODEL: usize = 0x48;
-const MODEL_MESH: usize = 0x50;
+// The game's instances (game objects) live in a static array (`InstanceArray`); Lara is one of them. Where things are
+// in them is in `layout`. Object space bounds come from the render model's mesh, via the DrawableComponent.
 const MESH_MAGIC: &[u8; 4] = b"Mesh";
-const MESH_MIN: usize = 0x20;
-const MESH_MAX: usize = 0x30;
 
 const MAX_INSTANCES: usize = 16384;
 const SLOTS_PER_READ: usize = 512;
@@ -61,37 +40,34 @@ impl ObjectList {
 
     // Every live instance. Placed ones are named after their placement, spawned ones after their object type.
     pub fn instances(&mut self, handle: ProcessHandle) -> io::Result<Vec<Instance>> {
+        let layout = layout::current();
+        let (instance, placement_layout) = (&layout.instance, &layout.placement);
         let mut instances = vec![];
-        let mut bytes = vec![0u8; INSTANCE_SIZE * SLOTS_PER_READ];
+        let mut bytes = vec![0u8; instance.size * SLOTS_PER_READ];
         for first_slot in (0..MAX_INSTANCES).step_by(SLOTS_PER_READ) {
-            handle.copy_address(self.array_address + first_slot * INSTANCE_SIZE, &mut bytes)?;
-            for (index, slot) in bytes.chunks_exact(INSTANCE_SIZE).enumerate() {
-                if read_u32(slot, INSTANCE_HEADER) == 0 {
+            handle.copy_address(self.array_address + first_slot * instance.size, &mut bytes)?;
+            for (index, slot) in bytes.chunks_exact(instance.size).enumerate() {
+                if read_u32(slot, instance.header) == 0 {
                     return Ok(instances);
                 }
-                if read_usize(slot, INSTANCE_TRANSFORM) == 0 {
+                if read_usize(slot, instance.transform) == 0 {
                     continue;
                 }
-                let address = self.array_address + (first_slot + index) * INSTANCE_SIZE;
-                let placement = read_usize(slot, INSTANCE_PLACEMENT);
+                let address = self.array_address + (first_slot + index) * instance.size;
+                let placement = read_usize(slot, instance.placement);
                 let (name, full_name) = if placement != 0 {
-                    let mut name_pointers = [0u8; 16];
-                    if handle.copy_address(placement + PLACEMENT_NAME, &mut name_pointers).is_err() {
-                        continue;
-                    }
-                    (
-                        self.name(handle, read_usize(&name_pointers, 0)),
-                        self.name(handle, read_usize(&name_pointers, PLACEMENT_FULL_NAME - PLACEMENT_NAME)),
-                    )
+                    let name = read_pointer(handle, placement + placement_layout.name).unwrap_or(0);
+                    let full_name = read_pointer(handle, placement + placement_layout.full_name).unwrap_or(0);
+                    (self.name(handle, name), self.name(handle, full_name))
                 } else {
-                    match read_chain(handle, address, &OBJECT_NAME_CHAIN) {
+                    match read_chain(handle, address, &instance.object_name) {
                         Some(name) => (self.name(handle, name), String::new()),
                         None => continue,
                     }
                 };
                 instances.push(Instance {
                     address,
-                    position: read_position_from(slot, INSTANCE_POSITION),
+                    position: read_position_from(slot, instance.position),
                     name,
                     full_name,
                     bounds: None,
@@ -115,17 +91,18 @@ impl ObjectList {
 // The game keeps the instance's own position and rotation up to date, but not always its TransformComponent
 // (Lara's stays where she loaded in), so that's only used for the scale.
 pub fn read_transform(handle: ProcessHandle, instance_address: usize) -> io::Result<[f32; 16]> {
-    let mut instance = [0u8; INSTANCE_TRANSFORM + 8];
+    let layout = layout::current();
+    let mut instance = vec![0u8; layout.instance.size];
     handle.copy_address(instance_address, &mut instance)?;
-    let transform = read_usize(&instance, INSTANCE_TRANSFORM);
+    let transform = read_usize(&instance, layout.instance.transform);
     if transform == 0 {
         return Err(io::Error::new(io::ErrorKind::NotFound, "instance has no transform"));
     }
     let mut axes = [0u8; 48];
-    handle.copy_address(transform + TRANSFORM_MATRIX, &mut axes)?;
+    handle.copy_address(transform + layout.transform.matrix, &mut axes)?;
 
-    let position = read_position_from(&instance, INSTANCE_POSITION);
-    let rotation = read_position_from(&instance, INSTANCE_ROTATION);
+    let position = read_position_from(&instance, layout.instance.position);
+    let rotation = read_position_from(&instance, layout.instance.rotation);
     let rotation = Rotation3::from_axis_angle(&Vector3::x_axis(), rotation.x)
         * Rotation3::from_axis_angle(&Vector3::y_axis(), rotation.y)
         * Rotation3::from_axis_angle(&Vector3::z_axis(), rotation.z);
@@ -144,25 +121,29 @@ pub fn read_transform(handle: ProcessHandle, instance_address: usize) -> io::Res
 
 pub fn read_position(handle: ProcessHandle, instance_address: usize) -> io::Result<Position> {
     let mut bytes = [0u8; 12];
-    handle.copy_address(instance_address + INSTANCE_POSITION, &mut bytes)?;
+    handle.copy_address(instance_address + layout::current().instance.position, &mut bytes)?;
     Ok(read_position_from(&bytes, 0))
 }
 
 // The bounding box of the instance's render model, None if it isn't drawn
-pub fn read_bounds(handle: ProcessHandle, instance_address: usize) -> Option<(Position, Position)> {
-    let components = read_pointer(handle, instance_address + INSTANCE_COMPONENTS)?;
-    let drawable = read_pointer(handle, components + COMPONENTS_DRAWABLE)?;
-    let instance_drawable = read_pointer(handle, drawable + DRAWABLE_INSTANCE_DRAWABLE)?;
-    let model_instance = read_pointer(handle, instance_drawable + INSTANCE_DRAWABLE_MODEL_INSTANCE)?;
-    let model = read_pointer(handle, model_instance + MODEL_INSTANCE_MODEL)?;
-    let mesh = read_pointer(handle, model + MODEL_MESH)?;
+pub fn read_bounds(
+    handle: ProcessHandle,
+    components: &mut Components,
+    instance_address: usize,
+) -> Option<(Position, Position)> {
+    let layout = &layout::current().drawable;
+    let drawable = components.get(handle, instance_address, components::DRAWABLE)?;
+    let instance_drawable = read_pointer(handle, drawable + layout.instance_drawable)?;
+    let model_instance = read_pointer(handle, instance_drawable + layout.model_instance)?;
+    let model = read_pointer(handle, model_instance + layout.model)?;
+    let mesh = read_pointer(handle, model + layout.mesh)?;
 
-    let mut bytes = [0u8; MESH_MAX + 12];
+    let mut bytes = vec![0u8; layout.mesh_min.max(layout.mesh_max) + 12];
     handle.copy_address(mesh, &mut bytes).ok()?;
     if &bytes[..4] != MESH_MAGIC {
         return None;
     }
-    Some((read_position_from(&bytes, MESH_MIN), read_position_from(&bytes, MESH_MAX)))
+    Some((read_position_from(&bytes, layout.mesh_min), read_position_from(&bytes, layout.mesh_max)))
 }
 
 // Follows the pointers at each offset in turn

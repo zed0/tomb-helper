@@ -14,10 +14,12 @@ use std::{thread, time};
 
 const CANDIDATES_SHOWN: usize = 5;
 
-fn connect(version: Option<String>) -> Result<(Pid, ProcessHandle, usize, ProcessDetails), String> {
-    find_process::find_process(known_process_details(), version).ok_or_else(|| {
+pub fn connect(version: Option<String>) -> Result<(Pid, ProcessHandle, usize, ProcessDetails), String> {
+    let connected = find_process::find_process(known_process_details(), version).ok_or_else(|| {
         "No known game version is running (pass --version to force one from process_details.rs)".to_string()
-    })
+    })?;
+    crate::layout::set(connected.3.layout.clone());
+    Ok(connected)
 }
 
 fn read_pointer(handle: ProcessHandle, address: usize, pointer_size: usize) -> Option<usize> {

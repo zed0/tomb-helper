@@ -1,28 +1,12 @@
-use crate::object_list::INSTANCE_COMPONENTS;
+use crate::components::{self, Components};
+use crate::layout;
 use crate::position::Position;
 use crate::ui_ipc_data::TriggerCategory;
 use nalgebra::Vector3;
 use process_memory::{CopyAddress, ProcessHandle};
-use std::collections::HashMap;
 use std::convert::TryInto;
 
-// Instances (game objects) are sorted by what they can do through the components in their component table. Each
-// component type has a fixed slot, but many instances' tables are shorter, so whatever's in a slot is only taken to
-// be that component if its RTTI class name says so. Found in ROTTR (Steam).
-const SLOT_TRIGGER: (usize, &str) = (12, ".?AVTriggerComponent@@");
-// The trigger's shape
-const SLOT_SHAPE: (usize, &str) = (14, ".?AVShapeComponent@cdc@@");
-// Campfires, search markers, tethers, throwables, corpses to loot, ...
-const SLOT_INTERACTABLE: (usize, &str) = (18, ".?AVInteractableComponent@@");
-// Pickups, documents, relics, caches
-const SLOT_LOOT: (usize, &str) = (64, ".?AVLootComponent@@");
-// Documents, relics, cave markers
-const SLOT_COLLECTIBLE: (usize, &str) = (111, ".?AVCollectibleComponent@@");
-// Characters and animals with AI (hares, squirrels, chickens, ...)
-const SLOT_NPC: (usize, &str) = (31, ".?AVNpcComponent@@");
-// Birds have no NpcComponent, but like the rest can be hurt and leave a corpse (Lara has no corpse)
-const SLOT_HEALTH: (usize, &str) = (30, ".?AVHealthComponent@cdc@@");
-const SLOT_CORPSE: (usize, &str) = (76, ".?AVCorpseComponent@@");
+// Instances (game objects) are sorted by what they can do through their components, see `components`
 
 // What triggers are for, by words in their name or the name of what they're part of, checked in this order. Most
 // of the game's own names are like "triggerplane_DelayDeath-imill8" or "bendy_bv_young_pine.triggersphere".
@@ -65,24 +49,7 @@ pub fn categorise(name: &str, full_name: &str) -> TriggerCategory {
         .map_or(TriggerCategory::Unknown, |(category, _)| *category)
 }
 
-// MSVC RTTI: an object's vtable's entry before the first is a CompleteObjectLocator, which has the RVA of a type
-// descriptor with the class name
-const LOCATOR_TYPE_DESCRIPTOR: usize = 0xC; // u32 RVA
-const TYPE_DESCRIPTOR_NAME: usize = 0x10;
-const MAX_CLASS_NAME: usize = 64;
-
-// The shape component points to a record of its shape, in the instance's space
-const SHAPE_COMPONENT_SHAPE: usize = 0x18;
-const SHAPE_TYPE: usize = 0x0; // u32
-const SHAPE_SIZE: usize = 0x8; // Floats, as many as the type needs
-const SHAPE_RECORD_SIZE: usize = 0x38;
-const TYPE_BOX: u32 = 1; // Half extents x, y, z (unverified whether they're half)
-const TYPE_PLANE: u32 = 3; // A rectangle in the x/y plane, half width and height (unverified)
-const TYPE_SPHERE: u32 = 4; // Radius
-const TYPE_POLY: u32 = 5; // A polygon swept along a vector for each corner ("triggerpolyvolume")
-const POLY_COUNT: usize = 0x8; // u32
-const POLY_POINTS: usize = 0x10; // -> 0x20 byte entries: corner (x, y, z, 1), then how far it's swept
-const POLY_POINT_SIZE: usize = 0x20;
+// Where things are in a trigger's shape is in `layout`
 const MAX_POLY_POINTS: usize = 64;
 // Lines per circle when drawing spheres
 const SPHERE_SEGMENTS: usize = 24;
@@ -102,83 +69,40 @@ pub enum Shape {
     Poly(Vec<(Vector3<f32>, Vector3<f32>)>),
 }
 
-// Class names by vtable address
-pub struct Classes {
-    base_address: usize,
-    names: HashMap<usize, Option<String>>,
-}
-
-impl Classes {
-    pub fn new(base_address: usize) -> Classes {
-        Classes { base_address, names: HashMap::new() }
-    }
-
-    fn name(&mut self, handle: ProcessHandle, object: usize) -> Option<String> {
-        let vtable = read_usize_at(handle, object)?;
-        let base_address = self.base_address;
-        self.names
-            .entry(vtable)
-            .or_insert_with(|| {
-                let locator = read_usize_at(handle, vtable.checked_sub(8)?)?;
-                let mut rva = [0u8; 4];
-                handle.copy_address(locator + LOCATOR_TYPE_DESCRIPTOR, &mut rva).ok()?;
-                let mut name = [0u8; MAX_CLASS_NAME];
-                let descriptor = base_address + u32::from_le_bytes(rva) as usize;
-                handle.copy_address(descriptor + TYPE_DESCRIPTOR_NAME, &mut name).ok()?;
-                let end = name.iter().position(|&c| c == 0)?;
-                Some(String::from_utf8_lossy(&name[..end]).into_owned())
-            })
-            .clone()
-    }
-
-    // The instance's component in the slot, if it's that one
-    fn component(&mut self, handle: ProcessHandle, table: usize, (slot, class): (usize, &str)) -> Option<usize> {
-        let component = read_usize_at(handle, table + slot * 8)?;
-        match self.name(handle, component) {
-            Some(name) if name == class => Some(component),
-            _ => None,
-        }
-    }
-}
-
-pub fn read_kinds(handle: ProcessHandle, classes: &mut Classes, instance_address: usize) -> Kinds {
-    let table = match read_usize_at(handle, instance_address + INSTANCE_COMPONENTS) {
-        Some(t) => t,
-        None => return Kinds::default(),
-    };
+pub fn read_kinds(handle: ProcessHandle, components: &mut Components, instance_address: usize) -> Kinds {
+    let mut has = |class: &str| components.get(handle, instance_address, class).is_some();
     Kinds {
-        interactable: [SLOT_INTERACTABLE, SLOT_LOOT, SLOT_COLLECTIBLE]
-            .iter()
-            .any(|&slot| classes.component(handle, table, slot).is_some()),
-        trigger: classes.component(handle, table, SLOT_TRIGGER).is_some(),
-        npc: classes.component(handle, table, SLOT_NPC).is_some()
-            || (classes.component(handle, table, SLOT_HEALTH).is_some()
-                && classes.component(handle, table, SLOT_CORPSE).is_some()),
+        interactable: has(components::INTERACTABLE) || has(components::LOOT) || has(components::COLLECTIBLE),
+        trigger: has(components::TRIGGER),
+        npc: has(components::NPC) || (has(components::HEALTH) && has(components::CORPSE)),
     }
 }
 
 // The trigger's shape, in its instance's space
-pub fn read_shape(handle: ProcessHandle, classes: &mut Classes, instance_address: usize) -> Option<Shape> {
-    let table = read_usize_at(handle, instance_address + INSTANCE_COMPONENTS)?;
-    let component = classes.component(handle, table, SLOT_SHAPE)?;
-    let record = read_usize_at(handle, component + SHAPE_COMPONENT_SHAPE)?;
-    let mut bytes = [0u8; SHAPE_RECORD_SIZE];
+pub fn read_shape(handle: ProcessHandle, components: &mut Components, instance_address: usize) -> Option<Shape> {
+    let layout = &layout::current().trigger_shape;
+    let component = components.get(handle, instance_address, components::SHAPE)?;
+    let record = read_usize_at(handle, component + layout.shape)?;
+    let mut bytes = vec![0u8; layout.record_size];
     handle.copy_address(record, &mut bytes).ok()?;
-    let size = |i: usize| f32_at(&bytes, SHAPE_SIZE + i * 4);
-    let shape = match u32_at(&bytes, SHAPE_TYPE) {
-        TYPE_BOX => Shape::Box(Vector3::new(size(0), size(1), size(2))),
-        TYPE_PLANE => Shape::Plane(size(0), size(1)),
-        TYPE_SPHERE => Shape::Sphere(size(0)),
-        TYPE_POLY => {
-            let count = u32_at(&bytes, POLY_COUNT) as usize;
-            if count == 0 || count > MAX_POLY_POINTS {
-                return None;
-            }
-            let mut points = vec![0u8; count * POLY_POINT_SIZE];
-            handle.copy_address(usize_at(&bytes, POLY_POINTS), &mut points).ok()?;
-            Shape::Poly(points.chunks_exact(POLY_POINT_SIZE).map(|p| (vector_at(p, 0), vector_at(p, 16))).collect())
+    let size = |i: usize| f32_at(&bytes, layout.size + i * 4);
+    let shape_type = u32_at(&bytes, layout.shape_type) as usize;
+    let shape = if shape_type == layout.box_type {
+        Shape::Box(Vector3::new(size(0), size(1), size(2)))
+    } else if shape_type == layout.plane_type {
+        Shape::Plane(size(0), size(1))
+    } else if shape_type == layout.sphere_type {
+        Shape::Sphere(size(0))
+    } else if shape_type == layout.poly_type {
+        let count = u32_at(&bytes, layout.poly_count) as usize;
+        if count == 0 || count > MAX_POLY_POINTS {
+            return None;
         }
-        _ => return None,
+        let mut points = vec![0u8; count * layout.poly_point_size];
+        handle.copy_address(usize_at(&bytes, layout.poly_points), &mut points).ok()?;
+        Shape::Poly(points.chunks_exact(layout.poly_point_size).map(|p| (vector_at(p, 0), vector_at(p, 16))).collect())
+    } else {
+        return None;
     };
     let sane = |v: f32| v.is_finite() && v.abs() < 1e6;
     let ok = match &shape {

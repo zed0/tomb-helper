@@ -1,3 +1,4 @@
+use crate::layout::Layout;
 use process_memory::Architecture;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -25,12 +26,8 @@ pub enum AddressType {
     CameraLens,
     // Static array of 0x120 byte instance (game object) records, see `object_list`
     InstanceArray,
-    // Lara's instance record (resolves to its address, not a value)
-    PlayerInstance,
     // Count and records of the ground probes the game casts for Lara, see `collision::read_probes`
     PlayerProbes,
-    // u32 id of cdc::ProxyComponent, i.e. its slot in each instance's component table
-    ProxyComponentType,
     // The cdc::CollisionSceneClient listing the level's collision meshes (resolves to its address), see
     // `collision_mesh`
     CollisionScene,
@@ -62,4 +59,6 @@ pub struct ProcessDetails {
     // RVAs of instructions that access each value, found with `tomb-helper watch`. Only used to
     // derive offsets for new versions.
     pub witnesses: HashMap<AddressType, Vec<usize>>,
+    // Where things are in the game's structures, see `layout`
+    pub layout: Layout,
 }
