@@ -29,6 +29,8 @@ pub enum AddressType {
     PlayerInstance,
     // Count and records of the ground probes the game casts for Lara, see `collision::read_probes`
     PlayerProbes,
+    // u32 id of cdc::ProxyComponent, i.e. its slot in each instance's component table
+    ProxyComponentType,
     CutscenePrompt,
     CutsceneStatus,
     CutsceneTimeline,

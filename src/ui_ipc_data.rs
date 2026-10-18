@@ -6,6 +6,7 @@ use crate::position::Position;
 pub const MAX_OBJECTS: usize = 64;
 pub const MAX_CAPSULES: usize = 32;
 pub const MAX_PROBES: usize = 8;
+pub const MAX_PROXIES: usize = 2;
 pub const OBJECT_NAME_LENGTH: usize = 64;
 
 #[repr(u32)]
@@ -73,6 +74,9 @@ pub struct UiData {
     pub capsules: [Capsule; MAX_CAPSULES],
     pub probe_count: usize,
     pub probes: [Probe; MAX_PROBES],
+    // Lara's movement collision: her proxy's shape, and the one it's changing to if that's different
+    pub proxy_count: usize,
+    pub proxies: [Capsule; MAX_PROXIES],
 }
 
 #[repr(C)]

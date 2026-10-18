@@ -18,6 +18,8 @@ const MODEL_COLOUR: [f32; 4] = [0.0, 1.0, 0.0, 1.0];
 const ESTIMATED_COLOUR: [f32; 4] = [1.0, 1.0, 0.0, 1.0];
 const LARA_COLOUR: [f32; 4] = [1.0, 0.0, 1.0, 1.0];
 const PROBE_COLOUR: [f32; 4] = [0.0, 1.0, 1.0, 1.0];
+// Lara's movement capsule, and the shape it's changing to
+const PROXY_COLOURS: [[f32; 4]; 2] = [[1.0, 0.5, 0.0, 1.0], [1.0, 0.0, 0.0, 1.0]];
 // Half size of the cross drawn where a probe hit
 const PROBE_HIT_SIZE: f32 = 4.0;
 
@@ -232,6 +234,9 @@ impl ImguiRenderLoop for TombHelperHud {
         }
         for probe in &ui_data.probes[..ui_data.probe_count.min(ui_data.probes.len())] {
             draw_probe(&draw_list, &projector, probe);
+        }
+        for (proxy, colour) in ui_data.proxies[..ui_data.proxy_count.min(ui_data.proxies.len())].iter().zip(PROXY_COLOURS) {
+            draw_capsule(&draw_list, &projector, proxy, colour);
         }
 
         let lara = Vector3::new(ui_data.position.x, ui_data.position.y, ui_data.position.z);
