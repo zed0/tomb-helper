@@ -8,13 +8,15 @@ use crate::tracked_position::TrackedPosition;
 use crate::action::Action;
 use crate::handler::Handler;
 use crate::process_details::{AddressOffsets, AddressType};
+use nalgebra::{Matrix3, Vector3};
+use std::collections::HashMap;
 use std::convert::TryInto;
 use std::{env, fmt, io, time};
 use std::error::Error;
 use hudhook::inject::Process;
 use process_memory::{Architecture, CopyAddress, DataMember, Memory, Pid, ProcessHandle};
 use crate::trigger::{self, Shape};
-use crate::ui_ipc_data::{name_bytes, projection_from_lens, BoxKind, Line, ObjectBox, ObjectCategory, SharedMemoryManager, TriggerCategory, TriggerLabel, UiSettings, MAX_ATTACHED, MAX_OBJECTS, MAX_TRIANGLES, MAX_TRIGGERS};
+use crate::ui_ipc_data::{name_bytes, projection_from_lens, BoxKind, Capsule, Line, ObjectBox, ObjectCategory, SharedMemoryManager, TriggerCategory, TriggerLabel, UiSettings, MAX_ATTACHED, MAX_OBJECTS, MAX_TRIANGLES, MAX_TRIGGERS};
 
 // How often to rescan the instance array for objects matching the filters
 const OBJECT_REFRESH_INTERVAL: time::Duration = time::Duration::from_secs(1);
@@ -43,10 +45,13 @@ pub struct OverlayHandler {
     mesh_settings: (bool, bool),
     object_list: Option<ObjectList>,
     objects: Vec<(Instance, BoxKind, ObjectCategory)>,
+    // Characters' and animals' hit capsules in bone space, by instance. Their models' bounds are often only part of
+    // them (people are several models), so they're boxed round these instead.
+    npc_capsules: HashMap<usize, Vec<CapsuleShape>>,
     triggers: Vec<(Instance, Shape, TriggerCategory)>,
     classes: trigger::Classes,
-    // Interactables, triggers and trigger categories, as of the last refresh
-    object_settings: (bool, bool, u32),
+    // Interactables, triggers, trigger categories and NPCs, as of the last refresh
+    object_settings: (bool, bool, u32, bool),
     proxy_last_touching: Option<time::Instant>,
     attached_last_touching: [Option<time::Instant>; MAX_ATTACHED],
     // Lara's instance and her capsules in bone space
@@ -81,6 +86,7 @@ impl OverlayHandler {
             UiSettings::set(&settings.cull_hidden, config.collision_mesh_cull_hidden);
             UiSettings::set(&settings.interactables, config.interactables);
             UiSettings::set(&settings.triggers, config.triggers);
+            UiSettings::set(&settings.npcs, config.npcs);
             UiSettings::set_u32(&settings.trigger_categories, TriggerCategory::mask(&config.trigger_categories));
             UiSettings::set(&settings.initialised, true);
         }
@@ -127,9 +133,10 @@ impl OverlayHandler {
             mesh_settings: (false, false),
             object_list: None,
             objects: vec![],
+            npc_capsules: HashMap::new(),
             triggers: vec![],
             classes: trigger::Classes::new(*base_addr),
-            object_settings: (false, false, 0),
+            object_settings: (false, false, 0, false),
             lara: None,
             last_object_refresh: None,
             proxy_last_touching: None,
@@ -146,7 +153,13 @@ impl OverlayHandler {
             .get_offset()
     }
 
-    fn refresh_objects(&mut self, interactables: bool, triggers: bool, categories: u32) -> Result<(), Box<dyn Error>> {
+    fn refresh_objects(
+        &mut self,
+        interactables: bool,
+        triggers: bool,
+        categories: u32,
+        npcs: bool,
+    ) -> Result<(), Box<dyn Error>> {
         if self.object_list.is_none() {
             self.object_list = Some(ObjectList::new(self.resolve(&self.instance_array_offsets)?));
         }
@@ -164,13 +177,19 @@ impl OverlayHandler {
             .collect();
         nearby.sort_by(|a, b| distance(&a.position).total_cmp(&distance(&b.position)));
 
+        // She has her own collision drawn, and counts as interactable herself (she has an InteractableComponent)
+        let lara_address = match &self.player_instance_offsets {
+            Some(offsets) => self.resolve(offsets).ok(),
+            None => None,
+        };
+
         let mut objects = vec![];
         let mut trigger_shapes = vec![];
         for instance in nearby {
             let name = instance.name.to_lowercase();
             let full_name = instance.full_name.to_lowercase();
             let named = filters.iter().any(|f| name.contains(f.as_str()) || full_name.contains(f.as_str()));
-            let kinds = if interactables || triggers {
+            let kinds = if interactables || triggers || npcs {
                 trigger::read_kinds(self.handle, &mut self.classes, instance.address)
             } else {
                 trigger::Kinds::default()
@@ -182,8 +201,13 @@ impl OverlayHandler {
                     trigger_shapes.push((instance.clone(), shape, category));
                 }
             }
+            let is_lara = Some(instance.address) == lara_address;
             if named {
                 objects.push((instance, ObjectCategory::Named));
+            } else if is_lara {
+                continue;
+            } else if npcs && kinds.npc {
+                objects.push((instance, ObjectCategory::Npc));
             } else if interactables && (kinds.interactable || trigger::is_resource(&instance.name)) {
                 objects.push((instance, ObjectCategory::Interactable));
             }
@@ -216,15 +240,54 @@ impl OverlayHandler {
         boxes.truncate(MAX_OBJECTS);
 
         // Models can change (e.g. Lara's outfit), so these are refreshed with the list
-        for (object, kind, _) in &mut boxes {
+        self.npc_capsules.clear();
+        for (object, kind, category) in &mut boxes {
             object.bounds = object_list::read_bounds(self.handle, object.address);
             if object.bounds.is_none() && *kind == BoxKind::Model {
                 *kind = BoxKind::Estimated;
+            }
+            if *category == ObjectCategory::Npc {
+                if let Ok(shapes) = collision::read_capsule_shapes(self.handle, object.address) {
+                    if !shapes.is_empty() {
+                        self.npc_capsules.insert(object.address, shapes);
+                    }
+                }
             }
         }
         self.objects = boxes;
         Ok(())
     }
+}
+
+// The box round the (world space) capsules in the space of the object-to-world `transform` (row-major, row
+// vectors), so it turns with the object. None if there aren't any capsules, or the transform can't be inverted.
+fn capsule_bounds(capsules: &[Capsule], transform: &[f32; 16]) -> Option<(Position, Position)> {
+    // Columns are the object's axes in world space
+    let axes = Matrix3::from_column_slice(&[
+        transform[0], transform[1], transform[2],
+        transform[4], transform[5], transform[6],
+        transform[8], transform[9], transform[10],
+    ]);
+    let to_object = axes.try_inverse()?;
+    let origin = Vector3::new(transform[12], transform[13], transform[14]);
+    // A world space radius along each object axis
+    let scale = Vector3::new(axes.column(0).norm(), axes.column(1).norm(), axes.column(2).norm());
+
+    let mut bounds: Option<(Vector3<f32>, Vector3<f32>)> = None;
+    for capsule in capsules {
+        let radius = Vector3::repeat(capsule.radius).component_div(&scale);
+        for end in [capsule.a, capsule.b] {
+            let point = to_object * (Vector3::new(end.x, end.y, end.z) - origin);
+            let (low, high) = (point - radius, point + radius);
+            bounds = Some(match bounds {
+                Some((min, max)) => (min.inf(&low), max.sup(&high)),
+                None => (low, high),
+            });
+        }
+    }
+    let (min, max) = bounds?;
+    let position = |v: Vector3<f32>| Position { x: v.x, y: v.y, z: v.z };
+    Some((position(min), position(max)))
 }
 
 // Copies as many items as fit, returns how many that was
@@ -255,6 +318,7 @@ impl Handler for OverlayHandler {
             UiSettings::get(&settings.interactables),
             UiSettings::get(&settings.triggers),
             UiSettings::get_u32(&settings.trigger_categories),
+            UiSettings::get(&settings.npcs),
         );
 
         let refresh_due = self.last_object_refresh.map_or(true, |t| t.elapsed() > OBJECT_REFRESH_INTERVAL);
@@ -262,8 +326,8 @@ impl Handler for OverlayHandler {
         if refresh_due || object_settings != self.object_settings {
             self.last_object_refresh = Some(time::Instant::now());
             self.object_settings = object_settings;
-            let (interactables, triggers, categories) = object_settings;
-            self.refresh_objects(interactables, triggers, categories)?;
+            let (interactables, triggers, categories, npcs) = object_settings;
+            self.refresh_objects(interactables, triggers, categories, npcs)?;
         }
         // Straight away when they're toggled
         if refresh_due || mesh_settings != self.mesh_settings {
@@ -305,6 +369,13 @@ impl Handler for OverlayHandler {
                 Position { x: -size, y: -size, z: -size },
                 Position { x: size, y: size, z: size },
             ));
+            // Round the capsules where they are now
+            let placed = self
+                .npc_capsules
+                .get(&object.address)
+                .and_then(|shapes| collision::place_capsules(self.handle, object.address, shapes).ok())
+                .and_then(|capsules| capsule_bounds(&capsules, &transform));
+            let (min, max) = placed.unwrap_or((min, max));
             objects.push(ObjectBox {
                 transform,
                 min,
@@ -405,6 +476,7 @@ impl Handler for OverlayHandler {
             Action::ToggleDetailedCollision {} => UiSettings::toggle(&self.ui_memory_manager.get().settings.detailed_meshes),
             Action::ToggleInteractables {} => UiSettings::toggle(&self.ui_memory_manager.get().settings.interactables),
             Action::ToggleTriggers {} => UiSettings::toggle(&self.ui_memory_manager.get().settings.triggers),
+            Action::ToggleNpcs {} => UiSettings::toggle(&self.ui_memory_manager.get().settings.npcs),
             _ => (),
         }
         Ok(())
@@ -467,5 +539,27 @@ impl fmt::Display for TrackedCameraMatrix {
             writeln!(f, "({}, {}, {}, {})", row[0], row[1], row[2], row[3])?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn capsule_bounds_turn_with_the_object() {
+        // Turned 90 degrees about z (x goes to y) and moved to (100, 0, 0)
+        let transform = [0., 1., 0., 0., -1., 0., 0., 0., 0., 0., 1., 0., 100., 0., 0., 1.];
+        // Lying along world y, i.e. the object's x
+        let capsule = Capsule {
+            a: Position { x: 100., y: -10., z: 0. },
+            b: Position { x: 100., y: 10., z: 0. },
+            radius: 2.,
+        };
+        let (min, max) = capsule_bounds(&[capsule], &transform).unwrap();
+        let close = |a: f32, b: f32| (a - b).abs() < 1e-4;
+        assert!(close(min.x, -12.) && close(max.x, 12.), "{:?} {:?}", min, max);
+        assert!(close(min.y, -2.) && close(max.y, 2.), "{:?} {:?}", min, max);
+        assert!(close(min.z, -2.) && close(max.z, 2.), "{:?} {:?}", min, max);
     }
 }

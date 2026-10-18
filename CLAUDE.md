@@ -68,7 +68,7 @@ User docs (hotkeys, config, cutscene timing generation) live in `README.md`.
 | `src/object_list.rs` | Reads the game's static instance array (`InstanceArray`, 0x120 byte records until a zero header): position, placement names, world matrix (built from the instance's position + Rx*Ry*Rz Euler rotation, with only the scale from `cdc::TransformComponent`, which goes stale for Lara), and model bounds (`read_bounds`: component table -> DrawableComponent -> InstanceDrawable -> CommonRenderModelInstance -> CommonRenderModel -> `Mesh` header min/max). Layout offsets are constants found in ROTTR Steam |
 | `src/collision.rs` | Lara's collision, see "Lara's collision" below: hit capsules (`read_capsule_shapes`/`place_capsules`), ground probes (`read_probes`), and her movement proxy with the camera/weapon proxies attached to it (`read_proxy`), including which of them is pushing her (contacts on their surface). Has unit tests for the capsule geometry |
 | `src/collision_mesh.rs` | The level's collision meshes (see "Level collision" below): `CollisionMeshes::refresh` walks the scene's instance list (dropping duplicates), `triangles_near` caches each mesh's vertices/triangles and returns the world space triangles near Lara, closest first, tagged floor/wall/ceiling by their normal |
-| `src/trigger.rs` | What an instance is from its component table (`read_kinds`: interactable via Interactable/Loot/Collectible components, trigger via TriggerComponent), trigger shapes (`read_shape`: box, plane, sphere, polygon volume) and their world space outlines |
+| `src/trigger.rs` | What an instance is from its component table (`read_kinds`: interactable via Interactable/Loot/Collectible components, trigger via TriggerComponent, character/animal via Npc or Health + Corpse components; RTTI checked), resources by name (`is_resource`), trigger categories by name (`categorise`), trigger shapes (`read_shape`: box, plane, sphere, polygon volume) and their world space outlines |
 | `src/ui_ipc_data.rs` | Shared-memory IPC (`shared_memory` crate, os_id `"TombHelperIPC-<size of UiDoubleBuffer>"` so a stale mapping from another layout is never opened): `UiData` (camera, `ObjectBox`es, `Capsule`s, `Probe`s, collision `Triangle`s), `UiDoubleBuffer` with a sequence counter per buffer, changed and read in place since `UiData` is ~7MB, copying only the triangles in use, plus `UiSettings` (atomic show/hide toggles, mesh radii, opacity, fade and hidden triangle culling, which the DLL's checkboxes/sliders and the exe's hotkeys change) (`update`; the reader uses `try_read` into a scratch box and keeps its last good copy, since the exe never waits), `SharedMemoryManager` (exe is owner) |
 | `src/lib.rs` | Injected overlay: `TombHelperHud` implements `ImguiRenderLoop`; opens a console only if `config.overlay.console`; shows a position window and draws (near-plane clipped, in world space via `Projector`) a box + name per `ObjectBox`, Lara's capsules, probes, a circle at her feet and the level's collision triangles (filled faintly, under everything, without anti-aliasing,
 skipping back faces and ones off screen, and optionally ones behind others via a quarter resolution software ID buffer
@@ -174,8 +174,14 @@ again (`derive` plus live checks).
 - Nothing in the TriggerComponent says what a trigger is for, so `trigger::categorise` goes by words in its name and
   its parent's (e.g. `bendy_bv_young_pine.triggersphere`). About a third are unnamed `triggerplane`/`triggervolume`s
   in the level/mission masters, which end up with anything else unrecognised as unknown.
-- NPCs: none were loaded when this was explored (no live AiControllerComponent/NpcComponent); spawned instances have no
-  placement name, and no name string was found within 3 pointers of Lara's instance.
+- Characters and animals: slot 31 NpcComponent (hares, squirrels, chickens; 32 SquadController, 33 Controller), or slot
+  30 HealthComponent plus 76 CorpseComponent (birds have no NpcComponent; Lara has health but no corpse). Only animals
+  and friendly Remnant (`rem_smg`, `remnant_parent`, `remnant_female_smg`) have been checked (vh_valley_hub). People's
+  DrawableComponent model is just a tiny part of them (3.6 x 4 x 3 at head height), so NPCs are boxed (in their own space, so the box turns with them) round their hit
+  capsules (CollideComponent, like Lara's: 11 capsules + 4 spheres for people, 2 capsules for animals) instead.
+- Spawned instances have no placement, but are named after their object type: instance +0x80 -> +0x8 -> +0x58 -> +0x8
+  (`trx_mountain_hare`, `laracroft_jacket_light`, `wp_bow_recurve`, `craftable_resource_feathers_nestdestructibles`).
+  `object_list` includes them.
 
 ### Level collision
 - Static collision is triangle meshes, separate from the render meshes. `cdc::CollisionSceneClient` lists their
