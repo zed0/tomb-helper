@@ -164,8 +164,10 @@ again (`derive` plus live checks).
   LootComponent, 84 CheckpointComponent, 111 CollectibleComponent. Type ids are static u32s round mod+0x1101D00.
 - Interactable: InteractableComponent (campfires, search markers, tethers, throwables, corpses to loot), LootComponent
   (pickups, documents, relics, survival caches), CollectibleComponent (documents, relics, cave markers). Resources to
-  gather (herb/berry plants, mushrooms, magnesite veins, feathers) have none of these (nor any markup component, only
-  Lara has MarkupDetectionComponent), so they're found by name: the last part starts with `craftable_resource`.
+  gather (herb/berry plants, mushrooms, feathers, coins, saplings) are spawned instances (`craftable_resource_*`) with
+  Interactable + Loot, next to a placed `craftable_resource_spawner_*` that has neither. Characters and animals have
+  Interactable + Loot too (looting), and so do the places NPCs/animals play animations at (`animhost_npc_*`), which
+  `trigger::for_lara` leaves out by name. Unsure: `ll_chair_vh`, `tr2_lookat_interact_parent`.
 - Triggers (~920 placed `triggervolume_*`/`triggerplane_*`/`triggersphere_*`/`triggerpolyvolume_*`/`streaming_*`):
   ShapeComponent +0x18 -> 0x38 byte shape record in instance space, u32 type: 1 box (+0x8 three sizes), 3 plane (+0x8 two
   sizes, the x/y plane), 4 sphere (+0x8 radius), 5 polygon volume (+0x8 u32 count, +0x10 -> 0x20 byte entries: corner
@@ -175,8 +177,9 @@ again (`derive` plus live checks).
   its parent's (e.g. `bendy_bv_young_pine.triggersphere`). About a third are unnamed `triggerplane`/`triggervolume`s
   in the level/mission masters, which end up with anything else unrecognised as unknown.
 - Characters and animals: slot 31 NpcComponent (hares, squirrels, chickens; 32 SquadController, 33 Controller), or slot
-  30 HealthComponent plus 76 CorpseComponent (birds have no NpcComponent; Lara has health but no corpse). Only animals
-  and friendly Remnant (`rem_smg`, `remnant_parent`, `remnant_female_smg`) have been checked (vh_valley_hub). People's
+  30 HealthComponent plus 76 CorpseComponent (birds have no NpcComponent; Lara has health but no corpse; breakables like
+  `destructible_monitor` have only health, `puppet_corpse_*` only a corpse). Checked: animals, friendly Remnant (`rem_smg`,
+  `remnant_parent`, `remnant_female_smg`), `jacob_companion` and Trinity (`enm_rifle`, `enm_blade_pistol`). People's
   DrawableComponent model is just a tiny part of them (3.6 x 4 x 3 at head height), so NPCs are boxed (in their own space, so the box turns with them) round their hit
   capsules (CollideComponent, like Lara's: 11 capsules + 4 spheres for people, 2 capsules for animals) instead.
 - Spawned instances have no placement, but are named after their object type: instance +0x80 -> +0x8 -> +0x58 -> +0x8

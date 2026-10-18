@@ -206,9 +206,12 @@ impl OverlayHandler {
                 objects.push((instance, ObjectCategory::Named));
             } else if is_lara {
                 continue;
-            } else if npcs && kinds.npc {
-                objects.push((instance, ObjectCategory::Npc));
-            } else if interactables && (kinds.interactable || trigger::is_resource(&instance.name)) {
+            } else if kinds.npc {
+                // They have interaction components too (for looting them)
+                if npcs {
+                    objects.push((instance, ObjectCategory::Npc));
+                }
+            } else if interactables && kinds.interactable && trigger::for_lara(&instance.name) {
                 objects.push((instance, ObjectCategory::Interactable));
             }
         }
