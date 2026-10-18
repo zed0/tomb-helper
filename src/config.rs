@@ -102,8 +102,8 @@ impl Default for CutsceneTiming {
 }
 
 fn default_object_filters() -> Vec<String> {
-    // The root object of each base camp, which is where its campfire is
-    vec!["campsite_base_trx-".to_string()]
+    // Interactable objects (including campfires) are shown separately
+    vec![]
 }
 
 fn default_object_radius() -> f32 {
@@ -147,6 +147,14 @@ fn default_collision_mesh_cull_hidden() -> bool {
     true
 }
 
+fn default_interactables() -> bool {
+    true
+}
+
+fn default_trigger_categories() -> Vec<String> {
+    ["checkpoints", "death", "streaming", "combat", "unknown"].iter().map(|c| c.to_string()).collect()
+}
+
 fn default_collision_opacity() -> f32 {
     0.25
 }
@@ -187,6 +195,14 @@ pub struct OverlayConfig {
     pub collision_mesh_fade: bool,
     #[serde(default = "default_collision_mesh_fade_strength")]
     pub collision_mesh_fade_strength: f32,
+    // Show boxes round things Lara can interact with, and trigger volumes (to start with)
+    #[serde(default = "default_interactables")]
+    pub interactables: bool,
+    #[serde(default)]
+    pub triggers: bool,
+    // Which kinds of trigger to show (to start with), see `TriggerCategory::name`
+    #[serde(default = "default_trigger_categories")]
+    pub trigger_categories: Vec<String>,
     // Only draw collision triangles that aren't hidden behind others (to start with)
     #[serde(default = "default_collision_mesh_cull_hidden")]
     pub collision_mesh_cull_hidden: bool,

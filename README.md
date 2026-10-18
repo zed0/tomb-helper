@@ -42,7 +42,7 @@ The default configuration is:
 	"cutscene_blacklist_file": "https://gist.githubusercontent.com/Atorizil/734a7649471f0fa0a2a9f92a167e294b/raw/Blacklist.json",
 	"cutscene_timing_file": "https://gist.githubusercontent.com/zed0/762a5790501af95189344834bc210616/raw/tomb-helper-timing-info.json",
 	"record_cutscene_timing": {"Off": {}},
-	"overlay": {"object_filters": ["campsite_base_trx-"], "object_radius": 5000.0, "object_box_size": 50.0, "lara_capsules": false, "lara_probes": true, "lara_proxy": true, "console": false}
+	"overlay": {"object_filters": [], "interactables": true, "triggers": false, "object_radius": 5000.0, "object_box_size": 50.0, "lara_capsules": false, "lara_probes": true, "lara_proxy": true, "console": false}
 }
 ```
 
@@ -59,6 +59,7 @@ Currently the available actions are:
 - `ResetSkipCutsceneTracker` (reset the total amount of time of cutscenes skipped, prints out the previous total, suggest binding this to the same key you use to reset livesplit)
 - `ToggleUI` (inject or remove the in-game overlay; experimental, DirectX 12 only)
 - `ToggleLaraCollision`, `ToggleCoarseCollision`, `ToggleDetailedCollision` (show or hide Lara's collision, the level's collision she collides with, and the rest of it, in the overlay)
+- `ToggleInteractables`, `ToggleTriggers` (show or hide the boxes round interactable objects and the trigger volumes in the overlay)
 - `Forward` (can take a distance, which defaults to `100.0`)
 - `Backward` (can take a distance, which defaults to `100.0`)
 - `Left` (can take a distance, which defaults to `100.0`)
@@ -107,8 +108,12 @@ Each version looks like:
 
 The overlay (`ToggleUI`) draws a box around game objects near Lara, labelled with the object's name.
 It currently needs the `CameraView`, `CameraLens` and `InstanceArray` (and `PlayerInstance`/`PlayerProbes`/`ProxyComponentType` for Lara's collision, `CollisionScene` for the level's) offsets, which only Rise of the Tomb Raider (Steam) has so far.
-- `object_filters`: objects whose name contains any of these (case insensitive) get a box, `[""]` shows everything. The default, `campsite_base_trx-`, matches each base camp (at its campfire)
-- `object_radius`: only objects this close to Lara are shown (the closest 64 are drawn)
+- `interactables`: draw a box (teal) round each thing Lara can interact with, labelled with its name: campfires, pickups, documents, relics, caches, search markers, tether points, throwables, plants and other things to gather crafting resources from, ... On by default
+- `triggers`: draw the trigger volumes, labelled with their names: boxes, spheres, planes and the polygon volumes the game streams the level with. Off by default
+- `trigger_categories`: which kinds of trigger to draw, going by their names: `checkpoints` (green), `death` (red), `streaming` (blue), `combat` (orange, including spawns), `unknown` (pink, any whose name doesn't say, which is mostly the level scripts' unnamed triggers), `camera` (grey, including look-at spheres), `effects` (purple, sounds and effects), `hints` (yellow, tutorials and notifications) and `objects` (brown, triggers that are part of bushes, pickups, campfires, ...). The first five by default, and each can be turned on and off in the overlay's window
+- `object_filters`: objects whose name contains any of these (case insensitive) also get a box, `[""]` shows everything. None by default
+- Interactables and triggers can also be turned on and off with checkboxes in the overlay's window, or the `ToggleInteractables`/`ToggleTriggers` hotkeys (not bound by default)
+- `object_radius`: only objects and triggers this close to Lara are shown (the closest 256 of each are drawn)
 - `object_box_size`: objects with a model get a green box showing its bounds, the rest (triggers, markers, ...) get a yellow box this size (half width)
 - `lara_capsules`: also draw Lara's hit capsules (in magenta), which follow her pose. Off by default as it's slow
 - `lara_probes`: also draw the ground probes the game casts for her feet and body (cyan lines, with a cross where they hit)

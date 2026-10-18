@@ -40,4 +40,6 @@ pub enum Action {
     ToggleLaraCollision {},
     ToggleCoarseCollision {},
     ToggleDetailedCollision {},
+    ToggleInteractables {},
+    ToggleTriggers {},
 }

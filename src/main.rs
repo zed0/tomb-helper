@@ -39,6 +39,7 @@ mod tracked_memory;
 mod watch;
 mod witness;
 mod tracked_position;
+mod trigger;
 mod cutscene_timing_info;
 mod readable_from_path;
 mod ui_ipc_data;
