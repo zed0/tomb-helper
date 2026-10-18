@@ -7,6 +7,7 @@ pub const MAX_OBJECTS: usize = 64;
 pub const MAX_CAPSULES: usize = 32;
 pub const MAX_PROBES: usize = 8;
 pub const MAX_PROXIES: usize = 2;
+pub const MAX_ATTACHED: usize = 8;
 pub const OBJECT_NAME_LENGTH: usize = 64;
 
 #[repr(u32)]
@@ -77,6 +78,9 @@ pub struct UiData {
     // Lara's movement collision: her proxy's shape, and the one it's changing to if that's different
     pub proxy_count: usize,
     pub proxies: [Capsule; MAX_PROXIES],
+    // Proxies attached to Lara's, e.g. the one that moves behind her when she aims
+    pub attached_count: usize,
+    pub attached: [Capsule; MAX_ATTACHED],
 }
 
 #[repr(C)]

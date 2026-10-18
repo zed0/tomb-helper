@@ -103,6 +103,9 @@ User docs (hotkeys, config, cutscene timing generation) live in `README.md`.
   rolling 45/15 (0,-23,90) tilted ~25deg (38..142, after a 25/50 (0,-20,92) wind up), and once 25/25 (0,-25,0)
   tilted 90deg (unidentified). The roll swapping a radius 25 capsule for a 45 one, offset 23 along her local -y, is
   the likely cause of the aim + roll wall clip. The physics capsule actually swept is at proxy+0x148 -> +0x20.
+  Bodies are listed (+0x30 next, +0x48 parent, +0x50 -> owner proxy+0x120); attached to Lara's are the camera (radius 30 /
+  length 30, offset (0,-15,90), moving to (0,30,90) when aiming) and her weapon (radius 3.5 / 90 long rod). Both only
+  collide while she aims (found by experiment); no flag for that has been found yet.
   Found by `watch XPosition --write` -> player move (+0x83B330) <- +0x840460, which collides via +0x82B770.
 - Model bounds are in each `Mesh` resource header ("Mesh" magic, +0x10 sphere centre, +0x20/+0x30 box min/max,
   +0x50 sphere radius); terrain meshes are in world space, others in object space. Instances that aren't drawn

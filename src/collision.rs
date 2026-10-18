@@ -118,6 +118,12 @@ const PROXY_SIZE: usize = 0x150;
 // The physics capsule the proxy is swept as, which the shape in use is copied to
 const PROXY_BODY: usize = 0x148; // -> body, whose +0x20 -> shape
 const BODY_SHAPE: usize = 0x20;
+// Bodies are in a list, and other proxies are attached to Lara's: the camera (radius 30, moving from 15 in
+// front of her to 30 behind when she aims) and her weapon (a thin rod). Both only collide while she aims.
+const BODY_NEXT: usize = 0x30;
+const BODY_PARENT: usize = 0x48;
+// How far along the list to look for bodies attached to Lara's
+const MAX_BODIES_SEARCHED: usize = 16;
 const SHAPE_CENTRE: usize = 0x0; // World space
 const SHAPE_ROTATION: usize = 0x20; // World space quaternion x, y, z, w; the capsule runs along its z axis
 const SHAPE_RADIUS: usize = 0x44; // Then the length of the cylinder part
@@ -134,14 +140,21 @@ struct ProxyShape {
     rotation: usize, // Lara's facing
 }
 
-// The proxy's shapes in world space: the one in use, then the one it's changing to if that's different
-pub fn read_proxy(handle: ProcessHandle, instance_address: usize, type_id_address: usize) -> io::Result<Vec<Capsule>> {
+pub struct ProxyCapsules {
+    // The one in use, then the one it's changing to if that's different
+    pub shapes: Vec<Capsule>,
+    // Of the proxies attached to Lara's
+    pub attached: Vec<Capsule>,
+}
+
+// The proxy's shapes in world space
+pub fn read_proxy(handle: ProcessHandle, instance_address: usize, type_id_address: usize) -> io::Result<ProxyCapsules> {
     let mut type_id = [0u8; 4];
     handle.copy_address(type_id_address, &mut type_id)?;
     let components = read_usize(handle, instance_address + INSTANCE_COMPONENTS)?;
     let proxy = read_usize(handle, components + u32::from_le_bytes(type_id) as usize * 8)?;
     if proxy == 0 {
-        return Ok(vec![]);
+        return Ok(ProxyCapsules { shapes: vec![], attached: vec![] });
     }
     let mut bytes = [0u8; PROXY_SIZE];
     handle.copy_address(proxy, &mut bytes)?;
@@ -176,7 +189,31 @@ pub fn read_proxy(handle: ProcessHandle, instance_address: usize, type_id_addres
             Capsule { a: to_position(&(shape_centre - half_axis)), b: to_position(&(shape_centre + half_axis)), radius },
         ));
     }
-    Ok(capsules.into_iter().map(|(_, _, capsule)| capsule).collect())
+    Ok(ProxyCapsules {
+        shapes: capsules.into_iter().map(|(_, _, capsule)| capsule).collect(),
+        attached: read_attached_capsules(handle, usize_at(&bytes, PROXY_BODY)),
+    })
+}
+
+// The capsules of bodies attached (directly or not) to `body`, which follow it in the list
+fn read_attached_capsules(handle: ProcessHandle, body: usize) -> Vec<Capsule> {
+    let mut family = vec![body];
+    let mut capsules = vec![];
+    let mut current = body;
+    for _ in 0..MAX_BODIES_SEARCHED {
+        current = match read_usize(handle, current + BODY_NEXT) {
+            Ok(next) if next != 0 && next != body => next,
+            _ => break,
+        };
+        match read_usize(handle, current + BODY_PARENT) {
+            Ok(parent) if family.contains(&parent) => family.push(current),
+            _ => continue,
+        }
+        if let Some((capsule, _)) = read_physics_capsule(handle, current) {
+            capsules.push(capsule);
+        }
+    }
+    capsules
 }
 
 // The capsule and its centre
