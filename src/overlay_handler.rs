@@ -354,7 +354,10 @@ impl Handler for OverlayHandler {
         }
 
         let probes = match (lara_collision && self.config.lara_probes, &self.player_probes_offsets) {
-            (true, Some(offsets)) => collision::read_probes(self.handle, self.resolve(offsets)?)?,
+            (true, Some(offsets)) => {
+                let probes = collision::read_probes(self.handle, self.resolve(offsets)?)?;
+                collision::probes_near(&probes, &self.position.to_position())
+            }
             _ => vec![],
         };
         // Lara can be reloaded (and moved) between refreshes, which `components.get` notices

@@ -316,9 +316,12 @@ fn quaternion_at(bytes: &[u8], offset: usize) -> UnitQuaternion<f32> {
     ))
 }
 
-// The ground probes the game casts for Lara: one per foot (knee height to below the foot) and one for
-// her body (above her head to below her feet). A static count followed by records.
-const MAX_PROBES: usize = 8;
+// The ground probes the game casts for characters: for Lara one per foot (knee height to below the foot) and one for
+// her body (above her head to below her feet). A static count followed by records, for every character near enough,
+// so Lara's are picked out by `probes_near`.
+const MAX_PROBES: usize = 64;
+// Probes starting this close to a character are theirs
+const PROBE_OWNER_DISTANCE: f32 = 300.0;
 // Hits further than this from their probe are left over from an earlier cast
 const PROBE_HIT_TOLERANCE: f32 = 10.0;
 
@@ -343,6 +346,16 @@ pub fn read_probes(handle: ProcessHandle, probes_address: usize) -> io::Result<V
             }
         })
         .collect())
+}
+
+// The probes starting near the position (a character's feet)
+pub fn probes_near(probes: &[Probe], position: &Position) -> Vec<Probe> {
+    let position = Vector3::new(position.x, position.y, position.z);
+    probes
+        .iter()
+        .filter(|p| (Vector3::new(p.start.x, p.start.y, p.start.z) - position).norm() < PROBE_OWNER_DISTANCE)
+        .copied()
+        .collect()
 }
 
 fn distance_to_segment(point: &Vector3<f32>, start: &Vector3<f32>, end: &Vector3<f32>) -> f32 {
