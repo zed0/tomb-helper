@@ -1,13 +1,16 @@
 use imgui::*;
 use hudhook::*;
 use hudhook::hooks::dx12::ImguiDx12Hooks;
-use crate::ui_ipc_data::{BoxKind, Capsule, ObjectBox, Probe, SharedMemoryManager, SurfaceKind, Triangle, UiData};
+use crate::ui_ipc_data::{projection_from_lens, BoxKind, Capsule, ObjectBox, Probe, SharedMemoryManager, SurfaceKind, Triangle, UiData};
 use crate::tracing::{error, warn};
 
 mod ui_ipc_data;
 mod position;
 
 use nalgebra::{Matrix4, Vector3, Vector4};
+use std::mem::{size_of, MaybeUninit};
+use winapi::um::memoryapi::ReadProcessMemory;
+use winapi::um::processthreadsapi::GetCurrentProcess;
 
 // Points closer to the camera plane than this (in clip space w) are clipped off
 const NEAR_CLIP_W: f32 = 1.0;
@@ -38,6 +41,23 @@ fn game_matrix(elements: &[f32; 16]) -> Matrix4<f32> {
     Matrix4::from_column_slice(elements)
 }
 
+// Reads the game's memory, which the overlay is part of, through ReadProcessMemory so a bad address fails instead of
+// crashing the game
+fn read_game<T: Copy>(address: usize) -> Option<T> {
+    if address == 0 {
+        return None;
+    }
+    let mut value = MaybeUninit::<T>::uninit();
+    let mut read = 0;
+    let ok = unsafe {
+        ReadProcessMemory(GetCurrentProcess(), address as _, value.as_mut_ptr() as _, size_of::<T>(), &mut read)
+    };
+    if ok == 0 || read != size_of::<T>() {
+        return None;
+    }
+    Some(unsafe { value.assume_init() })
+}
+
 struct Projector {
     view_projection: Matrix4<f32>,
     camera_position: Vector3<f32>,
@@ -50,6 +70,10 @@ impl Projector {
         self.view_projection * model * point.push(1.0)
     }
 
+    fn world_to_clip(&self, point: Vector3<f32>) -> Vector4<f32> {
+        self.view_projection * point.push(1.0)
+    }
+
     fn to_screen(&self, clip: Vector4<f32>) -> [f32; 2] {
         let ndc = clip.xy() / clip.w;
         // The game's view space has y pointing down the screen, so there's no flip here
@@ -60,7 +84,7 @@ impl Projector {
     }
 
     fn project(&self, point: Vector3<f32>) -> Option<[f32; 2]> {
-        let clip = self.to_clip(&Matrix4::identity(), point);
+        let clip = self.world_to_clip(point);
         if clip.w < NEAR_CLIP_W {
             return None;
         }
@@ -136,8 +160,7 @@ fn draw_box(draw_list: &DrawListMut, projector: &Projector, object: &ObjectBox) 
 }
 
 fn draw_world_line(draw_list: &DrawListMut, projector: &Projector, a: Vector3<f32>, b: Vector3<f32>, colour: [f32; 4]) {
-    let identity = Matrix4::identity();
-    if let Some((from, to)) = projector.project_line(projector.to_clip(&identity, a), projector.to_clip(&identity, b)) {
+    if let Some((from, to)) = projector.project_line(projector.world_to_clip(a), projector.world_to_clip(b)) {
         draw_list.add_line(from, to, colour).thickness(1.5).build();
     }
 }
@@ -197,8 +220,7 @@ fn draw_triangle(draw_list: &DrawListMut, projector: &Projector, triangle: &Tria
     if normal.dot(&(projector.camera_position - world[0])) <= 0.0 {
         return;
     }
-    let identity = Matrix4::identity();
-    let corners = world.map(|c| projector.to_clip(&identity, c));
+    let corners = world.map(|c| projector.world_to_clip(c));
     // All off the same side of the screen, or behind the camera
     let outside = |test: fn(&Vector4<f32>) -> bool| corners.iter().all(test);
     if outside(|c| c.x < -c.w)
@@ -296,9 +318,11 @@ impl ImguiRenderLoop for TombHelperHud {
                 ));
             });
 
-        let view = game_matrix(&ui_data.camera_view);
+        let view = game_matrix(&read_game(ui_data.camera_view_address).unwrap_or(ui_data.camera_view));
+        let projection = read_game(ui_data.camera_lens_address)
+            .map_or(ui_data.camera_projection, |lens| projection_from_lens(&lens));
         let projector = Projector {
-            view_projection: game_matrix(&ui_data.camera_projection) * view,
+            view_projection: game_matrix(&projection) * view,
             camera_position: view.try_inverse().map_or(Vector3::zeros(), |m| m.column(3).xyz()),
             screen_width,
             screen_height,
