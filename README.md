@@ -111,7 +111,7 @@ It currently needs the `CameraView`, `CameraLens` and `InstanceArray` (and `Play
 - `object_box_size`: objects with a model get a green box showing its bounds, the rest (triggers, markers, ...) get a yellow box this size (half width)
 - `lara_capsules`: also draw Lara's hit capsules (in magenta), which follow her pose. Off by default as it's slow
 - `lara_probes`: also draw the ground probes the game casts for her feet and body (cyan lines, with a cross where they hit)
-- `lara_proxy`: also draw the capsule the game moves Lara with, i.e. what she collides with walls with (orange). When it changes shape (e.g. when she starts aiming) the shape it's changing to is drawn in red. Proxies attached to Lara's are drawn in white: the camera, which moves behind her when she aims, and her weapon (a thin rod). Both only collide while she's aiming, which is why she's held further from walls then
+- `lara_proxy`: also draw the capsule the game moves Lara with, i.e. what she collides with walls with (white, or yellow while it's pushing her off something). When it changes shape (e.g. when she starts aiming) the shape it's changing to is drawn in red. While she aims, the proxies attached to Lara's also collide, and are drawn the same way: the camera, which moves behind her, and her weapon (a thin rod), which is what holds her further from walls in front of her
 
 ## Forcing a version
 

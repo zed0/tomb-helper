@@ -78,9 +78,14 @@ pub struct UiData {
     // Lara's movement collision: her proxy's shape, and the one it's changing to if that's different
     pub proxy_count: usize,
     pub proxies: [Capsule; MAX_PROXIES],
+    // Whether the shape in use is pushing her off something
+    pub proxy_touching: bool,
     // Proxies attached to Lara's, e.g. the one that moves behind her when she aims
     pub attached_count: usize,
     pub attached: [Capsule; MAX_ATTACHED],
+    pub attached_touching: [bool; MAX_ATTACHED],
+    // They only collide while Lara aims
+    pub attached_active: bool,
 }
 
 #[repr(C)]
