@@ -18,6 +18,11 @@ const SLOT_INTERACTABLE: (usize, &str) = (18, ".?AVInteractableComponent@@");
 const SLOT_LOOT: (usize, &str) = (64, ".?AVLootComponent@@");
 // Documents, relics, cave markers
 const SLOT_COLLECTIBLE: (usize, &str) = (111, ".?AVCollectibleComponent@@");
+// Characters and animals with AI (hares, squirrels, chickens, ...)
+const SLOT_NPC: (usize, &str) = (31, ".?AVNpcComponent@@");
+// Birds have no NpcComponent, but like the rest can be hurt and leave a corpse (Lara has no corpse)
+const SLOT_HEALTH: (usize, &str) = (30, ".?AVHealthComponent@cdc@@");
+const SLOT_CORPSE: (usize, &str) = (76, ".?AVCorpseComponent@@");
 
 // What triggers are for, by words in their name or the name of what they're part of, checked in this order. Most
 // of the game's own names are like "triggerplane_DelayDeath-imill8" or "bendy_bv_young_pine.triggersphere".
@@ -87,6 +92,7 @@ const SPHERE_SEGMENTS: usize = 24;
 pub struct Kinds {
     pub interactable: bool,
     pub trigger: bool,
+    pub npc: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -146,6 +152,9 @@ pub fn read_kinds(handle: ProcessHandle, classes: &mut Classes, instance_address
             .iter()
             .any(|&slot| classes.component(handle, table, slot).is_some()),
         trigger: classes.component(handle, table, SLOT_TRIGGER).is_some(),
+        npc: classes.component(handle, table, SLOT_NPC).is_some()
+            || (classes.component(handle, table, SLOT_HEALTH).is_some()
+                && classes.component(handle, table, SLOT_CORPSE).is_some()),
     }
 }
 

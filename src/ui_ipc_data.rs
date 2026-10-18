@@ -31,6 +31,8 @@ pub enum ObjectCategory {
     Named,
     // Something Lara can interact with (campfires, pickups, documents, ...)
     Interactable,
+    // Characters and animals
+    Npc,
 }
 
 #[repr(C)]
@@ -301,6 +303,7 @@ pub struct UiSettings {
     // Boxes round things Lara can interact with, and trigger volumes
     pub interactables: AtomicBool,
     pub triggers: AtomicBool,
+    pub npcs: AtomicBool,
     // Which `TriggerCategory`s to show, as bits
     pub trigger_categories: AtomicU32,
 }

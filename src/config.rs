@@ -151,6 +151,10 @@ fn default_interactables() -> bool {
     true
 }
 
+fn default_npcs() -> bool {
+    true
+}
+
 fn default_trigger_categories() -> Vec<String> {
     ["checkpoints", "death", "streaming", "combat", "unknown"].iter().map(|c| c.to_string()).collect()
 }
@@ -200,6 +204,9 @@ pub struct OverlayConfig {
     pub interactables: bool,
     #[serde(default)]
     pub triggers: bool,
+    // Show boxes round characters and animals (to start with)
+    #[serde(default = "default_npcs")]
+    pub npcs: bool,
     // Which kinds of trigger to show (to start with), see `TriggerCategory::name`
     #[serde(default = "default_trigger_categories")]
     pub trigger_categories: Vec<String>,

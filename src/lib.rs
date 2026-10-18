@@ -21,6 +21,7 @@ const MODEL_COLOUR: [f32; 4] = [0.0, 1.0, 0.0, 1.0];
 const ESTIMATED_COLOUR: [f32; 4] = [1.0, 1.0, 0.0, 1.0];
 const LARA_COLOUR: [f32; 4] = [1.0, 0.0, 1.0, 1.0];
 const INTERACTABLE_COLOUR: [f32; 4] = [0.3, 1.0, 0.8, 1.0];
+const NPC_COLOUR: [f32; 4] = [1.0, 0.3, 0.2, 1.0];
 // Triggers by category, and what they're called in the overlay's window
 fn trigger_style(category: TriggerCategory) -> ([f32; 4], &'static str) {
     match category {
@@ -233,6 +234,7 @@ impl Projector {
 fn draw_box(draw_list: &DrawListMut, projector: &Projector, object: &ObjectBox) {
     let colour = match (object.category, object.kind) {
         (ObjectCategory::Interactable, _) => INTERACTABLE_COLOUR,
+        (ObjectCategory::Npc, _) => NPC_COLOUR,
         (_, BoxKind::Model) => MODEL_COLOUR,
         (_, BoxKind::Estimated) => ESTIMATED_COLOUR,
         (_, BoxKind::Lara) => LARA_COLOUR,
@@ -446,7 +448,7 @@ impl ImguiRenderLoop for TombHelperHud {
         ui.window("Position")
             .position_pivot([1., 0.])
             .position([screen_width, 0.], Condition::Once)
-            .size([400., 460.], Condition::Once)
+            .size([400., 480.], Condition::Once)
             .build(|| {
                 ui.text_wrapped(format!("{:?}", ui_data.position));
                 ui.text(format!("{} objects", object_count));
@@ -457,6 +459,7 @@ impl ImguiRenderLoop for TombHelperHud {
                 for (label, setting) in [
                     ("Lara's collision (F10)", &settings.lara_collision),
                     ("Interactable objects", &settings.interactables),
+                    ("Characters and animals", &settings.npcs),
                     ("Trigger volumes", &settings.triggers),
                 ] {
                     let mut value = UiSettings::get(setting);
@@ -512,6 +515,7 @@ impl ImguiRenderLoop for TombHelperHud {
         // Read again so changes show straight away, rather than once the exe has caught up
         let lara_collision = UiSettings::get(&settings.lara_collision);
         let interactables = UiSettings::get(&settings.interactables);
+        let npcs = UiSettings::get(&settings.npcs);
         let triggers = UiSettings::get(&settings.triggers);
         let coarse_meshes = UiSettings::get(&settings.coarse_meshes);
         let detailed_meshes = UiSettings::get(&settings.detailed_meshes);
@@ -574,7 +578,12 @@ impl ImguiRenderLoop for TombHelperHud {
         }
         *flags = anti_aliased;
         for object in &ui_data.objects[..object_count] {
-            if object.category != ObjectCategory::Interactable || interactables {
+            let shown = match object.category {
+                ObjectCategory::Interactable => interactables,
+                ObjectCategory::Npc => npcs,
+                ObjectCategory::Named => true,
+            };
+            if shown {
                 draw_box(&draw_list, &projector, object);
             }
         }

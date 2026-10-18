@@ -12,6 +12,9 @@ const INSTANCE_HEADER: usize = 0x0; // 2 for every slot in the array, 0 after th
 const INSTANCE_POSITION: usize = 0x10;
 const INSTANCE_ROTATION: usize = 0x30; // Euler angles in radians, applied as Rx * Ry * Rz
 const INSTANCE_PLACEMENT: usize = 0x78; // -> placement record, null for spawned instances
+// The name of the instance's object type, e.g. "trx_mountain_hare" or "laracroft_jacket_light", which is all spawned
+// instances have: instance +0x80 -> +0x8 -> +0x58 -> +0x8 -> name
+const OBJECT_NAME_CHAIN: [usize; 4] = [0x80, 0x8, 0x58, 0x8];
 pub const INSTANCE_TRANSFORM: usize = 0xE0; // -> cdc::TransformComponent, null for unused slots
 const PLACEMENT_NAME: usize = 0x48; // -> e.g. "fx_fire_campfire_prelight1-neberle2"
 const PLACEMENT_FULL_NAME: usize = 0x50; // -> e.g. "campsite_base_trx.fx_fire_campfire-neberle7"
@@ -56,7 +59,7 @@ impl ObjectList {
         }
     }
 
-    // Every live instance with a placement (i.e. a name)
+    // Every live instance. Placed ones are named after their placement, spawned ones after their object type.
     pub fn instances(&mut self, handle: ProcessHandle) -> io::Result<Vec<Instance>> {
         let mut instances = vec![];
         let mut bytes = vec![0u8; INSTANCE_SIZE * SLOTS_PER_READ];
@@ -66,20 +69,31 @@ impl ObjectList {
                 if read_u32(slot, INSTANCE_HEADER) == 0 {
                     return Ok(instances);
                 }
+                if read_usize(slot, INSTANCE_TRANSFORM) == 0 {
+                    continue;
+                }
+                let address = self.array_address + (first_slot + index) * INSTANCE_SIZE;
                 let placement = read_usize(slot, INSTANCE_PLACEMENT);
-                if read_usize(slot, INSTANCE_TRANSFORM) == 0 || placement == 0 {
-                    continue;
-                }
-
-                let mut name_pointers = [0u8; 16];
-                if handle.copy_address(placement + PLACEMENT_NAME, &mut name_pointers).is_err() {
-                    continue;
-                }
+                let (name, full_name) = if placement != 0 {
+                    let mut name_pointers = [0u8; 16];
+                    if handle.copy_address(placement + PLACEMENT_NAME, &mut name_pointers).is_err() {
+                        continue;
+                    }
+                    (
+                        self.name(handle, read_usize(&name_pointers, 0)),
+                        self.name(handle, read_usize(&name_pointers, PLACEMENT_FULL_NAME - PLACEMENT_NAME)),
+                    )
+                } else {
+                    match read_chain(handle, address, &OBJECT_NAME_CHAIN) {
+                        Some(name) => (self.name(handle, name), String::new()),
+                        None => continue,
+                    }
+                };
                 instances.push(Instance {
-                    address: self.array_address + (first_slot + index) * INSTANCE_SIZE,
+                    address,
                     position: read_position_from(slot, INSTANCE_POSITION),
-                    name: self.name(handle, read_usize(&name_pointers, 0)),
-                    full_name: self.name(handle, read_usize(&name_pointers, PLACEMENT_FULL_NAME - PLACEMENT_NAME)),
+                    name,
+                    full_name,
                     bounds: None,
                 });
             }
@@ -149,6 +163,11 @@ pub fn read_bounds(handle: ProcessHandle, instance_address: usize) -> Option<(Po
         return None;
     }
     Some((read_position_from(&bytes, MESH_MIN), read_position_from(&bytes, MESH_MAX)))
+}
+
+// Follows the pointers at each offset in turn
+fn read_chain(handle: ProcessHandle, address: usize, offsets: &[usize]) -> Option<usize> {
+    offsets.iter().try_fold(address, |address, offset| read_pointer(handle, address + offset))
 }
 
 fn read_pointer(handle: ProcessHandle, address: usize) -> Option<usize> {
