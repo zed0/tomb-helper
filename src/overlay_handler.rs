@@ -12,7 +12,7 @@ use std::{env, fmt, io, time};
 use std::error::Error;
 use hudhook::inject::Process;
 use process_memory::{Architecture, CopyAddress, DataMember, Memory, Pid, ProcessHandle};
-use crate::ui_ipc_data::{BoxKind, ObjectBox, SharedMemoryManager, MAX_CAPSULES, MAX_OBJECTS, MAX_PROBES, MAX_PROXIES, OBJECT_NAME_LENGTH};
+use crate::ui_ipc_data::{BoxKind, ObjectBox, SharedMemoryManager, MAX_CAPSULES, MAX_OBJECTS, MAX_ATTACHED, MAX_PROBES, MAX_PROXIES, OBJECT_NAME_LENGTH};
 
 // How often to rescan the instance array for objects matching the filters
 const OBJECT_REFRESH_INTERVAL: time::Duration = time::Duration::from_secs(1);
@@ -199,9 +199,13 @@ impl Handler for OverlayHandler {
         };
         let proxies = match (self.config.lara_proxy, &self.player_instance_offsets, &self.proxy_type_offsets) {
             (true, Some(instance), Some(type_id)) => {
-                collision::read_proxy(self.handle, self.resolve(instance)?, self.resolve(type_id)?)?
+                Some(collision::read_proxy(self.handle, self.resolve(instance)?, self.resolve(type_id)?)?)
             }
-            _ => vec![],
+            _ => None,
+        };
+        let (proxies, attached) = match proxies {
+            Some(p) => (p.shapes, p.attached),
+            None => (vec![], vec![]),
         };
 
         let manager = self.ui_memory_manager.get_mut();
@@ -244,6 +248,10 @@ impl Handler for OverlayHandler {
             *slot = *proxy;
         }
         val.proxy_count = proxies.len().min(MAX_PROXIES);
+        for (slot, capsule) in val.attached.iter_mut().zip(attached.iter().take(MAX_ATTACHED)) {
+            *slot = *capsule;
+        }
+        val.attached_count = attached.len().min(MAX_ATTACHED);
 
         val.capsule_count = 0;
         if let Some((address, shapes)) = &self.lara {
