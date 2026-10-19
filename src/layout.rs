@@ -148,6 +148,52 @@ group! {
 }
 
 group! {
+    /// TR2013's aim sweep (see `aim_sweep`), from Lara through her inventory to the tuning of the weapon she has out. The
+    /// defaults are TR2013 (Steam)'s, and it's only used if `InventoryPool` and `TypePool` are in the offsets file.
+    AimSweepLayout {
+        /// In Lara's proxy (`PlayerProxy`), -> her instance
+        proxy_instance = 0x18,
+        /// Handles (index, id) into pools of records: the pool starts with this many 0x10 byte entries, each the index of
+        /// a record, with the id at +0x8, and the records follow
+        max_handles = 0xBB8,
+        handle_size = 0x10,
+        handle_id = 0x8,
+        records = 0xBC10,
+        /// Instances by handle: index 0 is this far into the instance array, and each says which index and id it is here
+        instance_base = 0xD0,
+        instance_index = 0xC8,
+        /// In an instance, the handle of its type (in `TypePool`), and for Lara, of her inventory (in `InventoryPool`)
+        type_handle = 0x50,
+        inventory_size = 0xC0,
+        /// Which index and id the inventory record is
+        inventory_index = 0xB8,
+        /// The key of the item she has out, 0 if none
+        current_item = 0x64,
+        /// A map of items: -> buckets of node pointers, and how many
+        map_buckets = 0x20,
+        map_bucket_count = 0x2C,
+        node_next = 0x0,
+        node_key = 0x8,
+        /// The handle of the item's instance
+        node_item = 0x20,
+        type_size = 0x250,
+        type_index = 0x248,
+        /// -> the type's data, in which the tuning block is at `block`
+        type_data = 0x10,
+        block = 0x298,
+        /// In the tuning block, in Lara's space: where it's swept from, and to (less the radius)
+        start = 0x0,
+        middle = 0xC,
+        radius = 0x60,
+        /// From Lara's instance to her player object ([[instance + instance_player] + player], RTTI `Player`), and in
+        /// that the movement it pushes her by this frame (the third of an array of movement by kind)
+        instance_player = 0xA8,
+        player = 0x14,
+        push = 0x540,
+    }
+}
+
+group! {
     /// cdc::TransformComponent
     TransformLayout {
         /// Row-major 4x4 object-to-world matrix. Not kept up to date for everything (Lara's stays where she loaded
@@ -459,6 +505,7 @@ pub struct Layout {
     pub body: BodyLayout,
     pub physics_shape: PhysicsShapeLayout,
     pub probes: ProbesLayout,
+    pub aim_sweep: AimSweepLayout,
     pub camera: CameraLayout,
     pub collision_scene: CollisionSceneLayout,
     pub collision_instance: CollisionInstanceLayout,

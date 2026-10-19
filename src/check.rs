@@ -126,6 +126,7 @@ pub fn run(pid: Pid, handle: ProcessHandle, base_address: usize, details: Proces
         (None, Some(position)) if game.resolve(AddressType::PlayerProxy).is_some() => {
             check_proxy(&game, &mut report, &mut components, None, position);
             check_combat_proxy(&game, &mut report, position);
+            check_aim_sweep(&game, &mut report, position);
             report.skip("the rest of Lara's collision and the level's", "Lara wasn't found".to_string());
         }
         _ => report.skip("Lara's collision and the level's", "Lara wasn't found".to_string()),
@@ -347,6 +348,41 @@ fn check_combat_proxy(game: &Game, report: &mut Report, position: &Position) {
             );
         }
         Err(e) => report.fail("combat proxy", format!("couldn't be read: {}", e)),
+    }
+}
+
+// TR2013's aim sweep, while Lara has a weapon out: a thin rod from her head forward
+fn check_aim_sweep(game: &Game, report: &mut Report, position: &Position) {
+    let resolved = (
+        game.resolve(AddressType::PlayerProxy),
+        game.resolve(AddressType::InstanceArray),
+        game.resolve(AddressType::InventoryPool),
+        game.resolve(AddressType::TypePool),
+    );
+    let (proxy, instances, inventories, types) = match resolved {
+        (Some(p), Some(i), Some(v), Some(t)) => (p, i, v, t),
+        _ => return,
+    };
+    let lara = match read_usize(game.handle, proxy + crate::layout::current().aim_sweep.proxy_instance) {
+        Some(lara) => lara,
+        None => return report.fail("aim sweep", "Lara's proxy doesn't point at her".to_string()),
+    };
+    match crate::aim_sweep::read(game.handle, instances, inventories, types, lara) {
+        Some((rod, pushing)) => {
+            let length = distance(&rod.a, &rod.b);
+            report.result(
+                "aim sweep",
+                length > 10.0 && length < 300.0 && distance(&rod.a, position) < NEAR_LARA,
+                format!(
+                    "radius {:.1}, {:.0} long, starting {:.0} from Lara{}",
+                    rod.radius,
+                    length,
+                    distance(&rod.a, position),
+                    if pushing { ", pushing her" } else { "" }
+                ),
+            );
+        }
+        None => report.skip("aim sweep", "no weapon out (aim to check it)".to_string()),
     }
 }
 

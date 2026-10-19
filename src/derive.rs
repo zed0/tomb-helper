@@ -90,6 +90,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
     let mut seconds = 5;
     let mut delay = 0;
     let mut write_only = false;
+    let mut execute = false;
     let mut save = false;
     let mut from = None;
     let mut dry_run = false;
@@ -101,6 +102,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
             }
             "--watch" => watch = true,
             "--write" => write_only = true,
+            "--exec" => execute = true,
             "--save" => save = true,
             "--dry-run" => dry_run = true,
             "--from" => from = Some(rest.next().ok_or("--from needs a path")?.clone()),
@@ -115,7 +117,14 @@ pub fn run(args: &[String]) -> Result<(), String> {
         }
     }
     match positional.as_slice() {
-        ["watch-raw", pid, address] => crate::watch::watch_raw(pid, address, seconds, delay, write_only),
+        ["watch-raw", pid, address] => {
+            let kind = match (execute, write_only) {
+                (true, _) => crate::watch::Breakpoint::Execute,
+                (false, true) => crate::watch::Breakpoint::Write,
+                (false, false) => crate::watch::Breakpoint::Access,
+            };
+            crate::watch::watch_raw(pid, address, seconds, delay, kind)
+        }
         ["disasm", pid, address] => crate::watch::disasm(pid, address, "40"),
         ["disasm", pid, address, count] => crate::watch::disasm(pid, address, count),
         ["watch", names @ ..] => crate::watch::watch(names, version, seconds, delay, write_only),

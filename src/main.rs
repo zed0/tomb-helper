@@ -33,6 +33,7 @@ mod discover;
 mod pe_image;
 mod position_handler;
 mod handler;
+mod aim_sweep;
 mod inject32;
 mod layout;
 mod object_list;
