@@ -1,3 +1,4 @@
+use crate::game_memory::{f32_at, pointer_at, read_pointer, read_u32, u32_at, vector_at};
 use crate::components::{self, Components};
 use crate::layout;
 use crate::position::Position;
@@ -103,15 +104,14 @@ pub fn read_kinds(handle: ProcessHandle, components: &mut Components, instance_a
 // The names of the components in an instance's component data, in lower case
 fn read_component_names(handle: ProcessHandle, pointer_address: usize) -> Vec<String> {
     let layout = &layout::current().component_data;
-    let data = match read_usize_at(handle, pointer_address) {
+    let data = match read_pointer(handle, pointer_address) {
         Some(data) => data,
         None => return vec![],
     };
-    let mut count = [0u8; 4];
-    if handle.copy_address(data + layout.count, &mut count).is_err() {
-        return vec![];
-    }
-    let count = (u32::from_le_bytes(count) as usize).min(MAX_COMPONENT_DATA);
+    let count = match read_u32(handle, data + layout.count) {
+        Some(count) => (count as usize).min(MAX_COMPONENT_DATA),
+        None => return vec![],
+    };
     let mut entries = vec![0u8; count * layout.entry_size];
     if handle.copy_address(data + layout.entries, &mut entries).is_err() {
         return vec![];
@@ -120,7 +120,7 @@ fn read_component_names(handle: ProcessHandle, pointer_address: usize) -> Vec<St
         .chunks_exact(layout.entry_size)
         .filter_map(|entry| {
             let mut name = [0u8; 48];
-            handle.copy_address(usize_at(entry, layout.name), &mut name).ok()?;
+            handle.copy_address(pointer_at(entry, layout.name), &mut name).ok()?;
             let end = name.iter().position(|&c| c == 0)?;
             Some(String::from_utf8_lossy(&name[..end]).to_lowercase())
         })
@@ -131,7 +131,7 @@ fn read_component_names(handle: ProcessHandle, pointer_address: usize) -> Vec<St
 // trigger
 fn trigger_object(handle: ProcessHandle, components: &mut Components, instance_address: usize) -> Option<(usize, bool)> {
     let offset = layout::current().instance.game_object?;
-    let object = read_usize_at(handle, instance_address + offset)?;
+    let object = read_pointer(handle, instance_address + offset)?;
     match components.classes.name(handle, object)?.as_str() {
         components::TRIGGER_VOLUME => Some((object, true)),
         components::TRIGGER_PLANE => Some((object, false)),
@@ -182,7 +182,7 @@ pub fn read_shape(handle: ProcessHandle, components: &mut Components, instance_a
 fn read_component_shape(handle: ProcessHandle, components: &mut Components, instance_address: usize) -> Option<Shape> {
     let layout = &layout::current().trigger_shape;
     let component = components.get(handle, instance_address, components::SHAPE)?;
-    let record = read_usize_at(handle, component + layout.shape)?;
+    let record = read_pointer(handle, component + layout.shape)?;
     let mut bytes = vec![0u8; layout.record_size];
     handle.copy_address(record, &mut bytes).ok()?;
     let size = |i: usize| f32_at(&bytes, layout.size + i * 4);
@@ -199,7 +199,7 @@ fn read_component_shape(handle: ProcessHandle, components: &mut Components, inst
             return None;
         }
         let mut points = vec![0u8; count * layout.poly_point_size];
-        handle.copy_address(usize_at(&bytes, layout.poly_points), &mut points).ok()?;
+        handle.copy_address(pointer_at(&bytes, layout.poly_points), &mut points).ok()?;
         Shape::Poly(points.chunks_exact(layout.poly_point_size).map(|p| (vector_at(p, 0), vector_at(p, 16))).collect())
     } else {
         return None;
@@ -426,31 +426,10 @@ fn triangulate(polygon: &[Vector3<f32>]) -> Vec<[usize; 3]> {
     triangles
 }
 
-// A pointer, at the game's pointer size, None if it's null
-fn read_usize_at(handle: ProcessHandle, address: usize) -> Option<usize> {
-    let mut bytes = vec![0u8; layout::pointer_size()];
-    handle.copy_address(address, &mut bytes).ok()?;
-    match usize_at(&bytes, 0) {
-        0 => None,
-        pointer => Some(pointer),
-    }
-}
 
-fn usize_at(bytes: &[u8], offset: usize) -> usize {
-    layout::pointer_from(&bytes[offset..])
-}
 
-fn u32_at(bytes: &[u8], offset: usize) -> u32 {
-    u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap())
-}
 
-fn f32_at(bytes: &[u8], offset: usize) -> f32 {
-    f32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap())
-}
 
-fn vector_at(bytes: &[u8], offset: usize) -> Vector3<f32> {
-    Vector3::new(f32_at(bytes, offset), f32_at(bytes, offset + 4), f32_at(bytes, offset + 8))
-}
 
 #[cfg(test)]
 mod tests {

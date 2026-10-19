@@ -41,6 +41,7 @@ mod overlay_handler;
 mod position;
 mod process_details;
 mod find_process;
+mod game_memory;
 mod offsets_file;
 mod tracked_memory;
 mod watch;

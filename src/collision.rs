@@ -1,3 +1,4 @@
+use crate::game_memory::{f32_at, pointer_at, read_pointer_or_null, u32_at, u64_at, vector_at};
 use crate::components::{self, Components};
 use crate::layout;
 use crate::position::Position;
@@ -33,8 +34,8 @@ pub fn read_capsule_shapes(
     };
     let mut header = vec![0u8; layout.shapes.max(layout.shape_count) + 8];
     handle.copy_address(collide, &mut header)?;
-    let shapes = usize_at(&header, layout.shapes);
-    let count = u32::from_le_bytes(header[layout.shape_count..layout.shape_count + 4].try_into().unwrap()) as usize;
+    let shapes = pointer_at(&header, layout.shapes);
+    let count = u32_at(&header, layout.shape_count) as usize;
     if shapes == 0 || count > 256 {
         return Ok(vec![]);
     }
@@ -43,12 +44,12 @@ pub fn read_capsule_shapes(
     handle.copy_address(shapes, &mut entries)?;
     let mut capsules = vec![];
     for entry in entries.chunks_exact(layout.entry_size) {
-        let id = u64::from_le_bytes(entry[layout.entry_id..layout.entry_id + 8].try_into().unwrap()) as usize;
+        let id = u64_at(entry, layout.entry_id) as usize;
         if ((id >> 16) as usize) & 0xFF & layout.capsule_type_mask != layout.capsule_type {
             continue;
         }
         let mut shape = vec![0u8; layout.capsule_size];
-        handle.copy_address(usize_at(entry, layout.entry_shape), &mut shape)?;
+        handle.copy_address(pointer_at(entry, layout.entry_shape), &mut shape)?;
 
         let rotation = quaternion_at(&shape, layout.capsule_rotation);
         let centre = vector_at(&shape, layout.capsule_centre);
@@ -76,10 +77,10 @@ pub fn place_capsules(
     let layout = layout::current();
     let bone_size = layout.transform.bone_size;
     let transform = match layout.instance.transform {
-        Some(offset) => read_usize(handle, instance_address + offset)?,
+        Some(offset) => read_pointer_or_null(handle, instance_address + offset)?,
         None => return Ok(vec![]),
     };
-    let bones_address = read_usize(handle, transform + layout.transform.bones)?;
+    let bones_address = read_pointer_or_null(handle, transform + layout.transform.bones)?;
     if bones_address == 0 {
         return Ok(vec![]);
     }
@@ -162,7 +163,7 @@ pub fn read_proxy(handle: ProcessHandle, proxy: usize, standalone: &[usize]) -> 
     let mut capsules: Vec<(Vector3<f32>, Vector3<f32>, Capsule)> = vec![];
 
     // The physics shape is what's actually swept, so prefer it for the shape in use
-    let body = layout.body.map_or(0, |offset| usize_at(&bytes, offset));
+    let body = layout.body.map_or(0, |offset| pointer_at(&bytes, offset));
     if let Some((capsule, physics_centre, _)) = read_physics_capsule(handle, body) {
         let size = Vector3::new(f32_at(&bytes, shapes[0].size), f32_at(&bytes, shapes[0].size + 4), 0.0);
         capsules.push((size, in_use_offset, capsule));
@@ -308,11 +309,11 @@ fn read_attached_capsules(handle: ProcessHandle, body: usize) -> Vec<(Capsule, b
     let mut capsules = vec![];
     let mut current = body;
     for _ in 0..MAX_BODIES_SEARCHED {
-        current = match read_usize(handle, current + layout.next) {
+        current = match read_pointer_or_null(handle, current + layout.next) {
             Ok(next) if next != 0 && next != body => next,
             _ => break,
         };
-        match read_usize(handle, current + layout.parent) {
+        match read_pointer_or_null(handle, current + layout.parent) {
             Ok(parent) if family.contains(&parent) => family.push(current),
             _ => continue,
         }
@@ -330,7 +331,7 @@ fn read_physics_capsule(handle: ProcessHandle, body: usize) -> Option<(Capsule, 
     }
     let all = layout::current();
     let layout = &all.physics_shape;
-    let shape = read_usize(handle, body + all.body.shape).ok()?;
+    let shape = read_pointer_or_null(handle, body + all.body.shape).ok()?;
     if shape == 0 {
         return None;
     }
@@ -371,7 +372,7 @@ pub fn read_probes(handle: ProcessHandle, probes_address: usize) -> io::Result<V
     let layout = &layout::current().probes;
     let mut bytes = vec![0u8; layout.records + MAX_PROBES * layout.size];
     handle.copy_address(probes_address, &mut bytes)?;
-    let count = (u32::from_le_bytes(bytes[..4].try_into().unwrap()) as usize).min(MAX_PROBES);
+    let count = (u32_at(&bytes, 0) as usize).min(MAX_PROBES);
     Ok(bytes[layout.records..]
         .chunks_exact(layout.size)
         .take(count)
@@ -419,24 +420,9 @@ fn to_world(matrix: &[u8], point: &Vector3<f32>) -> Position {
     Position { x: world.x, y: world.y, z: world.z }
 }
 
-// A pointer, at the game's pointer size
-fn read_usize(handle: ProcessHandle, address: usize) -> io::Result<usize> {
-    let mut bytes = vec![0u8; layout::pointer_size()];
-    handle.copy_address(address, &mut bytes)?;
-    Ok(usize_at(&bytes, 0))
-}
 
-fn usize_at(bytes: &[u8], offset: usize) -> usize {
-    layout::pointer_from(&bytes[offset..])
-}
 
-fn f32_at(bytes: &[u8], offset: usize) -> f32 {
-    f32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap())
-}
 
-fn vector_at(bytes: &[u8], offset: usize) -> Vector3<f32> {
-    Vector3::new(f32_at(bytes, offset), f32_at(bytes, offset + 4), f32_at(bytes, offset + 8))
-}
 
 #[cfg(test)]
 mod tests {

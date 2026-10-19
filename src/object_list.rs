@@ -1,3 +1,4 @@
+use crate::game_memory::{f32_at, pointer_at, read_pointer, u32_at, u64_at};
 use crate::components::{self, Components};
 use crate::layout;
 use crate::position::Position;
@@ -49,14 +50,14 @@ impl ObjectList {
         for first_slot in (0..MAX_INSTANCES).step_by(SLOTS_PER_READ) {
             handle.copy_address(self.array_address + first_slot * instance.size, &mut bytes)?;
             for (index, slot) in bytes.chunks_exact(instance.size).enumerate() {
-                if read_u32(slot, instance.header) == 0 {
+                if u32_at(slot, instance.header) == 0 {
                     return Ok(instances);
                 }
-                if read_usize(slot, instance.in_use) == 0 {
+                if pointer_at(slot, instance.in_use) == 0 {
                     continue;
                 }
                 let address = self.array_address + (first_slot + index) * instance.size;
-                let placement = instance.placement.map_or(0, |offset| read_usize(slot, offset));
+                let placement = instance.placement.map_or(0, |offset| pointer_at(slot, offset));
                 let (name, full_name) = match placement {
                     0 => (String::new(), String::new()),
                     _ => {
@@ -78,7 +79,7 @@ impl ObjectList {
                 };
                 instances.push(Instance {
                     address,
-                    id: u64::from_le_bytes(slot[instance.id..instance.id + 8].try_into().unwrap()),
+                    id: u64_at(&slot, instance.id),
                     position: read_position_from(slot, instance.position),
                     name,
                     full_name,
@@ -110,7 +111,7 @@ pub fn read_transform(handle: ProcessHandle, instance_address: usize) -> io::Res
     let mut axes = [0u8; 48];
     match layout.instance.transform {
         Some(offset) => {
-            let transform = read_usize(&instance, offset);
+            let transform = pointer_at(&instance, offset);
             if transform == 0 {
                 return Err(io::Error::new(io::ErrorKind::NotFound, "instance has no transform"));
             }
@@ -173,20 +174,12 @@ fn read_chain(handle: ProcessHandle, address: usize, offsets: &[usize]) -> Optio
     offsets.iter().try_fold(address, |address, offset| read_pointer(handle, address + offset))
 }
 
-fn read_pointer(handle: ProcessHandle, address: usize) -> Option<usize> {
-    let mut bytes = vec![0u8; layout::pointer_size()];
-    handle.copy_address(address, &mut bytes).ok()?;
-    match read_usize(&bytes, 0) {
-        0 => None,
-        pointer => Some(pointer),
-    }
-}
 
 fn read_position_from(bytes: &[u8], offset: usize) -> Position {
     Position {
-        x: read_f32(bytes, offset),
-        y: read_f32(bytes, offset + 4),
-        z: read_f32(bytes, offset + 8),
+        x: f32_at(bytes, offset),
+        y: f32_at(bytes, offset + 4),
+        z: f32_at(bytes, offset + 8),
     }
 }
 
@@ -202,15 +195,5 @@ fn read_c_string(handle: ProcessHandle, address: usize) -> String {
     String::new()
 }
 
-fn read_u32(bytes: &[u8], offset: usize) -> u32 {
-    u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap())
-}
 
-fn read_f32(bytes: &[u8], offset: usize) -> f32 {
-    f32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap())
-}
 
-// A pointer, at the game's pointer size
-fn read_usize(bytes: &[u8], offset: usize) -> usize {
-    layout::pointer_from(&bytes[offset..])
-}
