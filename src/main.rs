@@ -52,6 +52,7 @@ mod trigger_scripts;
 mod update_offsets;
 mod cutscene_timing_info;
 mod readable_from_path;
+mod rtti;
 mod ui_ipc_data;
 
 #[cfg(windows)]

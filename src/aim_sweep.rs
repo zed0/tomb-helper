@@ -10,8 +10,7 @@ use crate::object_list;
 use crate::position::Position;
 use crate::ui_ipc_data::Capsule;
 use nalgebra::Vector3;
-use process_memory::{CopyAddress, ProcessHandle};
-use std::convert::TryInto;
+use process_memory::ProcessHandle;
 
 // Map nodes followed at most
 const MAX_NODES: usize = 64;

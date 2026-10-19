@@ -5,7 +5,6 @@ use crate::position::Position;
 use crate::ui_ipc_data::TriggerCategory;
 use nalgebra::{Matrix3, Vector3};
 use process_memory::{CopyAddress, ProcessHandle};
-use std::convert::TryInto;
 
 // Instances (game objects) are sorted by what they can do through their components, see `components`
 

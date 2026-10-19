@@ -3,6 +3,7 @@
 //! which is learnt by looking through a table for a component of that class (one whose back pointer is the instance;
 //! many tables are shorter than the slots used, so a slot can hold something else).
 
+use crate::rtti::Classes;
 use crate::game_memory::{pointer_from, pointer_size, read_pointer};
 use crate::layout;
 use process_memory::{CopyAddress, ProcessHandle};
@@ -31,15 +32,6 @@ pub const CORPSE: &str = ".?AVCorpseComponent@@";
 pub const TRIGGER_VOLUME: &str = ".?AVNsTriggerVolumeBase@@";
 pub const TRIGGER_PLANE: &str = ".?AVNsTriggerPlaneBase@@";
 
-// MSVC RTTI: an object's vtable's entry before the first is a CompleteObjectLocator, which has the RVA of a type
-// descriptor with the class name
-// u32: an RVA in 64-bit code, the address in 32-bit
-const LOCATOR_TYPE_DESCRIPTOR: usize = 0xC;
-// After the descriptor's vtable pointer and a spare pointer
-const TYPE_DESCRIPTOR_NAME_64: usize = 0x10;
-const TYPE_DESCRIPTOR_NAME_32: usize = 0x8;
-const MAX_CLASS_NAME: usize = 96;
-
 // How much of a table to look through when learning slots (ROTTR uses up to 112), and how much to read at once
 // (reads past the end of a table can fail)
 const MAX_SLOTS: usize = 192;
@@ -48,48 +40,6 @@ const SLOTS_PER_READ: usize = 16;
 const SCANS_PER_REFRESH: usize = 48;
 // Tables already looked through are remembered (so each refresh looks at new ones) up to this many
 const MAX_SCANNED: usize = 100_000;
-
-/// RTTI class names of objects, cached by vtable
-pub struct Classes {
-    base_address: usize,
-    names: HashMap<usize, Option<String>>,
-}
-
-impl Classes {
-    pub fn new(base_address: usize) -> Classes {
-        Classes { base_address, names: HashMap::new() }
-    }
-
-    pub fn name(&mut self, handle: ProcessHandle, object: usize) -> Option<String> {
-        let vtable = read_pointer(handle, object)?;
-        self.vtable_name(handle, vtable)
-    }
-
-    pub fn vtable_name(&mut self, handle: ProcessHandle, vtable: usize) -> Option<String> {
-        let base_address = self.base_address;
-        self.names
-            .entry(vtable)
-            .or_insert_with(|| {
-                // Garbage pointers can be anywhere, and reading from them just fails
-                let pointer_size = pointer_size();
-                let locator = read_pointer(handle, vtable.checked_sub(pointer_size)?)?;
-                let mut field = [0u8; 4];
-                handle.copy_address(locator.wrapping_add(LOCATOR_TYPE_DESCRIPTOR), &mut field).ok()?;
-                let field = u32::from_le_bytes(field) as usize;
-                let (descriptor, name_offset) = if pointer_size == 4 {
-                    (field, TYPE_DESCRIPTOR_NAME_32)
-                } else {
-                    (base_address.wrapping_add(field), TYPE_DESCRIPTOR_NAME_64)
-                };
-                let mut name = [0u8; MAX_CLASS_NAME];
-                handle.copy_address(descriptor.wrapping_add(name_offset), &mut name).ok()?;
-                let end = name.iter().position(|&c| c == 0)?;
-                let name = String::from_utf8_lossy(&name[..end]).into_owned();
-                Some(name).filter(|n| n.starts_with(".?A"))
-            })
-            .clone()
-    }
-}
 
 pub struct Components {
     pub classes: Classes,

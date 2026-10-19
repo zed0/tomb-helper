@@ -2,7 +2,8 @@
 //! what they point to, which are the same between versions (and in SOTTR). Uses the layout for the offsets within.
 
 use crate::chains;
-use crate::components::{self, Classes};
+use crate::components;
+use crate::rtti::Classes;
 use crate::derive::{format_offsets, References};
 use crate::layout;
 use crate::offsets_file::{to_json, Hex, OffsetsFile, OffsetsSource, VersionEntry};

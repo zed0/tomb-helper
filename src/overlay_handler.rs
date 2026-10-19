@@ -13,7 +13,6 @@ use crate::inject32;
 use crate::process_details::{AddressOffsets, AddressType};
 use nalgebra::{Matrix3, Vector3};
 use std::collections::HashMap;
-use std::convert::TryInto;
 use std::{env, fmt, io, time};
 use std::error::Error;
 use hudhook::inject::Process;
