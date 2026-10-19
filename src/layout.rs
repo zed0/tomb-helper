@@ -200,33 +200,80 @@ group! {
     }
 }
 
-group! {
-    /// Lara's movement collision, her cdc::ProxyComponent. It holds the shape in use, and the one it's changing to
-    /// (e.g. when she starts aiming), which the shape in use eases towards over a few frames.
-    ProxyLayout {
-        /// Of the shape in use, in world space
-        centre = 0x30,
-        /// Radius, then the length of the cylinder part
-        in_use_size = 0x58,
-        /// Of the centre from Lara's feet, in her space
-        in_use_offset = 0x60,
-        /// Tilt of the capsule (e.g. lying down when rolling), quaternion x, y, z, w
-        in_use_local_rotation = 0x80,
-        /// Lara's facing
-        in_use_rotation = 0x90,
-        next_size = 0xC0,
-        next_offset = 0xD0,
-        next_local_rotation = 0xF0,
-        next_rotation = 0x100,
-        /// -> physics body the proxy is swept as
-        body = 0x148,
-        size = 0x150,
-        /// What it hit this frame (including through the proxies attached to it): two u32 counts (next to each other
-        /// in ROTTR, not in SOTTR), and records starting with the world space point of contact
-        contact_count = 0x164,
-        second_contact_count = 0x168,
-        contacts = 0x190,
-        contact_size = 0x60,
+/// Lara's movement collision, her cdc::ProxyComponent. It holds the shape in use, and the one it's changing to
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ProxyLayout {
+    /// Of the shape in use, in world space
+    #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
+    pub centre: usize,
+    /// Radius, then the length of the cylinder part
+    #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
+    pub in_use_size: usize,
+    /// Of the centre from Lara's feet, in her space
+    #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
+    pub in_use_offset: usize,
+    /// Tilt of the capsule (e.g. lying down when rolling), quaternion x, y, z, w
+    #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
+    pub in_use_local_rotation: usize,
+    /// Lara's facing
+    #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
+    pub in_use_rotation: usize,
+    #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
+    pub next_size: usize,
+    #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
+    pub next_offset: usize,
+    #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
+    pub next_local_rotation: usize,
+    #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
+    pub next_rotation: usize,
+    /// -> physics body the proxy is swept as, which the camera's and Lara's weapon's are attached to. None if there
+    /// isn't one (TR2013)
+    #[serde(serialize_with = "serialize_hex_option", deserialize_with = "deserialize_hex_option")]
+    pub body: Option<usize>,
+    #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
+    pub size: usize,
+    /// What it hit this frame (including through the proxies attached to it): two u32 counts (next to each other in
+    /// ROTTR, not in SOTTR; one in TR2013), and records with the world space point of contact (at their start, but
+    /// after a normal in TR2013, so there this is where the first point is)
+    #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
+    pub contact_count: usize,
+    /// None if there's just the one (TR2013)
+    #[serde(serialize_with = "serialize_hex_option", deserialize_with = "deserialize_hex_option")]
+    pub second_contact_count: Option<usize>,
+    #[serde(serialize_with = "serialize_hex_option", deserialize_with = "deserialize_hex_option")]
+    pub contacts: Option<usize>,
+    #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
+    pub contact_size: usize,
+    /// u32 flags, with `collides` set while an attached proxy (e.g. the combat proxy) collides, for a game where that isn't
+    /// known from physics bodies (TR2013)
+    #[serde(serialize_with = "serialize_hex_option", deserialize_with = "deserialize_hex_option")]
+    pub flags: Option<usize>,
+    #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
+    pub collides: usize,
+}
+
+impl Default for ProxyLayout {
+    fn default() -> Self {
+        ProxyLayout {
+            centre: 0x30,
+            in_use_size: 0x58,
+            in_use_offset: 0x60,
+            in_use_local_rotation: 0x80,
+            in_use_rotation: 0x90,
+            next_size: 0xC0,
+            next_offset: 0xD0,
+            next_local_rotation: 0xF0,
+            next_rotation: 0x100,
+            body: Some(0x148),
+            size: 0x150,
+            contact_count: 0x164,
+            second_contact_count: Some(0x168),
+            contacts: Some(0x190),
+            contact_size: 0x60,
+            flags: None,
+            collides: 0x2,
+        }
     }
 }
 

@@ -52,6 +52,9 @@ pub struct OverlayHandler {
     camera_lens_offsets: Option<Vec<usize>>,
     instance_array_offsets: Option<Vec<usize>>,
     player_probes_offsets: Option<Vec<usize>>,
+    // Lara's movement proxy, where it isn't found through her components (TR2013)
+    player_proxy_offsets: Option<Vec<usize>>,
+    combat_proxy_offsets: Option<Vec<usize>>,
     collision_scene_offsets: Option<Vec<usize>>,
     collision_meshes: CollisionMeshes,
     // What the other handlers have to show, and actions the window's buttons asked for
@@ -153,6 +156,8 @@ impl OverlayHandler {
             camera_lens_offsets: address_offsets.get(&AddressType::CameraLens).cloned(),
             instance_array_offsets: address_offsets.get(&AddressType::InstanceArray).cloned(),
             player_probes_offsets: address_offsets.get(&AddressType::PlayerProbes).cloned(),
+            player_proxy_offsets: address_offsets.get(&AddressType::PlayerProxy).cloned(),
+            combat_proxy_offsets: address_offsets.get(&AddressType::CombatProxy).cloned(),
             collision_scene_offsets: address_offsets.get(&AddressType::CollisionScene).cloned(),
             collision_meshes: CollisionMeshes::default(),
             mesh_settings: (false, false, 0),
@@ -456,11 +461,17 @@ impl Handler for OverlayHandler {
         // Lara can be reloaded (and moved) between refreshes, which `components.get` notices. Her attached proxies being
         // used is also the best sign she's aiming.
         let show_proxy = lara_collision && self.config.lara_proxy;
-        let proxies = match (show_proxy || follow_aim, self.lara_address) {
-            (true, Some(lara)) => self
+        let proxies = match (show_proxy || follow_aim, &self.player_proxy_offsets, self.lara_address) {
+            (true, Some(offsets), _) => {
+                // The combat proxy is found on its own too
+                let camera: Vec<usize> =
+                    self.combat_proxy_offsets.as_ref().and_then(|offsets| self.resolve(offsets).ok()).into_iter().collect();
+                self.resolve(offsets).ok().and_then(|proxy| collision::read_proxy(self.handle, proxy, &camera).ok())
+            }
+            (true, None, Some(lara)) => self
                 .components
                 .get(self.handle, lara, components::PROXY)
-                .and_then(|proxy| collision::read_proxy(self.handle, proxy).ok()),
+                .and_then(|proxy| collision::read_proxy(self.handle, proxy, &[]).ok()),
             _ => None,
         };
         let aiming = proxies.as_ref().map_or(false, |p| p.attached_active);

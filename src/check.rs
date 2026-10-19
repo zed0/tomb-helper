@@ -118,9 +118,15 @@ pub fn run(pid: Pid, handle: ProcessHandle, base_address: usize, details: Proces
     match (&lara, &lara_position) {
         (Some(lara), Some(position)) => {
             check_probes(&game, &mut report, position);
-            check_proxy(&game, &mut report, &mut components, *lara, position);
+            check_proxy(&game, &mut report, &mut components, Some(*lara), position);
             check_capsules(&game, &mut report, &mut components, *lara, position);
             check_collision_meshes(&game, &mut report, position);
+        }
+        // Her proxy can still be checked if it's in a static (TR2013)
+        (None, Some(position)) if game.resolve(AddressType::PlayerProxy).is_some() => {
+            check_proxy(&game, &mut report, &mut components, None, position);
+            check_combat_proxy(&game, &mut report, position);
+            report.skip("the rest of Lara's collision and the level's", "Lara wasn't found".to_string());
         }
         _ => report.skip("Lara's collision and the level's", "Lara wasn't found".to_string()),
     }
@@ -320,12 +326,41 @@ fn check_probes(game: &Game, report: &mut Report, lara: &Position) {
     }
 }
 
-fn check_proxy(game: &Game, report: &mut Report, components: &mut Components, lara: usize, position: &Position) {
-    let proxy = match components.get(game.handle, lara, components::PROXY) {
+// The combat proxy, where it's found on its own (TR2013): it should be near Lara, in front of her while she aims
+fn check_combat_proxy(game: &Game, report: &mut Report, position: &Position) {
+    let proxy = match game.resolve(AddressType::CombatProxy) {
         Some(p) => p,
-        None => return report.fail("movement capsule", "Lara has no ProxyComponent".to_string()),
+        None => return,
     };
-    match collision::read_proxy(game.handle, proxy) {
+    match collision::read_attached_proxy(game.handle, proxy) {
+        Ok((capsule, collides)) => {
+            let centre = midpoint(&capsule.a, &capsule.b);
+            report.result(
+                "combat proxy",
+                capsule.radius > 5.0 && capsule.radius < 100.0 && distance(&centre, position) < NEAR_LARA * 2.0,
+                format!(
+                    "radius {:.1}, {:.0} from Lara, {}",
+                    capsule.radius,
+                    distance(&centre, position),
+                    if collides { "colliding (aiming)" } else { "not colliding" }
+                ),
+            );
+        }
+        Err(e) => report.fail("combat proxy", format!("couldn't be read: {}", e)),
+    }
+}
+
+// Lara's movement capsule, from `PlayerProxy` if the game has it, otherwise her ProxyComponent
+fn check_proxy(game: &Game, report: &mut Report, components: &mut Components, lara: Option<usize>, position: &Position) {
+    let proxy = match (game.resolve(AddressType::PlayerProxy), lara) {
+        (Some(proxy), _) => proxy,
+        (None, Some(lara)) => match components.get(game.handle, lara, components::PROXY) {
+            Some(p) => p,
+            None => return report.fail("movement capsule", "Lara has no ProxyComponent".to_string()),
+        },
+        (None, None) => return report.skip("movement capsule", "Lara wasn't found".to_string()),
+    };
+    match collision::read_proxy(game.handle, proxy, &[]) {
         Ok(capsules) => match capsules.shapes.first() {
             Some(shape) => {
                 let centre = midpoint(&shape.a, &shape.b);

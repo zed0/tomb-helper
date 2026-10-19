@@ -43,11 +43,14 @@
         "CameraCos": ["0x20CCDC0", "0x54"],
         "CameraView": ["0x20CCDC0", "0x4A0"],
         "CameraLens": ["0x20CCDC0", "0x30"],
-        "InstanceArray": ["0x1D24910"]
+        "InstanceArray": ["0x1D24910"],
+        "PlayerProxy": ["0x1113830"],
+        "CombatProxy": ["0x11175B0"]
       },
       "layout": {
         "instance": {"size": "0xD0", "header": "0xC0", "position": "0x0", "rotation": "0x20", "in_use": "0x40", "placement": null, "id": "0x48", "object_name": ["0x40", "0x4C"], "components": null, "transform": null, "component_data": "0x64"},
-        "camera": {"view": "0x4A0", "lens": "0x30", "lens_near": "0x0", "lens_far": "0x1", "lens_fov": "0x2", "lens_aspect": "0x3", "sin": "0x50", "cos": "0x54"}
+        "camera": {"view": "0x4A0", "lens": "0x30", "lens_near": "0x0", "lens_far": "0x1", "lens_fov": "0x2", "lens_aspect": "0x3", "sin": "0x50", "cos": "0x54"},
+        "proxy": {"centre": "0x20", "in_use_size": "0x48", "in_use_offset": "0x50", "in_use_local_rotation": "0x70", "in_use_rotation": "0x80", "next_size": "0xA0", "next_offset": "0xB0", "next_local_rotation": "0xD0", "next_rotation": "0xE0", "body": null, "size": "0x100", "contact_count": "0x120", "second_contact_count": null, "contacts": "0x140", "contact_size": "0x50", "flags": "0x10", "collides": "0x2"}
       }
     },
     {
