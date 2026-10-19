@@ -22,6 +22,8 @@ const FLOOR_NORMAL_Z: f32 = 0.7;
 // Instances are only reread each tick if they were this much closer than the radius when the list was last read, which
 // leaves room for Lara and them moving in between
 const NEARBY_MARGIN: f32 = 1500.0;
+// Instances are tested against a ray if it passes this close to where they were when the list was last read
+const RAY_MARGIN: f32 = 100.0;
 
 struct Placement {
     address: usize,
@@ -178,21 +180,8 @@ impl CollisionMeshes {
                 continue;
             }
             let (min, max) = (vector_at(&bytes, layout.min), vector_at(&bytes, layout.max));
-            if box_distance(&centre, &min, &max) > radius {
+            if box_distance(&centre, &min, &max) > radius || !place(handle, placement, &mut self.meshes, &bytes) {
                 continue;
-            }
-            if !self.meshes.contains_key(&placement.mesh) {
-                match read_mesh(handle, placement.mesh) {
-                    Ok(mesh) => self.meshes.insert(placement.mesh, mesh),
-                    Err(_) => continue,
-                };
-                placement.placed = None;
-            }
-            let matrix = &bytes[layout.matrix..layout.matrix + 0x40];
-            if placement.placed.as_ref().map_or(true, |(m, _)| m.as_slice() != matrix) {
-                let mesh = &self.meshes[&placement.mesh];
-                let triangles = place_triangles(mesh, matrix, placement.flipped, placement.detailed);
-                placement.placed = Some((matrix.to_vec(), triangles));
             }
             for placed in &placement.placed.as_ref().unwrap().1 {
                 let distance = box_distance(&centre, &placed.min, &placed.max);
@@ -204,6 +193,93 @@ impl CollisionMeshes {
         found.sort_by(|a, b| a.0.total_cmp(&b.0));
         found.into_iter().take(max).map(|(_, t)| t).collect()
     }
+}
+
+impl CollisionMeshes {
+    /// How far along the ray from `origin` towards `direction` (unit length) it first hits one of the meshes, if it does
+    /// within `max`
+    pub fn raycast(&mut self, handle: ProcessHandle, origin: Vector3<f32>, direction: Vector3<f32>, max: f32) -> Option<f32> {
+        let layout = &layout::current().collision_instance;
+        let margin = Vector3::repeat(RAY_MARGIN);
+        let mut nearest: Option<f32> = None;
+        for placement in &mut self.placements {
+            let far = nearest.unwrap_or(max);
+            if !ray_hits_box(&origin, &direction, far, &(placement.min - margin), &(placement.max + margin)) {
+                continue;
+            }
+            let mut bytes = vec![0u8; layout.placement_size];
+            if handle.copy_address(placement.address, &mut bytes).is_err() || !place(handle, placement, &mut self.meshes, &bytes) {
+                continue;
+            }
+            for placed in &placement.placed.as_ref().unwrap().1 {
+                if let Some(t) = ray_triangle(&origin, &direction, &placed.triangle) {
+                    if t < nearest.unwrap_or(max) {
+                        nearest = Some(t);
+                    }
+                }
+            }
+        }
+        nearest
+    }
+}
+
+// Places the placement's mesh in the world with the matrix in `bytes` (the instance as it is now), loading it if need
+// be; false if it can't be read
+fn place(handle: ProcessHandle, placement: &mut Placement, meshes: &mut HashMap<usize, Mesh>, bytes: &[u8]) -> bool {
+    let layout = &layout::current().collision_instance;
+    if !meshes.contains_key(&placement.mesh) {
+        match read_mesh(handle, placement.mesh) {
+            Ok(mesh) => meshes.insert(placement.mesh, mesh),
+            Err(_) => return false,
+        };
+        placement.placed = None;
+    }
+    let matrix = &bytes[layout.matrix..layout.matrix + 0x40];
+    if placement.placed.as_ref().map_or(true, |(m, _)| m.as_slice() != matrix) {
+        let triangles = place_triangles(&meshes[&placement.mesh], matrix, placement.flipped, placement.detailed);
+        placement.placed = Some((matrix.to_vec(), triangles));
+    }
+    true
+}
+
+// Whether the ray reaches the box within `max`
+fn ray_hits_box(origin: &Vector3<f32>, direction: &Vector3<f32>, max: f32, min: &Vector3<f32>, top: &Vector3<f32>) -> bool {
+    let (mut near, mut far) = (0.0f32, max);
+    for axis in 0..3 {
+        if direction[axis].abs() < 1e-9 {
+            if origin[axis] < min[axis] || origin[axis] > top[axis] {
+                return false;
+            }
+            continue;
+        }
+        let (a, b) = ((min[axis] - origin[axis]) / direction[axis], (top[axis] - origin[axis]) / direction[axis]);
+        near = near.max(a.min(b));
+        far = far.min(a.max(b));
+        if near > far {
+            return false;
+        }
+    }
+    true
+}
+
+// How far along the ray it hits the triangle (from either side), by Moller-Trumbore
+fn ray_triangle(origin: &Vector3<f32>, direction: &Vector3<f32>, triangle: &Triangle) -> Option<f32> {
+    let [a, b, c] = triangle.corners.map(|p| Vector3::new(p.x, p.y, p.z));
+    let (ab, ac) = (b - a, c - a);
+    let p = direction.cross(&ac);
+    let determinant = ab.dot(&p);
+    if determinant.abs() < 1e-9 {
+        return None;
+    }
+    let to_origin = origin - a;
+    let u = to_origin.dot(&p) / determinant;
+    let q = to_origin.cross(&ab);
+    let v = direction.dot(&q) / determinant;
+    let t = ac.dot(&q) / determinant;
+    if u < 0.0 || v < 0.0 || u + v > 1.0 || t < 0.0 {
+        return None;
+    }
+    Some(t)
 }
 
 pub fn read_mesh(handle: ProcessHandle, address: usize) -> io::Result<Mesh> {
@@ -325,6 +401,22 @@ fn half_at(bytes: &[u8], offset: usize) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rays_hit_triangles_and_boxes() {
+        let p = |x, y, z| Position { x, y, z };
+        let triangle = Triangle { corners: [p(0.0, 0.0, 0.0), p(10.0, 0.0, 0.0), p(0.0, 10.0, 0.0)], kind: SurfaceKind::Floor, detailed: false };
+        let down = Vector3::new(0.0, 0.0, -1.0);
+        assert_eq!(ray_triangle(&Vector3::new(1.0, 1.0, 5.0), &down, &triangle), Some(5.0));
+        // From below too, but not past its edge or behind the ray
+        assert_eq!(ray_triangle(&Vector3::new(1.0, 1.0, -5.0), &-down, &triangle), Some(5.0));
+        assert_eq!(ray_triangle(&Vector3::new(8.0, 8.0, 5.0), &down, &triangle), None);
+        assert_eq!(ray_triangle(&Vector3::new(1.0, 1.0, 5.0), &-down, &triangle), None);
+        let (min, max) = (Vector3::new(0.0, 0.0, 0.0), Vector3::new(1.0, 1.0, 1.0));
+        assert!(ray_hits_box(&Vector3::new(0.5, 0.5, 5.0), &down, 10.0, &min, &max));
+        assert!(!ray_hits_box(&Vector3::new(0.5, 0.5, 5.0), &down, 3.0, &min, &max));
+        assert!(!ray_hits_box(&Vector3::new(2.0, 0.5, 5.0), &down, 10.0, &min, &max));
+    }
 
     fn matrix_bytes(rows: [[f32; 4]; 4]) -> Vec<u8> {
         rows.iter().flatten().flat_map(|f| f.to_le_bytes()).collect()

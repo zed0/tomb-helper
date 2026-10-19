@@ -249,6 +249,9 @@ pub struct OverlayConfig {
     // Only draw collision triangles that aren't hidden behind others (to start with)
     #[serde(default = "default_collision_mesh_cull_hidden")]
     pub collision_mesh_cull_hidden: bool,
+    // While Lara aims, draw the collision meshes round where she's aiming rather than round her (to start with)
+    #[serde(default)]
+    pub collision_mesh_follow_aim: bool,
     // Scales how opaque the collision meshes and Lara's collision are drawn, 0 to 1 (to start with)
     #[serde(default = "default_collision_opacity")]
     pub collision_opacity: f32,
