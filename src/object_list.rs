@@ -78,7 +78,7 @@ impl ObjectList {
                 };
                 instances.push(Instance {
                     address,
-                    id: read_usize(slot, instance.id) as u64,
+                    id: u64::from_le_bytes(slot[instance.id..instance.id + 8].try_into().unwrap()),
                     position: read_position_from(slot, instance.position),
                     name,
                     full_name,

@@ -97,6 +97,10 @@ pub struct InstanceLayout {
     /// thing an instance is goes by these names in a game with no component table (TR2013).
     #[serde(serialize_with = "serialize_hex_option", deserialize_with = "deserialize_hex_option")]
     pub component_data: Option<usize>,
+    /// -> the game object, whose RTTI class says whether it's a trigger and holds its shape (see `trigger_object`).
+    /// None where triggers are components (ROTTR, SOTTR); TR2013 has it.
+    #[serde(default, serialize_with = "serialize_hex_option", deserialize_with = "deserialize_hex_option")]
+    pub game_object: Option<usize>,
 }
 
 impl Default for InstanceLayout {
@@ -113,6 +117,7 @@ impl Default for InstanceLayout {
             components: Some(0xD8),
             transform: Some(0xE0),
             component_data: None,
+            game_object: None,
         }
     }
 }
@@ -507,6 +512,22 @@ group! {
 }
 
 group! {
+    /// A trigger's shape in its game object (`instance.game_object`), only used if that's set; in its instance's space.
+    /// TR2013's are the defaults.
+    TriggerObjectLayout {
+        /// `NsTriggerVolumeBase`: u32 type, then a bounding radius and the sizes
+        volume_type = 0x80,
+        volume_size = 0x88,
+        /// Half extents x, y, z
+        volume_box = 1,
+        /// Radius (the first of the sizes; all three are the same)
+        volume_sphere = 2,
+        /// `NsTriggerPlaneBase`: half width (x) and half height, then a bounding radius
+        plane_size = 0x40,
+    }
+}
+
+group! {
     /// ActionGraph scripts: a graph (one per instance with a script) lists its nodes and the links between them. Found
     /// in SOTTR, the same in ROTTR
     ScriptLayout {
@@ -527,6 +548,8 @@ group! {
         object_instance = 0x50,
         /// In an AGMessageSendNode, the id of the instance it sends a message to
         message_instance = 0x28,
+        /// How much of a trigger node to look through for ids
+        node_size = 0x180,
     }
 }
 
@@ -550,6 +573,7 @@ pub struct Layout {
     pub collision_instance: CollisionInstanceLayout,
     pub collision_mesh: CollisionMeshLayout,
     pub trigger_shape: TriggerShapeLayout,
+    pub trigger_object: TriggerObjectLayout,
     pub script: ScriptLayout,
 }
 

@@ -557,9 +557,12 @@ fn check_trigger_scripts(
                 *counts.entry(key).or_insert(0) += 1;
             }
             let with_script = found.values().filter(|s| s.set_off_by != SetOffBy::Nothing).count();
+            // Most of SOTTR's are used by a script, but only about a third of TR2013's (its effect volumes and many
+            // plain ones aren't used by any)
+            let needed = if crate::layout::pointer_size() == 4 { 4 } else { 2 };
             report.result(
                 "trigger scripts",
-                with_script * 2 >= found.len(),
+                with_script * needed >= found.len(),
                 format!("{}/{} triggers near Lara have a script: {:?}", with_script, found.len(), counts),
             );
             // The graph layout is right if the links lead somewhere
