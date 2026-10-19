@@ -32,7 +32,8 @@ pub enum AddressType {
     // TR2013 keeps it in a static
     PlayerProxy,
     // The combat proxy, attached to Lara's, which collides while she aims (holding her off walls in front of her), where
-    // it isn't found through her proxy's physics body (TR2013's belongs to the "combatproxy" instance)
+    // it isn't found through her proxy's physics body (TR2013's belongs to the "combatproxy" instance, and is in a pool
+    // of proxies, so it's found through Lara's, which points at it)
     CombatProxy,
     // The cdc::CollisionSceneClient listing the level's collision meshes (resolves to its address), see
     // `collision_mesh`

@@ -232,6 +232,11 @@ pub fn read_attached_proxy(handle: ProcessHandle, proxy: usize) -> io::Result<(C
         .first()
         .copied()
         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "the proxy has no shapes"))?;
+    // An empty slot reads as a capsule with no radius and no rotation, which comes out as NaN
+    let ends = [capsule.a.x, capsule.a.y, capsule.a.z, capsule.b.x, capsule.b.y, capsule.b.z];
+    if !(capsule.radius > 0.0) || !ends.iter().all(|v| v.is_finite()) {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "the proxy isn't in use"));
+    }
     let collides = match layout.flags {
         Some(offset) => {
             let mut flags = [0u8; 4];
