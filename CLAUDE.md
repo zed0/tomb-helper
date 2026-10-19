@@ -45,7 +45,7 @@ User docs (hotkeys, config, cutscene timing generation) live in `README.md`.
 | `src/main.rs` | Entry, process polling loop, handler construction, hotkey wiring, action/tick loop |
 | `src/config.rs` | `Config` (serde), loaded from `tomb-helper.json` next to the exe; default hotkeys, default gist URLs, `CutsceneTiming::On/Off` |
 | `src/action.rs` | `Action` enum — every hotkey-bindable action. Movement actions carry `distance` (default 100.0) |
-| `src/handler.rs` | `Handler` trait: `handle_tick`, `handle_action` |
+| `src/handler.rs` | `Handler` trait: `handle_tick`, `handle_action`, and for the overlay's window `take_actions` (button presses, given to every handler like hotkeys), `report`/`show` (`HelperState`: the position handler's saved position and flight mode, shown by the overlay) |
 | `offsets.json` | **Per-game-version memory offsets** (built into the exe with `include_str!`). Hex strings, `bits`, optional `image_size` (to tell Steam/Epic apart), optional `witnesses` (from `watch`, only used by `derive`), ignored `unverified` |
 | `src/offsets_file.rs` | JSON schema (`OffsetsFile`/`VersionEntry`/`Hex`, `deny_unknown_fields` to catch typos), `OffsetsSource` (`tomb-helper-offsets.json` next to the exe overrides the built in file; `changed()` for hot reload), `known_process_details()` for the CLI tools, `to_json` (one line per offset list) |
 | `src/process_details.rs` | Types only: `AddressType` enum (serde names are the JSON keys), `ProcessDetails`, `VersionIdentifier` |

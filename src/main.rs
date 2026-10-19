@@ -1,6 +1,6 @@
 use crate::action::Action;
 use crate::config::{Hotkey, CutsceneTiming, Config};
-use crate::handler::Handler;
+use crate::handler::{Handler, HelperState};
 use crate::cutscene_handler::CutsceneHandler;
 use crate::cutscene_timing_generator_handler::CutsceneTimingGeneratorHandler;
 use crate::overlay_handler::OverlayHandler;
@@ -259,17 +259,8 @@ fn connect(
             }
         }
 
-        let signal = rx.try_recv();
-
-        match signal {
-            Ok(s) => {
-                for handler in &mut handlers {
-                    handler
-                        .handle_action(s)
-                        .unwrap_or_else(|msg| eprintln!("Error: {}", msg));
-                }
-            }
-            _ => {}
+        if let Ok(action) = rx.try_recv() {
+            dispatch(&mut handlers, action);
         }
 
         for handler in &mut handlers {
@@ -277,6 +268,28 @@ fn connect(
                 .handle_tick()
                 .unwrap_or_else(|msg| eprintln!("Error: {}", msg));
         }
+
+        // The overlay shows the other handlers' state, and its buttons ask for actions
+        let mut state = HelperState::default();
+        for handler in &handlers {
+            handler.report(&mut state);
+        }
+        let mut requested = vec![];
+        for handler in &mut handlers {
+            handler.show(&state);
+            requested.extend(handler.take_actions());
+        }
+        for action in requested {
+            dispatch(&mut handlers, action);
+        }
+    }
+}
+
+fn dispatch(handlers: &mut Vec<Box<dyn Handler>>, action: Action) {
+    for handler in handlers {
+        handler
+            .handle_action(action)
+            .unwrap_or_else(|msg| eprintln!("Error: {}", msg));
     }
 }
 

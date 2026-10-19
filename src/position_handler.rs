@@ -1,5 +1,5 @@
 use crate::action::Action;
-use crate::handler::Handler;
+use crate::handler::{Handler, HelperState};
 use crate::process_details::{AddressOffsets, AddressType};
 use crate::tracked_memory::TrackedMemory;
 use crate::tracked_position::TrackedPosition;
@@ -11,6 +11,10 @@ pub struct PositionHandler {
     active: bool,
     position: TrackedPosition,
     saved_position: TrackedPosition,
+    // Something's been stored in `saved_position`
+    saved: bool,
+    // Lara's (rather than the look at position), which the overlay shows
+    is_lara: bool,
     camera_rotation: Option<(TrackedMemory<f32>, TrackedMemory<f32>)>,
     handle: ProcessHandle,
     name: String,
@@ -53,6 +57,8 @@ impl PositionHandler {
             },
             handle: *handle,
             name: "position".to_string(),
+            saved: false,
+            is_lara: true,
         })
     }
 
@@ -83,11 +89,21 @@ impl PositionHandler {
             camera_rotation: None,
             handle: *handle,
             name: "look at position".to_string(),
+            saved: false,
+            is_lara: false,
         })
     }
 }
 
 impl Handler for PositionHandler {
+    fn report(&self, state: &mut HelperState) {
+        if self.is_lara {
+            state.position_tools = true;
+            state.saved_position = if self.saved { Some(self.saved_position.to_position()) } else { None };
+            state.flying = self.active;
+        }
+    }
+
     fn handle_tick(&mut self) -> Result<(), Box<dyn Error>> {
         if self.active {
             self.position.apply_to_game(self.handle)?;
@@ -118,6 +134,7 @@ impl Handler for PositionHandler {
             Action::StorePosition {} => {
                 self.saved_position = self.position.clone();
                 self.saved_position.fetch_from_game(self.handle)?;
+                self.saved = true;
                 println!("Stored {}! {:}", self.name, self.saved_position);
             }
             Action::RestorePosition {} => {

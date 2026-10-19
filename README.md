@@ -31,6 +31,7 @@ The default configuration is:
 		{"key": "F8", "action": {"ResetSkipCutsceneTracker": {}}},
 		{"key": "F9", "action": {"ToggleUI": {}}},
 		{"key": "F10", "action": {"ToggleCollision": {}}},
+		{"key": "F11", "action": {"ToggleSettingsWindow": {}}},
 		{"key": "Space", "action": {"SkipCutscene": {}}},
 		{"key": "W", "action": {"Forward": {"distance": 100.0}}},
 		{"key": "S", "action": {"Backward": {"distance": 100.0}}},
@@ -60,6 +61,7 @@ Currently the available actions are:
 - `ResetSkipCutsceneTracker` (reset the total amount of time of cutscenes skipped, prints out the previous total, suggest binding this to the same key you use to reset livesplit)
 - `ToggleUI` (inject or remove the in-game overlay; experimental, DirectX 12 only)
 - `ToggleLaraCollision`, `ToggleCoarseCollision`, `ToggleDetailedCollision` (show or hide Lara's collision, the level's collision she collides with, and the rest of it, in the overlay), and `ToggleCollision` for all of them at once
+- `ToggleSettingsWindow` (show or hide the overlay's window, leaving what it draws in the world; F11 by default, and `settings_window` in the overlay config says whether it starts shown)
 - `ToggleInteractables`, `ToggleNpcs`, `ToggleTriggers` (show or hide the boxes round interactable objects and characters, and the trigger volumes, in the overlay)
 - `Forward` (can take a distance, which defaults to `100.0`)
 - `Backward` (can take a distance, which defaults to `100.0`)
@@ -108,7 +110,7 @@ Each version looks like:
 
 ## Overlay
 
-The overlay (`ToggleUI`) draws a box around game objects near Lara, labelled with the object's name.
+The overlay (`ToggleUI`) draws a box around game objects near Lara, labelled with the object's name. Its window (top right; `ToggleSettingsWindow`, F11 by default, hides and shows it) has Lara's X/Y/Z position, the position tools (flight mode, and saving and restoring her position, as with the `ToggleActive`/`StorePosition`/`RestorePosition` hotkeys, with the saved position) and the overlay's settings, each in a section that can be collapsed.
 It currently needs the `CameraView`, `CameraLens` and `InstanceArray` (and `PlayerProbes` for Lara's ground probes, `CollisionScene` for the level's collision) offsets, which only Rise of the Tomb Raider (Steam) has so far; see [Porting the overlay](#porting-the-overlay).
 - `interactables`: draw a box (teal) round each thing Lara can interact with, labelled with its name: campfires, pickups, documents, relics, caches, crates, tether points, throwables, plants and other things to gather crafting resources from, ... On by default
 - `npcs`: draw a box (red) round each character and animal (enemies, friendly characters, hares, squirrels, birds, ...), labelled with what it is (e.g. `rem_smg` or `trx_mountain_hare`). The box is round the capsules the game uses for hitting them, so it follows their pose. On by default
