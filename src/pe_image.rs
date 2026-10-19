@@ -87,6 +87,15 @@ fn parse_headers(data: &[u8]) -> io::Result<Headers> {
 }
 
 impl PeImage {
+    /// 64 or 32, for decoding its code
+    pub fn bitness(&self) -> u32 {
+        if self.is_64 {
+            64
+        } else {
+            32
+        }
+    }
+
     /// Loads either an exe from disk (mapping its sections to their RVAs) or a dump written by `dump`.
     pub fn load(path: &Path) -> io::Result<PeImage> {
         let file = fs::read(path)?;

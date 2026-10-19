@@ -863,7 +863,7 @@ pub fn print_entry(
         executable: details.executable_name.clone(),
         version: version.to_string(),
         image_size: Some(image.size_of_image()),
-        bits: if image.is_64 { 64 } else { 32 },
+        bits: image.bitness(),
         offsets: lines
             .iter()
             .filter_map(|(t, chain, sure, _)| chain.as_ref().filter(|_| *sure).map(|c| (*t, hex(c))))

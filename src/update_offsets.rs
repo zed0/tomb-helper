@@ -169,7 +169,7 @@ pub fn update_offsets(from: Option<String>, from_version: Option<String>, dry_ru
         executable: template.executable_name.clone(),
         version: version_name,
         image_size: Some(image_size),
-        bits: if image.is_64 { 64 } else { 32 },
+        bits: image.bitness(),
         offsets: offsets.iter().map(|(t, c)| (*t, hex(c))).collect(),
         witnesses: existing.as_ref().map_or_else(BTreeMap::new, |d| d.witnesses.iter().map(|(t, w)| (*t, hex(w))).collect()),
         unverified: unverified.iter().map(|(t, c)| (*t, hex(c))).collect(),

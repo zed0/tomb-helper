@@ -2,7 +2,7 @@
 //! the overlay does and checking the results make sense (RTTI classes, magic numbers, sizes, things being where Lara
 //! is). Run it with Lara standing somewhere ordinary in a level.
 
-use crate::game_memory::{pointer_size, read_floats, read_pointer};
+use crate::game_memory::{read_floats, read_pointer};
 use crate::chains;
 use crate::collision;
 use crate::collision_mesh::CollisionMeshes;
@@ -106,22 +106,20 @@ pub fn run(pid: Pid, handle: ProcessHandle, base_address: usize, details: Proces
 
     check_bounds(&game, &mut report, &mut components, &nearby);
     check_camera(&game, &mut report);
-    match (&lara, &lara_position) {
-        (Some(lara), Some(position)) => {
+    // Each needs something of Lara's (her instance, or offsets the game might not have), and says if it's missing
+    match &lara_position {
+        Some(position) => {
             check_probes(&game, &mut report, position);
-            check_proxy(&game, &mut report, &mut components, Some(*lara), position);
-            check_capsules(&game, &mut report, &mut components, *lara, position);
-            check_collision_meshes(&game, &mut report, position);
-        }
-        // Her proxy can still be checked if it's in a static (TR2013)
-        (None, Some(position)) if game.resolve(AddressType::PlayerProxy).is_some() => {
-            check_proxy(&game, &mut report, &mut components, None, position);
+            check_proxy(&game, &mut report, &mut components, lara, position);
             check_combat_proxy(&game, &mut report, position);
             check_aim_sweep(&game, &mut report, position);
+            match lara {
+                Some(lara) => check_capsules(&game, &mut report, &mut components, lara, position),
+                None => report.skip("hit capsules", "Lara wasn't found".to_string()),
+            }
             check_collision_meshes(&game, &mut report, position);
-            report.skip("the rest of Lara's collision", "Lara wasn't found".to_string());
         }
-        _ => report.skip("Lara's collision and the level's", "Lara wasn't found".to_string()),
+        None => report.skip("Lara's collision and the level's", "her position couldn't be read".to_string()),
     }
     check_kinds(&game, &mut report, &mut components, &nearby);
     if let Some(instances) = &instances {
@@ -189,11 +187,15 @@ fn check_instances(game: &Game, report: &mut Report) -> Option<Vec<Instance>> {
                 == Some(components::TRANSFORM)
         })
         .count();
-    report.result(
-        "instance array",
-        transforms == sample.len(),
-        format!("{} used slots, {}/{} sampled transforms are TransformComponents", instances.len(), transforms, sample.len()),
-    );
+    match layout.instance.transform {
+        Some(_) => report.result(
+            "instance array",
+            transforms == sample.len(),
+            format!("{} used slots, {}/{} sampled transforms are TransformComponents", instances.len(), transforms, sample.len()),
+        ),
+        // Instances that don't point at a transform (TR2013) are only checked by what follows
+        None => report.pass("instance array", format!("{} used slots", instances.len())),
+    }
 
     let printable = |s: &String| !s.is_empty() && s.chars().all(|c| c.is_ascii_graphic());
     let placed: Vec<&Instance> = instances.iter().filter(|i| !i.full_name.is_empty()).collect();
@@ -213,11 +215,14 @@ fn check_instances(game: &Game, report: &mut Report) -> Option<Vec<Instance>> {
         ),
     );
 
-    let ids: std::collections::HashSet<u64> = instances.iter().map(|i| i.id).collect();
+    // A few spawned things can have none (TR2013's arrows), but scripts find the rest by them
+    let with_id: Vec<u64> = instances.iter().map(|i| i.id).filter(|&id| id != 0).collect();
+    let ids: std::collections::HashSet<u64> = with_id.iter().copied().collect();
+    let without = instances.len() - with_id.len();
     report.result(
         "instance ids",
-        !ids.contains(&0) && ids.len() == instances.len(),
-        format!("{} distinct ids for {} instances", ids.len(), instances.len()),
+        ids.len() == with_id.len() && without * 20 <= instances.len(),
+        format!("{} distinct ids for {} instances, {} without one", ids.len(), with_id.len(), without),
     );
 
     let rotations = sample
@@ -240,6 +245,10 @@ fn check_lara(
     nearby: &[Instance],
     position: &Position,
 ) -> Option<usize> {
+    if crate::layout::current().instance.components.is_none() {
+        report.skip("Lara", "instances have no component table to find her PlayerComponent in".to_string());
+        return None;
+    }
     let lara = nearby.iter().take(16).find(|i| components.get(game.handle, i.address, components::PLAYER).is_some());
     match lara {
         Some(lara) => {
@@ -259,6 +268,10 @@ fn check_lara(
 }
 
 fn check_bounds(game: &Game, report: &mut Report, components: &mut Components, nearby: &[Instance]) {
+    // They're found through the instance's DrawableComponent
+    if crate::layout::current().instance.components.is_none() {
+        return report.skip("model bounds", "instances have no component table".to_string());
+    }
     let bounds: Vec<(Position, Position)> = nearby
         .iter()
         .take(SAMPLE * 2)
@@ -529,7 +542,7 @@ fn check_trigger_scripts(
     }
     let names = instances.iter().map(|i| (i.id, i.name.clone())).collect();
     match crate::trigger_scripts::scripts_now(pid, game.handle, game.base_address, &triggers, &names) {
-        Ok(found) => {
+        Ok((found, by_reference)) => {
             let mut counts: std::collections::BTreeMap<String, usize> = Default::default();
             let mut does: std::collections::BTreeMap<String, usize> = Default::default();
             for script in found.values() {
@@ -548,9 +561,9 @@ fn check_trigger_scripts(
                 *counts.entry(key).or_insert(0) += 1;
             }
             let with_script = found.values().filter(|s| s.set_off_by != SetOffBy::Nothing).count();
-            // Most of SOTTR's are used by a script, but only about a third of TR2013's (its effect volumes and many
-            // plain ones aren't used by any)
-            let needed = if pointer_size() == 4 { 4 } else { 2 };
+            // Most of SOTTR's are used by a script, but only about a third of TR2013's, which has no trigger nodes (its
+            // effect volumes and many plain ones aren't used by any)
+            let needed = if by_reference { 4 } else { 2 };
             report.result(
                 "trigger scripts",
                 with_script * needed >= found.len(),

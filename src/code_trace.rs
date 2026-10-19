@@ -103,7 +103,7 @@ impl<'a> Tracer<'a> {
     pub fn new(image: &'a PeImage) -> Tracer<'a> {
         Tracer {
             image,
-            bitness: if image.is_64 { 64 } else { 32 },
+            bitness: image.bitness(),
             pointer_size: if image.is_64 { 8 } else { 4 },
             resolver: None,
             callers: OnceLock::new(),

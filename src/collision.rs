@@ -1,4 +1,4 @@
-use crate::game_memory::{f32_at, pointer_at, read_pointer_or_null, u32_at, u64_at, vector_at};
+use crate::game_memory::{f32_at, pointer_at, read_pointer_or_null, read_u32, u32_at, u64_at, vector_at};
 use crate::components::{self, Components};
 use crate::layout;
 use crate::position::Position;
@@ -239,9 +239,9 @@ pub fn read_attached_proxy(handle: ProcessHandle, proxy: usize) -> io::Result<(C
     }
     let collides = match layout.flags {
         Some(offset) => {
-            let mut flags = [0u8; 4];
-            handle.copy_address(proxy + offset, &mut flags)?;
-            u32::from_le_bytes(flags) as usize & layout.collides != 0
+            let flags = read_u32(handle, proxy + offset)
+                .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "unreadable proxy flags"))?;
+            flags as usize & layout.collides != 0
         }
         None => false,
     };
@@ -254,10 +254,8 @@ fn read_contacts(handle: ProcessHandle, proxy: usize) -> Vec<Vector3<f32>> {
         Some(offset) => offset,
         None => return vec![],
     };
-    let count_at = |offset: usize| {
-        let mut bytes = [0u8; 4];
-        handle.copy_address(proxy + offset, &mut bytes).ok().map(|_| i32::from_le_bytes(bytes).max(0) as usize)
-    };
+    // Signed, so a garbage count isn't huge
+    let count_at = |offset: usize| read_u32(handle, proxy + offset).map(|count| (count as i32).max(0) as usize);
     let mut records = vec![0u8; MAX_CONTACTS * layout.contact_size];
     let counts = (count_at(layout.contact_count), layout.second_contact_count.map_or(Some(0), count_at));
     let count = match (counts, handle.copy_address(proxy + contacts, &mut records)) {

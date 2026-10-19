@@ -47,7 +47,7 @@ impl Memory {
         Memory {
             handle,
             base_addr,
-            pointer_size: if matches!(arch, Architecture::Arch64Bit) { 8 } else { 4 },
+            pointer_size: crate::game_memory::pointer_size_of(arch),
             cache: HashMap::new(),
         }
     }

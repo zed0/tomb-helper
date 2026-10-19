@@ -10,7 +10,7 @@
 //! they're cached, and the heap is only scanned again for triggers that are new (or had no script, in case it's loaded
 //! later).
 //!
-//! TR2013 (32-bit) has no trigger nodes: a trigger is used through an AGInstanceNode (or AGObjectNode) with its id,
+//! A game without those trigger nodes (TR2013) uses a trigger through an AGInstanceNode (or AGObjectNode) with its id,
 //! like any other instance, whose outputs are its events. Which of them means Lara isn't known, so they're all "script".
 
 use crate::game_memory::{pointer_from, pointer_size, read_pointer, read_u32, read_u64, u16_at};
@@ -29,8 +29,8 @@ const INSTANCE_NODE: &str = ".?AVAGInstanceTriggerNode@@";
 const OTHER_NODES: [&str; 2] = [".?AVAGTriggerNode@@", ".?AVAGTriggerMasterNode@@"];
 const OBJECT_NODE: &str = ".?AVAGObjectNode@@";
 const MESSAGE_SEND_NODE: &str = ".?AVAGMessageSendNode@@";
-// TR2013's node for an instance (its id at `layout.object_instance`, as in an AGObjectNode), which is how scripts use
-// triggers too
+// A node for an instance (its id at `layout.object_instance`, as in an AGObjectNode), which is how scripts use triggers
+// in games without trigger nodes
 const INSTANCE_REFERENCE_NODE: &str = ".?AVAGInstanceNode@@";
 // What a script does, by part of the class names of the nodes a trigger leads to, most important first (the words are
 // `TRIGGER_ACTIONS`)
@@ -132,6 +132,8 @@ struct Node {
 struct Classes {
     triggers: HashMap<usize, NodeKind>,
     effects: HashMap<usize, Effect>,
+    // Whether the game has no trigger nodes, so triggers are found through the nodes for any instance
+    by_reference: bool,
 }
 
 // A graph's nodes and, for each, the nodes it links to
@@ -201,16 +203,17 @@ impl TriggerScripts {
     }
 }
 
-/// Finds what sets the triggers off and what they do now, rather than in the background (for `check`)
+/// Finds what sets the triggers off and what they do now, rather than in the background (for `check`), and whether
+/// they were found through the nodes for any instance, as the game has no trigger nodes
 pub fn scripts_now(
     pid: Pid,
     handle: ProcessHandle,
     base_address: usize,
     triggers: &[u64],
     names: &HashMap<u64, String>,
-) -> Result<HashMap<u64, TriggerScript>, String> {
-    let (_, nodes) = scan(pid, handle, base_address, None, &layout::current().script)?;
-    Ok(categorise(&nodes, &triggers.iter().copied().collect(), names))
+) -> Result<(HashMap<u64, TriggerScript>, bool), String> {
+    let (classes, nodes) = scan(pid, handle, base_address, None, &layout::current().script)?;
+    Ok((categorise(&nodes, &triggers.iter().copied().collect(), names), classes.by_reference))
 }
 
 // What sets each trigger off, going by the nodes that have its id in them, and what those lead to
@@ -393,28 +396,31 @@ fn leads_to(graph: &Graph, start: usize) -> Vec<usize> {
 
 // Trigger nodes' vtables, and those of nodes that say what a script does
 fn find_classes(data: &[u8], base_address: usize, layout: &ScriptLayout) -> Classes {
-    let mut classes = Classes::default();
-    let tr2013 = pointer_size() == 4;
-    for (vtable, name) in crate::rtti::all_vtables(data, base_address) {
-        let trigger = match name.as_str() {
-            PLAYER_NODE => Some(NodeKind::Player),
-            INSTANCE_NODE => Some(NodeKind::Instance),
-            n if OTHER_NODES.contains(&n) => Some(NodeKind::Other),
-            INSTANCE_REFERENCE_NODE | OBJECT_NODE if tr2013 => Some(NodeKind::Other),
-            _ => None,
+    let vtables = crate::rtti::all_vtables(data, base_address);
+    let trigger_kind = |name: &str| match name {
+        PLAYER_NODE => Some(NodeKind::Player),
+        INSTANCE_NODE => Some(NodeKind::Instance),
+        n if OTHER_NODES.contains(&n) => Some(NodeKind::Other),
+        _ => None,
+    };
+    let by_reference = !vtables.iter().any(|(_, name)| trigger_kind(name).is_some());
+    let mut classes = Classes { by_reference, ..Default::default() };
+    for (vtable, name) in vtables {
+        let kind = match name.as_str() {
+            INSTANCE_REFERENCE_NODE | OBJECT_NODE if by_reference => Some(NodeKind::Other),
+            n => trigger_kind(n),
         };
-        if let Some(kind) = trigger {
+        if let Some(kind) = kind {
             classes.triggers.insert(vtable, kind);
-            // The nodes for other instances are what scripts act on
-            if tr2013 {
+            // They're also what scripts act on
+            if by_reference {
                 classes.effects.insert(vtable, Effect::ActsOn(layout.object_instance));
             }
             continue;
         }
         let effect = match name.as_str() {
             OBJECT_NODE => Some(Effect::ActsOn(layout.object_instance)),
-            // TR2013's don't hold the instance's id
-            MESSAGE_SEND_NODE if !tr2013 => Some(Effect::ActsOn(layout.message_instance)),
+            MESSAGE_SEND_NODE => layout.message_instance.map(Effect::ActsOn),
             n => ACTIONS.iter().position(|(part, _)| n.contains(part)).map(Effect::Action),
         };
         if let Some(effect) = effect {
