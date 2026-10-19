@@ -1,4 +1,4 @@
-use crate::game_memory::{floats_at, pointer_from, pointer_size};
+use crate::game_memory::{floats_at, read_pointer};
 use crate::collision::{self, CapsuleShape};
 use crate::collision_mesh::CollisionMeshes;
 use crate::components::{self, Components};
@@ -192,14 +192,13 @@ impl OverlayHandler {
     // TR2013's aim sweep, found from Lara's proxy, and whether it's hitting something
     fn read_aim_sweep(&self, proxy: usize) -> Option<(Capsule, bool)> {
         let (instances, inventories, types) = self.aim_sweep_offsets.as_ref()?;
-        let mut lara = vec![0u8; pointer_size()];
-        self.handle.copy_address(proxy + crate::layout::current().aim_sweep.proxy_instance, &mut lara).ok()?;
+        let lara = read_pointer(self.handle, proxy + crate::layout::current().aim_sweep.proxy_instance)?;
         crate::aim_sweep::read(
             self.handle,
             self.resolve(instances).ok()?,
             self.resolve(inventories).ok()?,
             self.resolve(types).ok()?,
-            pointer_from(&lara),
+            lara,
         )
     }
 
@@ -485,25 +484,20 @@ impl Handler for OverlayHandler {
         // Lara can be reloaded (and moved) between refreshes, which `components.get` notices. Her attached proxies being
         // used is also the best sign she's aiming.
         let show_proxy = lara_collision && self.config.lara_proxy;
-        let proxies = match (show_proxy || follow_aim, &self.player_proxy_offsets, self.lara_address) {
-            (true, Some(offsets), _) => {
-                // The combat proxy is found on its own too
-                let combat: Vec<usize> =
-                    self.combat_proxy_offsets.as_ref().and_then(|offsets| self.resolve(offsets).ok()).into_iter().collect();
-                let proxy = self.resolve(offsets).ok();
-                let mut proxies = proxy.and_then(|proxy| collision::read_proxy(self.handle, proxy, &combat).ok());
-                // The aim sweep is drawn like the proxies attached to hers
-                if let (Some(proxies), Some(rod)) = (&mut proxies, proxy.and_then(|p| self.read_aim_sweep(p))) {
-                    proxies.attached.push(rod);
-                }
-                proxies
-            }
-            (true, None, Some(lara)) => self
-                .components
-                .get(self.handle, lara, components::PROXY)
-                .and_then(|proxy| collision::read_proxy(self.handle, proxy, &[]).ok()),
+        // Her proxy is in a static (TR2013) or one of her components
+        let proxy = match (show_proxy || follow_aim, &self.player_proxy_offsets, self.lara_address) {
+            (true, Some(offsets), _) => self.resolve(offsets).ok(),
+            (true, None, Some(lara)) => self.components.get(self.handle, lara, components::PROXY),
             _ => None,
         };
+        // Proxies attached to hers that are found on their own (TR2013's combat proxy)
+        let standalone: Vec<usize> =
+            self.combat_proxy_offsets.as_ref().and_then(|offsets| self.resolve(offsets).ok()).into_iter().collect();
+        let mut proxies = proxy.and_then(|proxy| collision::read_proxy(self.handle, proxy, &standalone).ok());
+        // The aim sweep (TR2013) is drawn like the proxies attached to hers
+        if let (Some(proxies), Some(rod)) = (&mut proxies, proxy.and_then(|p| self.read_aim_sweep(p))) {
+            proxies.attached.push(rod);
+        }
         let aiming = proxies.as_ref().map_or(false, |p| p.attached_active);
         let (proxies, proxy_touching, attached, attached_active) = match proxies {
             Some(p) if show_proxy => (p.shapes, p.touching, p.attached, p.attached_active),

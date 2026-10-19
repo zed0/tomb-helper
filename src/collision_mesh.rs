@@ -1,4 +1,4 @@
-use crate::game_memory::{pointer_at, u16_at, u32_at, vector_at};
+use crate::game_memory::{pointer_at, read_u32, u16_at, u32_at, vector_at};
 use crate::layout;
 use crate::position::Position;
 use crate::ui_ipc_data::{SurfaceKind, Triangle};
@@ -93,19 +93,18 @@ impl CollisionMeshes {
             visited += 1;
             handle.copy_address(address, &mut bytes)?;
             let next = pointer_at(&bytes, instance.next);
-            // Without a filter, the kinds are in the instance, or every mesh counts as Lara's
-            let kinds = match (instance.filter, instance.kinds) {
-                (Some(offset), _) => {
+            // Without a filter (TR2013), every mesh counts as Lara's
+            let kinds = match instance.filter {
+                Some(offset) => {
                     let filter = pointer_at(&bytes, offset);
                     if !filters.contains_key(&filter) {
-                        let mut kind_bytes = [0u8; 4];
-                        handle.copy_address(filter + instance.filter_kinds, &mut kind_bytes)?;
-                        filters.insert(filter, u32::from_le_bytes(kind_bytes) as usize);
+                        let kinds = read_u32(handle, filter + instance.filter_kinds)
+                            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "unreadable collision filter"))?;
+                        filters.insert(filter, kinds as usize);
                     }
                     filters[&filter]
                 }
-                (None, Some(offset)) => u16_at(&bytes, offset) as usize,
-                (None, None) => instance.player_kind,
+                None => instance.player_kind,
             };
             for (bit, count) in kind_counts.iter_mut().enumerate() {
                 *count += (kinds >> bit & 1) as u32;

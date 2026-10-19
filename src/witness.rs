@@ -21,7 +21,7 @@ struct Displacement {
 fn displacement_at(image: &PeImage, start: usize) -> Option<Displacement> {
     let data = image.data.get(start..)?;
     let mut decoder = Decoder::with_ip(
-        if image.is_64 { 64 } else { 32 },
+        image.bitness(),
         &data[..data.len().min(15)],
         image.image_base + start as u64,
         DecoderOptions::NONE,

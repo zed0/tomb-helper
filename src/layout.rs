@@ -416,13 +416,9 @@ pub struct CollisionInstanceLayout {
     /// The matrix, origin and bounds, which are reread each tick
     #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
     pub placement_size: usize,
-    /// -> filter, shared by many. None if the kinds are in the instance itself (`kinds`, TR2013)
+    /// -> filter, shared by many. None if there's none (TR2013), when every mesh counts as Lara's
     #[serde(serialize_with = "serialize_hex_option", deserialize_with = "deserialize_hex_option")]
     pub filter: Option<usize>,
-    /// u16 of the kinds of collision that use the mesh, in the instance itself, where there's no filter. If there's
-    /// neither, every mesh counts as Lara's
-    #[serde(serialize_with = "serialize_hex_option", deserialize_with = "deserialize_hex_option")]
-    pub kinds: Option<usize>,
     #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
     pub mesh: usize,
     #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
@@ -448,7 +444,6 @@ impl Default for CollisionInstanceLayout {
             placement_size: 0x60,
             origin: None,
             filter: Some(0x60),
-            kinds: None,
             mesh: 0x70,
             next: 0x88,
             flags: Some(0x90),
@@ -525,29 +520,56 @@ group! {
     }
 }
 
-group! {
-    /// ActionGraph scripts: a graph (one per instance with a script) lists its nodes and the links between them. Found
-    /// in SOTTR, the same in ROTTR
-    ScriptLayout {
-        /// In a node, -> its graph
-        node_graph = 0x8,
-        /// In a graph, -> its nodes (pointers, with gaps)
-        graph_nodes = 0x78,
-        /// In a graph, -> its links' header
-        graph_links = 0x90,
-        /// In the links' header, u32: how many nodes the links can refer to
-        node_count = 0x0,
-        /// u32
-        link_count = 0x4,
-        /// -> links: u16 from node, u16 to node (indices in the graph's nodes), u16 output, u16 input
-        links = 0x10,
-        link_size = 0x8,
-        /// In an AGObjectNode, the id of the instance it acts on
-        object_instance = 0x50,
-        /// In an AGMessageSendNode, the id of the instance it sends a message to
-        message_instance = 0x28,
-        /// How much of a trigger node to look through for ids
-        node_size = 0x180,
+/// ActionGraph scripts: a graph (one per instance with a script) lists its nodes and the links between them. Found
+/// in SOTTR, the same in ROTTR
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ScriptLayout {
+    /// In a node, -> its graph
+    #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
+    pub node_graph: usize,
+    /// In a graph, -> its nodes (pointers, with gaps)
+    #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
+    pub graph_nodes: usize,
+    /// In a graph, -> its links' header
+    #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
+    pub graph_links: usize,
+    /// In the links' header, u32: how many nodes the links can refer to
+    #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
+    pub node_count: usize,
+    /// u32
+    #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
+    pub link_count: usize,
+    /// -> links: u16 from node, u16 to node (indices in the graph's nodes), u16 output, u16 input
+    #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
+    pub links: usize,
+    #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
+    pub link_size: usize,
+    /// In an AGObjectNode (and TR2013's AGInstanceNode), the id of the instance it acts on
+    #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
+    pub object_instance: usize,
+    /// In an AGMessageSendNode, the id of the instance it sends a message to. None if it doesn't hold one (TR2013)
+    #[serde(serialize_with = "serialize_hex_option", deserialize_with = "deserialize_hex_option")]
+    pub message_instance: Option<usize>,
+    /// How much of a trigger node to look through for ids
+    #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
+    pub node_size: usize,
+}
+
+impl Default for ScriptLayout {
+    fn default() -> Self {
+        ScriptLayout {
+            node_graph: 0x8,
+            graph_nodes: 0x78,
+            graph_links: 0x90,
+            node_count: 0x0,
+            link_count: 0x4,
+            links: 0x10,
+            link_size: 0x8,
+            object_instance: 0x50,
+            message_instance: Some(0x28),
+            node_size: 0x180,
+        }
     }
 }
 
@@ -605,6 +627,14 @@ pub fn set_for(details: &ProcessDetails) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn optional_offsets_default_and_can_be_null() {
+        let layout: Layout = serde_json::from_str(r#"{"script": {"node_graph": "0xC", "message_instance": null}}"#).unwrap();
+        assert_eq!(layout.script.message_instance, None);
+        assert_eq!(layout.script.node_graph, 0xC);
+        assert_eq!(Layout::default().script.message_instance, Some(0x28));
+    }
 
     #[test]
     fn overrides_only_change_what_they_name() {

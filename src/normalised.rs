@@ -43,7 +43,7 @@ fn is_branch(kind: OpKind) -> bool {
 
 /// The start of the instruction whose 4-byte address field (displacement or immediate) is at `position`
 pub fn instruction_at(image: &PeImage, position: usize) -> Option<usize> {
-    let bitness = if image.is_64 { 64 } else { 32 };
+    let bitness = image.bitness();
     (position.saturating_sub(10)..position).find(|&start| {
         let data = &image.data[start..image.data.len().min(start + 16)];
         let mut decoder = Decoder::with_ip(bitness, data, image.image_base + start as u64, DecoderOptions::NONE);
@@ -73,7 +73,7 @@ impl<'a> Describer<'a> {
             image,
             sections: image.sections(),
             imports: image.imports(),
-            bitness: if image.is_64 { 64 } else { 32 },
+            bitness: image.bitness(),
         }
     }
 
