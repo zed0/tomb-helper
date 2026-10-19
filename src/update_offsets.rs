@@ -204,7 +204,15 @@ fn attach(
         let same_executable: Vec<ProcessDetails> =
             known.iter().filter(|d| d.executable_name == executable).cloned().collect();
         let existing = find_process::find_process(same_executable.clone(), None).map(|(_, _, _, d)| d);
-        let template = existing.clone().or_else(|| same_executable.last().cloned()).unwrap();
+        let mut template = existing.clone().or_else(|| same_executable.last().cloned()).unwrap();
+        // An entry from before the overlay has no layout, and the default is another game's, so borrow one from the
+        // last build of the same game that has one
+        if template.layout.is_default() {
+            if let Some(other) = same_executable.iter().rev().find(|d| !d.layout.is_default()) {
+                println!("Using the layout of {} to start with", other.version.version);
+                template.layout = other.layout.clone();
+            }
+        }
         return Ok((pid, handle, base_address, existing, template));
     }
     Err(format!("None of the known games ({}) is running", known.iter().map(|d| d.executable_name.clone()).collect::<HashSet<_>>().into_iter().collect::<Vec<_>>().join(", ")))

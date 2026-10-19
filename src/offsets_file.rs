@@ -90,8 +90,35 @@ pub struct VersionEntry {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub unverified: BTreeMap<AddressType, Vec<Hex>>,
     // Where things are in the game's structures, where they differ from ROTTR (Steam)'s (see `layout`)
-    #[serde(default, skip_serializing_if = "Layout::is_default")]
+    #[serde(default, skip_serializing_if = "Layout::is_default", serialize_with = "serialize_layout_changes")]
     pub layout: Layout,
+}
+
+// Only the fields that differ from the default, which is how they're written by hand
+fn serialize_layout_changes<S: serde::Serializer>(layout: &Layout, serializer: S) -> Result<S::Ok, S::Error> {
+    fn changes(value: serde_json::Value, default: &serde_json::Value) -> Option<serde_json::Value> {
+        match (value, default) {
+            (serde_json::Value::Object(fields), serde_json::Value::Object(defaults)) => {
+                let changed: serde_json::Map<String, serde_json::Value> = fields
+                    .into_iter()
+                    .filter_map(|(name, value)| match defaults.get(&name) {
+                        Some(default) => changes(value, default).map(|v| (name, v)),
+                        None => Some((name, value)),
+                    })
+                    .collect();
+                if changed.is_empty() {
+                    None
+                } else {
+                    Some(serde_json::Value::Object(changed))
+                }
+            }
+            (value, default) if value == *default => None,
+            (value, _) => Some(value),
+        }
+    }
+    let as_json = |l: &Layout| serde_json::to_value(l).map_err(serde::ser::Error::custom);
+    let changed = changes(as_json(layout)?, &as_json(&Layout::default())?).unwrap_or(serde_json::json!({}));
+    changed.serialize(serializer)
 }
 
 impl VersionEntry {
@@ -262,6 +289,22 @@ mod tests {
         let versions = parse(json).unwrap();
         assert_eq!(versions[0].layout.instance.position, 0x20);
         assert_eq!(versions[0].layout.instance.rotation, Layout::default().instance.rotation);
+    }
+
+    #[test]
+    fn writes_only_the_layout_that_differs() {
+        let json = r#"{"versions": [{
+            "game": "Game", "executable": "Game.exe", "version": "v1", "bits": 64,
+            "offsets": {"XPosition": ["0x10"]},
+            "layout": {"instance": {"position": "0x20", "rotation": "0x30"}, "camera": {"view": "0x2F0"}}
+        }]}"#;
+        let file: OffsetsFile = serde_json::from_str(json).unwrap();
+        let written: serde_json::Value = serde_json::from_str(&to_json(&file)).unwrap();
+        // The rotation is the default
+        assert_eq!(
+            written["versions"][0]["layout"],
+            serde_json::json!({"instance": {"position": "0x20"}, "camera": {"view": "0x2F0"}})
+        );
     }
 
     #[test]

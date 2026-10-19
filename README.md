@@ -237,7 +237,7 @@ This attaches to the game as a debugger and puts hardware breakpoints on up to 4
 
 Most of what the overlay reads is found through the game's RTTI class names (e.g. `InteractableComponent`, `cdc::CollisionSceneClient`), which are the same between patches and in Shadow of the Tomb Raider, so there's less to port than for the other offsets:
 
-1. Load into a level, with Lara standing somewhere ordinary, then run `tomb-helper update-offsets` (see [Finding offsets for a new game version](#finding-offsets-for-a-new-game-version)). It finds the offsets and saves them, then runs `check` on them. (`tomb-helper discover --save` does just the camera, instance array and collision scene.)
+1. Load into a level, with Lara standing somewhere ordinary, then run `tomb-helper update-offsets` (see [Finding offsets for a new game version](#finding-offsets-for-a-new-game-version)). It finds the offsets and saves them, then runs `check` on them. A build with no layout yet (e.g. an older patch of the same game) starts with the layout of the newest build of that game that has one, which is usually all it needs. (`tomb-helper discover --save` does just the camera, instance array and collision scene.)
 2. `tomb-helper check` can also be run on its own. It reads everything the way the overlay does and checks the results make sense, e.g. that instances' transforms are TransformComponents, there's a collision floor under Lara, her capsules are her size and on her. Each check that fails points at a group of the `layout`.
 3. Fix the failing groups in that version's `layout` (the file is reloaded, rerun `check`) until everything passes. `tomb-helper disasm <pid> <address>` and the notes in `CLAUDE.md` on how each structure was found help with finding a field that moved.
 
