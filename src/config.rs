@@ -37,6 +37,7 @@ fn default_hotkeys() -> Vec<Hotkey> {
         Hotkey::new(KeyCode::F8, Action::ResetSkipCutsceneTracker {}),
         Hotkey::new(KeyCode::F9, Action::ToggleUI {}),
         Hotkey::new(KeyCode::F10, Action::ToggleCollision {}),
+        Hotkey::new(KeyCode::F11, Action::ToggleSettingsWindow {}),
         Hotkey::new(KeyCode::Space, Action::SkipCutscene {}),
         Hotkey::new(KeyCode::W, Action::Forward { distance: 100.0 }),
         Hotkey::new(KeyCode::S, Action::Backward { distance: 100.0 }),
@@ -177,6 +178,10 @@ fn default_collision_opacity() -> f32 {
     0.25
 }
 
+fn default_settings_window() -> bool {
+    true
+}
+
 fn default_trigger_opacity() -> f32 {
     0.15
 }
@@ -250,6 +255,9 @@ pub struct OverlayConfig {
     // How opaque trigger volumes are filled, 0 to 1 (0 just draws their outlines) (to start with)
     #[serde(default = "default_trigger_opacity")]
     pub trigger_opacity: f32,
+    // Show the overlay's settings window (to start with, `ToggleSettingsWindow` shows and hides it)
+    #[serde(default = "default_settings_window")]
+    pub settings_window: bool,
     // Open a console in the game for the overlay's logs
     #[serde(default)]
     pub console: bool,

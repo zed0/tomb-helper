@@ -13,6 +13,10 @@ pub const OBJECT_NAME_LENGTH: usize = 64;
 pub const TRIGGER_LABEL_LENGTH: usize = 128;
 pub const MAX_TRIANGLES: usize = 163_840;
 pub const MAX_TRIGGERS: usize = 256;
+// Actions the overlay's window can ask for (`UiSettings::requests`)
+pub const REQUEST_STORE_POSITION: u32 = 1;
+pub const REQUEST_RESTORE_POSITION: u32 = 2;
+pub const REQUEST_TOGGLE_FLYING: u32 = 4;
 pub const MAX_TRIGGER_LINES: usize = 16384;
 pub const MAX_TRIGGER_FACES: usize = 32768;
 
@@ -267,6 +271,11 @@ pub struct UiData {
     pub debug: bool,
     pub should_exit: bool,
     pub position: Position,
+    // The position tools (`PositionHandler`), if this game has them
+    pub position_tools: bool,
+    pub has_saved_position: bool,
+    pub saved_position: Position,
+    pub flying: bool,
     // Row-major world-to-view and projection matrices as stored by the game (row vectors)
     pub camera_view: [f32; 16],
     pub camera_projection: [f32; 16],
@@ -355,6 +364,10 @@ pub fn projection_from_lens(lens: &[f32; 8]) -> [f32; 16] {
 pub struct UiSettings {
     // Whether the exe has set the starting values from its config
     pub initialised: AtomicBool,
+    // The settings window (what's drawn in the world stays either way)
+    pub show_window: AtomicBool,
+    // `REQUEST_*` bits for actions the window's buttons ask for, which the exe takes
+    pub requests: AtomicU32,
     // Everything to do with collision (Lara's and the meshes), whatever the settings below
     pub collision: AtomicBool,
     // Lara's capsules and probes

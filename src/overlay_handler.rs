@@ -18,7 +18,8 @@ use hudhook::inject::Process;
 use process_memory::{Architecture, CopyAddress, DataMember, Memory, Pid, ProcessHandle};
 use crate::trigger::{self, Shape};
 use crate::trigger_scripts::{SetOffBy, TriggerScripts};
-use crate::ui_ipc_data::{name_bytes, text_bytes, trigger_action_bit, trigger_action_mask, projection_from_lens, BoxKind, Capsule, Line, ObjectBox, ObjectCategory, SharedMemoryManager, TriggerCategory, TriggerFace, TriggerLabel, UiSettings, MAX_ATTACHED, MAX_OBJECTS, MAX_TRIANGLES, MAX_TRIGGERS};
+use crate::handler::HelperState;
+use crate::ui_ipc_data::{REQUEST_RESTORE_POSITION, REQUEST_STORE_POSITION, REQUEST_TOGGLE_FLYING, name_bytes, text_bytes, trigger_action_bit, trigger_action_mask, projection_from_lens, BoxKind, Capsule, Line, ObjectBox, ObjectCategory, SharedMemoryManager, TriggerCategory, TriggerFace, TriggerLabel, UiSettings, MAX_ATTACHED, MAX_OBJECTS, MAX_TRIANGLES, MAX_TRIGGERS};
 
 // How far above her feet the middle of Lara is (her standing capsule's centre), which counts as her being in a trigger
 // as well as her feet
@@ -46,6 +47,9 @@ pub struct OverlayHandler {
     player_probes_offsets: Option<Vec<usize>>,
     collision_scene_offsets: Option<Vec<usize>>,
     collision_meshes: CollisionMeshes,
+    // What the other handlers have to show, and actions the window's buttons asked for
+    helper_state: HelperState,
+    requested: Vec<Action>,
     // Coarse and detailed, and the kinds that are detailed, as of the last refresh
     mesh_settings: (bool, bool, u32),
     object_list: Option<ObjectList>,
@@ -104,6 +108,7 @@ impl OverlayHandler {
             UiSettings::set_u32(&settings.trigger_categories, TriggerCategory::mask(&config.trigger_categories));
             UiSettings::set(&settings.triggers_by_action, config.triggers_by_action);
             UiSettings::set_u32(&settings.trigger_actions, trigger_action_mask(&config.trigger_actions));
+            UiSettings::set(&settings.show_window, config.settings_window);
             UiSettings::set(&settings.initialised, true);
         }
         ui_memory_manager.get_mut().update(|val| {
@@ -145,6 +150,8 @@ impl OverlayHandler {
             collision_scene_offsets: address_offsets.get(&AddressType::CollisionScene).cloned(),
             collision_meshes: CollisionMeshes::default(),
             mesh_settings: (false, false, 0),
+            helper_state: HelperState::default(),
+            requested: vec![],
             object_list: None,
             objects: vec![],
             npc_capsules: HashMap::new(),
@@ -377,6 +384,16 @@ impl Handler for OverlayHandler {
         self.camera_lens.fetch_from_game(self.handle)?;
 
         let settings = &self.ui_memory_manager.get().settings;
+        let requests = settings.requests.swap(0, std::sync::atomic::Ordering::SeqCst);
+        for (bit, action) in [
+            (REQUEST_STORE_POSITION, Action::StorePosition {}),
+            (REQUEST_RESTORE_POSITION, Action::RestorePosition {}),
+            (REQUEST_TOGGLE_FLYING, Action::ToggleActive {}),
+        ] {
+            if requests & bit != 0 {
+                self.requested.push(action);
+            }
+        }
         let collision = UiSettings::get(&settings.collision);
         let lara_collision = collision && UiSettings::get(&settings.lara_collision);
         let mesh_settings = (
@@ -521,7 +538,12 @@ impl Handler for OverlayHandler {
         let camera_view_address = self.resolve(&self.camera_view_offsets)?;
         let camera_lens_address = self.resolve(&self.camera_lens_offsets)?;
         let kind_counts = self.collision_meshes.kind_counts;
+        let helper_state = self.helper_state.clone();
         self.ui_memory_manager.get_mut().update(|val| {
+            val.position_tools = helper_state.position_tools;
+            val.has_saved_position = helper_state.saved_position.is_some();
+            val.saved_position = helper_state.saved_position.unwrap_or_default();
+            val.flying = helper_state.flying;
             val.position = position;
             val.camera_view = camera_view;
             val.camera_projection = camera_projection;
@@ -544,6 +566,14 @@ impl Handler for OverlayHandler {
         });
         Ok(())
     }
+    fn take_actions(&mut self) -> Vec<Action> {
+        std::mem::take(&mut self.requested)
+    }
+
+    fn show(&mut self, state: &HelperState) {
+        self.helper_state = state.clone();
+    }
+
     fn handle_action(&mut self, action: Action) -> Result<(), Box<dyn Error>> {
         match action {
             Action::ToggleUI {} => {
@@ -571,6 +601,7 @@ impl Handler for OverlayHandler {
             Action::ToggleTriggers {} => UiSettings::toggle(&self.ui_memory_manager.get().settings.triggers),
             Action::ToggleNpcs {} => UiSettings::toggle(&self.ui_memory_manager.get().settings.npcs),
             Action::ToggleCollision {} => UiSettings::toggle(&self.ui_memory_manager.get().settings.collision),
+            Action::ToggleSettingsWindow {} => UiSettings::toggle(&self.ui_memory_manager.get().settings.show_window),
             _ => (),
         }
         Ok(())

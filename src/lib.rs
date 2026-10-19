@@ -1,7 +1,7 @@
 use imgui::*;
 use hudhook::*;
 use hudhook::hooks::dx12::ImguiDx12Hooks;
-use crate::ui_ipc_data::{projection_from_lens, BoxKind, Capsule, ObjectBox, ObjectCategory, Probe, SharedMemoryManager, SurfaceKind, Triangle, TriggerCategory, UiData, UiSettings, TRIGGER_ACTIONS};
+use crate::ui_ipc_data::{projection_from_lens, BoxKind, Capsule, ObjectBox, ObjectCategory, Probe, SharedMemoryManager, SurfaceKind, Triangle, TriggerCategory, UiData, UiSettings, REQUEST_RESTORE_POSITION, REQUEST_STORE_POSITION, REQUEST_TOGGLE_FLYING, TRIGGER_ACTIONS};
 use crate::tracing::{error, warn};
 
 mod ui_ipc_data;
@@ -514,112 +514,9 @@ impl ImguiRenderLoop for TombHelperHud {
         let triangle_count = ui_data.triangle_count.min(ui_data.triangles.len());
         let settings = &self.ui_memory_manager.get().settings;
 
-        ui.window("Position")
-            .position_pivot([1., 0.])
-            .position([screen_width, 0.], Condition::Once)
-            .size([400., 600.], Condition::Once)
-            .build(|| {
-                ui.text_wrapped(format!("{:?}", ui_data.position));
-                ui.text(format!("{} objects", object_count));
-                for (label, setting) in [
-                    ("Interactable objects", &settings.interactables),
-                    ("Characters and animals", &settings.npcs),
-                    ("Trigger volumes", &settings.triggers),
-                ] {
-                    checkbox(ui, label, setting);
-                }
-                if UiSettings::get(&settings.triggers) {
-                    ui.indent();
-                    let by_action = UiSettings::get(&settings.triggers_by_action);
-                    ui.text("Show by:");
-                    ui.same_line();
-                    if ui.radio_button_bool("What they do", by_action) {
-                        UiSettings::set(&settings.triggers_by_action, true);
-                    }
-                    ui.same_line();
-                    if ui.radio_button_bool("Name", !by_action) {
-                        UiSettings::set(&settings.triggers_by_action, false);
-                    }
-                    if by_action {
-                        let mut actions = UiSettings::get_u32(&settings.trigger_actions);
-                        if ui.small_button("All") {
-                            UiSettings::set_u32(&settings.trigger_actions, u32::MAX);
-                        }
-                        ui.same_line();
-                        if ui.small_button("None") {
-                            UiSettings::set_u32(&settings.trigger_actions, 0);
-                        }
-                        // Two columns, they're short
-                        for (i, action) in TRIGGER_ACTIONS.iter().enumerate() {
-                            if i % 2 == 1 {
-                                ui.same_line_with_pos(190.);
-                            }
-                            let mut value = actions & 1 << i != 0;
-                            let style = ui.push_style_color(StyleColor::Text, TRIGGER_ACTION_COLOURS[i]);
-                            if ui.checkbox(action, &mut value) {
-                                actions ^= 1 << i;
-                                UiSettings::set_u32(&settings.trigger_actions, actions);
-                            }
-                            style.pop();
-                        }
-                    } else {
-                        let mut categories = UiSettings::get_u32(&settings.trigger_categories);
-                        for category in TriggerCategory::ALL {
-                            let (colour, label) = trigger_style(category);
-                            let mut value = categories & category.bit() != 0;
-                            let style = ui.push_style_color(StyleColor::Text, colour);
-                            if ui.checkbox(label, &mut value) {
-                                categories ^= category.bit();
-                                UiSettings::set_u32(&settings.trigger_categories, categories);
-                            }
-                            style.pop();
-                        }
-                    }
-                    slider(ui, "Opacity##triggers", 0.0, 1.0, "%.2f", &settings.trigger_opacity);
-                    ui.unindent();
-                }
-                checkbox(ui, "Collision meshes (F10)", &settings.collision);
-                if UiSettings::get(&settings.collision) {
-                    ui.indent();
-                    ui.text(format!(
-                        "{} triangles ({:.1}ms to find, {:.1}ms to draw)",
-                        triangle_count, ui_data.triangle_milliseconds, self.draw_milliseconds
-                    ));
-                    checkbox(ui, "Lara's collision", &settings.lara_collision);
-                    checkbox(ui, "Movement collision (Lara's, 0x2)", &settings.coarse_meshes);
-                    slider(ui, "Radius##coarse", 0.0, MAX_MESH_RADIUS, "%.0f", &settings.coarse_radius);
-                    checkbox(ui, "Other collision", &settings.detailed_meshes);
-                    slider(ui, "Radius##detailed", 0.0, MAX_MESH_RADIUS, "%.0f", &settings.detailed_radius);
-                    if UiSettings::get(&settings.detailed_meshes) {
-                        // Which kinds of collision (bits of the meshes' filters), and how many meshes in the level have
-                        // each; what they're for isn't known, besides 0x2 (Lara's movement)
-                        ui.indent();
-                        let mut kinds = UiSettings::get_u32(&settings.other_kinds);
-                        let mut shown = 0;
-                        for bit in 0..16 {
-                            let count = ui_data.mesh_kind_counts[bit];
-                            if count == 0 {
-                                continue;
-                            }
-                            if shown % 3 != 0 {
-                                ui.same_line_with_pos(shown as f32 % 3.0 * 125.0 + 30.0);
-                            }
-                            shown += 1;
-                            let mut value = kinds & 1 << bit != 0;
-                            if ui.checkbox(format!("{:X} ({})##kind", 1 << bit, count), &mut value) {
-                                kinds ^= 1 << bit;
-                                UiSettings::set_u32(&settings.other_kinds, kinds);
-                            }
-                        }
-                        ui.unindent();
-                    }
-                    slider(ui, "Opacity", 0.0, 1.0, "%.2f", &settings.mesh_opacity);
-                    checkbox(ui, "Fade with distance from Lara", &settings.fade_with_distance);
-                    slider(ui, "Fade strength", 1.0, MAX_FADE_STRENGTH, "%.1f", &settings.fade_strength);
-                    checkbox(ui, "Hide triangles behind others", &settings.cull_hidden);
-                    ui.unindent();
-                }
-            });
+        if UiSettings::get(&settings.show_window) {
+            self.settings_window(ui, ui_data, settings, screen_width, object_count, triangle_count);
+        }
         // Read again so changes show straight away, rather than once the exe has caught up
         let collision = UiSettings::get(&settings.collision);
         let lara_collision = collision && UiSettings::get(&settings.lara_collision);
@@ -773,5 +670,160 @@ mod tests {
         buffer.rasterise(1, [[0., 0., 0.5], [30., 0., 0.5], [0., 30., 0.5]]);
         buffer.rasterise(2, [[20., 20., 0.1], [39., 20., 0.1], [20., 39., 0.1]]);
         assert_eq!(buffer.visible(3), [false, true, true]);
+    }
+}
+
+impl TombHelperHud {
+    // F11 (`ToggleSettingsWindow`) hides it, leaving what's drawn in the world
+    fn settings_window(
+        &self,
+        ui: &Ui,
+        ui_data: &UiData,
+        settings: &UiSettings,
+        screen_width: f32,
+        object_count: usize,
+        triangle_count: usize,
+    ) {
+        let request = |bit: u32| {
+            settings.requests.fetch_or(bit, std::sync::atomic::Ordering::SeqCst);
+        };
+        ui.window("tomb-helper")
+            .position_pivot([1., 0.])
+            .position([screen_width, 0.], Condition::Once)
+            .size([400., 650.], Condition::Once)
+            .build(|| {
+                if ui.collapsing_header("Lara", TreeNodeFlags::DEFAULT_OPEN) {
+                    let position = ui_data.position;
+                    for (axis, value) in [("X", position.x), ("Y", position.y), ("Z", position.z)] {
+                        ui.text(format!("{} {:>12.2}", axis, value));
+                    }
+                }
+                if ui_data.position_tools && ui.collapsing_header("Position tools", TreeNodeFlags::DEFAULT_OPEN) {
+                    let mut flying = ui_data.flying;
+                    if ui.checkbox("Flight mode", &mut flying) {
+                        request(REQUEST_TOGGLE_FLYING);
+                    }
+                    if ui.is_item_hovered() {
+                        ui.tooltip_text("Holds Lara where she is; the movement hotkeys (W/A/S/D, Space and C by default) move her");
+                    }
+                    if ui.button("Save position") {
+                        request(REQUEST_STORE_POSITION);
+                    }
+                    if ui_data.has_saved_position {
+                        ui.same_line();
+                        if ui.button("Restore position") {
+                            request(REQUEST_RESTORE_POSITION);
+                        }
+                        let saved = ui_data.saved_position;
+                        ui.text("Saved:");
+                        for (axis, value) in [("X", saved.x), ("Y", saved.y), ("Z", saved.z)] {
+                            ui.text(format!("{} {:>12.2}", axis, value));
+                        }
+                    } else {
+                        ui.text_disabled("Nothing saved yet");
+                    }
+                }
+                if ui.collapsing_header("Overlay", TreeNodeFlags::DEFAULT_OPEN) {
+                    ui.text(format!("{} objects", object_count));
+                    for (label, setting) in [
+                        ("Interactable objects", &settings.interactables),
+                        ("Characters and animals", &settings.npcs),
+                        ("Trigger volumes", &settings.triggers),
+                    ] {
+                        checkbox(ui, label, setting);
+                    }
+                    if UiSettings::get(&settings.triggers) {
+                        ui.indent();
+                        let by_action = UiSettings::get(&settings.triggers_by_action);
+                        ui.text("Show by:");
+                        ui.same_line();
+                        if ui.radio_button_bool("What they do", by_action) {
+                            UiSettings::set(&settings.triggers_by_action, true);
+                        }
+                        ui.same_line();
+                        if ui.radio_button_bool("Name", !by_action) {
+                            UiSettings::set(&settings.triggers_by_action, false);
+                        }
+                        if by_action {
+                            let mut actions = UiSettings::get_u32(&settings.trigger_actions);
+                            if ui.small_button("All") {
+                                UiSettings::set_u32(&settings.trigger_actions, u32::MAX);
+                            }
+                            ui.same_line();
+                            if ui.small_button("None") {
+                                UiSettings::set_u32(&settings.trigger_actions, 0);
+                            }
+                            // Two columns, they're short
+                            for (i, action) in TRIGGER_ACTIONS.iter().enumerate() {
+                                if i % 2 == 1 {
+                                    ui.same_line_with_pos(190.);
+                                }
+                                let mut value = actions & 1 << i != 0;
+                                let style = ui.push_style_color(StyleColor::Text, TRIGGER_ACTION_COLOURS[i]);
+                                if ui.checkbox(action, &mut value) {
+                                    actions ^= 1 << i;
+                                    UiSettings::set_u32(&settings.trigger_actions, actions);
+                                }
+                                style.pop();
+                            }
+                        } else {
+                            let mut categories = UiSettings::get_u32(&settings.trigger_categories);
+                            for category in TriggerCategory::ALL {
+                                let (colour, label) = trigger_style(category);
+                                let mut value = categories & category.bit() != 0;
+                                let style = ui.push_style_color(StyleColor::Text, colour);
+                                if ui.checkbox(label, &mut value) {
+                                    categories ^= category.bit();
+                                    UiSettings::set_u32(&settings.trigger_categories, categories);
+                                }
+                                style.pop();
+                            }
+                        }
+                        slider(ui, "Opacity##triggers", 0.0, 1.0, "%.2f", &settings.trigger_opacity);
+                        ui.unindent();
+                    }
+                    checkbox(ui, "Collision meshes (F10)", &settings.collision);
+                    if UiSettings::get(&settings.collision) {
+                        ui.indent();
+                        ui.text(format!(
+                            "{} triangles ({:.1}ms to find, {:.1}ms to draw)",
+                            triangle_count, ui_data.triangle_milliseconds, self.draw_milliseconds
+                        ));
+                        checkbox(ui, "Lara's collision", &settings.lara_collision);
+                        checkbox(ui, "Movement collision (Lara's, 0x2)", &settings.coarse_meshes);
+                        slider(ui, "Radius##coarse", 0.0, MAX_MESH_RADIUS, "%.0f", &settings.coarse_radius);
+                        checkbox(ui, "Other collision", &settings.detailed_meshes);
+                        slider(ui, "Radius##detailed", 0.0, MAX_MESH_RADIUS, "%.0f", &settings.detailed_radius);
+                        if UiSettings::get(&settings.detailed_meshes) {
+                            // Which kinds of collision (bits of the meshes' filters), and how many meshes in the level have
+                            // each; what they're for isn't known, besides 0x2 (Lara's movement)
+                            ui.indent();
+                            let mut kinds = UiSettings::get_u32(&settings.other_kinds);
+                            let mut shown = 0;
+                            for bit in 0..16 {
+                                let count = ui_data.mesh_kind_counts[bit];
+                                if count == 0 {
+                                    continue;
+                                }
+                                if shown % 3 != 0 {
+                                    ui.same_line_with_pos(shown as f32 % 3.0 * 125.0 + 30.0);
+                                }
+                                shown += 1;
+                                let mut value = kinds & 1 << bit != 0;
+                                if ui.checkbox(format!("{:X} ({})##kind", 1 << bit, count), &mut value) {
+                                    kinds ^= 1 << bit;
+                                    UiSettings::set_u32(&settings.other_kinds, kinds);
+                                }
+                            }
+                            ui.unindent();
+                        }
+                        slider(ui, "Opacity", 0.0, 1.0, "%.2f", &settings.mesh_opacity);
+                        checkbox(ui, "Fade with distance from Lara", &settings.fade_with_distance);
+                        slider(ui, "Fade strength", 1.0, MAX_FADE_STRENGTH, "%.1f", &settings.fade_strength);
+                        checkbox(ui, "Hide triangles behind others", &settings.cull_hidden);
+                        ui.unindent();
+                    }
+                }
+            });
     }
 }
