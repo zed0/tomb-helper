@@ -327,20 +327,25 @@ fn describe_value(handle: ProcessHandle, address: usize, address_type: AddressTy
     }
 }
 
+/// Prints the current value of each of the offsets in `details`
+pub fn print_values(handle: ProcessHandle, base_addr: usize, details: &ProcessDetails) {
+    let mut entries: Vec<(&AddressType, &Vec<usize>)> = details.address_offsets.iter().collect();
+    entries.sort_by_key(|(t, _)| **t);
+    let mut memory = Memory::new(handle, base_addr, details.arch);
+    for (t, offsets) in &entries {
+        let value = match memory.resolve(&to_chain(offsets)) {
+            Some(address) => describe_value(handle, address, **t, &details.version.version),
+            None => "chain doesn't resolve".to_string(),
+        };
+        println!("  {:<17} {:<45} {}", format!("{:?}", t), format_offsets(offsets), value);
+    }
+}
+
 pub fn probe(version: Option<String>, watch: bool) -> Result<(), String> {
     let (pid, handle, base_addr, details) = connect(version)?;
     println!("Found {} {}", details.name, details.version.version);
-    let mut entries: Vec<(&AddressType, &Vec<usize>)> = details.address_offsets.iter().collect();
-    entries.sort_by_key(|(t, _)| **t);
     loop {
-        let mut memory = Memory::new(handle, base_addr, details.arch);
-        for (t, offsets) in &entries {
-            let value = match memory.resolve(&to_chain(offsets)) {
-                Some(address) => describe_value(handle, address, **t, &details.version.version),
-                None => "chain doesn't resolve".to_string(),
-            };
-            println!("  {:<17} {:<45} {}", format!("{:?}", t), format_offsets(offsets), value);
-        }
+        print_values(handle, base_addr, &details);
         if !watch || !find_process::is_process_running(pid) {
             return Ok(());
         }

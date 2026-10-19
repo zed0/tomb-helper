@@ -240,6 +240,15 @@ This attaches to the game as a debugger and puts hardware breakpoints on up to 4
 
 `tomb-helper trace <exe> <static address>` prints the chains the code accesses from every reference to a static address, which helps when investigating by hand.
 
+### Tomb Raider 2013 (32-bit)
+
+All of the above works for TR2013 too, with a few differences:
+
+- Its later builds (e.g. the current Steam one) were made with a newer compiler than the original release, so their code isn't alike byte for byte. When `derive` can't match a static that way, it matches by what the code around each reference does instead (the strings and imports it uses, its constants and field offsets), and says `(by what the code does)`. A match is only sure if deriving it back leads to where it started, or near it. Pointer chain levels are copied rather than matched between such builds, since a recompile doesn't change how structs are laid out, so they're always `UNSURE`: check them with `probe`.
+- Lara's position isn't in a static the code uses directly in any build, and the array it's in changed between builds, so find it with `chains` with the game running, rather than with `derive`.
+- `update-offsets` only finds the version string itself (the overlay is 64-bit only, so its offsets aren't looked for), derives the rest with `--from`, and prints the values to check instead of running `check`.
+- The newer builds don't inline small getters (like the one for the camera), so `trace` and `chains` follow what a getter returns into the code calling it.
+
 ## Porting the overlay
 
 Most of what the overlay reads is found through the game's RTTI class names (e.g. `InteractableComponent`, `cdc::CollisionSceneClient`), which are the same between patches and in Shadow of the Tomb Raider, so there's less to port than for the other offsets:

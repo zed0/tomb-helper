@@ -8,11 +8,19 @@ use iced_x86::{
     ConstantOffsets, Decoder, DecoderOptions, FlowControl, Instruction, InstructionInfoFactory, Mnemonic, OpAccess, OpKind,
     Register,
 };
-use std::collections::HashSet;
+use rayon::prelude::*;
+use std::collections::{HashMap, HashSet};
+use std::convert::TryInto;
+use std::sync::OnceLock;
 
 // Limits per trace, so a trace stays roughly within the function it started in and the few it calls
 const MAX_INSTRUCTIONS: usize = 600;
 const MAX_CALL_DEPTH: usize = 2;
+// On x86, a getter (a function returning a pointer it loads from a static) starts at most this far before the
+// reference, and at most this many of its callers are followed, each this far
+const MAX_GETTER_SIZE: usize = 0x80;
+const MAX_GETTER_CALLERS: usize = 64;
+const GETTER_CALLER_INSTRUCTIONS: usize = 100;
 
 /// A memory access made through a pointer chain that starts at a static address
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -81,6 +89,8 @@ pub struct Tracer<'a> {
     bitness: u32,
     pointer_size: usize,
     resolver: Option<CallResolver<'a>>,
+    // Where each function is called from directly (the return addresses), made when first needed
+    callers: OnceLock<HashMap<usize, Vec<usize>>>,
 }
 
 struct Walk {
@@ -96,7 +106,42 @@ impl<'a> Tracer<'a> {
             bitness: if image.is_64 { 64 } else { 32 },
             pointer_size: if image.is_64 { 8 } else { 4 },
             resolver: None,
+            callers: OnceLock::new(),
         }
+    }
+
+    /// The return addresses of the direct calls (`call rel32`) to each function in the code
+    fn callers(&self) -> &HashMap<usize, Vec<usize>> {
+        self.callers.get_or_init(|| {
+            let data = &self.image.data;
+            let mut code: Vec<(usize, usize)> =
+                self.image.sections().iter().filter(|s| s.executable).map(|s| (s.start, s.end.min(data.len()))).collect();
+            if code.is_empty() {
+                code.push((0x1000, data.len()));
+            }
+            let in_code = |rva: usize| code.iter().any(|(start, end)| (*start..*end).contains(&rva));
+            let calls: Vec<(usize, usize)> = code
+                .par_iter()
+                .flat_map(|(start, end)| (*start..end.saturating_sub(5)).into_par_iter())
+                .filter(|&rva| data[rva] == 0xE8)
+                .filter_map(|rva| {
+                    let displacement = i32::from_le_bytes(data[rva + 1..rva + 5].try_into().unwrap());
+                    let target = (rva as i64 + 5 + displacement as i64) as usize;
+                    in_code(target).then(|| (target, rva + 5))
+                })
+                .collect();
+            let mut callers: HashMap<usize, Vec<usize>> = HashMap::new();
+            for (target, returns_to) in calls {
+                callers.entry(target).or_default().push(returns_to);
+            }
+            callers
+        })
+    }
+
+    /// The return addresses of the calls to the small function containing `rva`, if it's in one
+    fn getter_callers(&self, rva: usize) -> Option<&Vec<usize>> {
+        let callers = self.callers();
+        (rva.saturating_sub(MAX_GETTER_SIZE)..=rva).rev().find_map(|start| callers.get(&start))
     }
 
     /// Follow virtual calls too, using the running game to find where they go
@@ -182,7 +227,18 @@ impl<'a> Tracer<'a> {
             accesses: vec![],
             info: InstructionInfoFactory::new(),
         };
-        self.walk(&mut walk, start, Default::default(), 0, true);
+        let returned = self.walk(&mut walk, start, Default::default(), 0, true);
+        // A getter's callers use what it returns. TR2013's later builds stopped inlining them; the 64-bit games inline
+        // them, and following them there just makes derive slow.
+        if let Some(value) = returned.filter(|v| v.path.len() == 1 && !v.is_address && !self.image.is_64) {
+            let rax = slot(Register::RAX).unwrap();
+            for &returns_to in self.getter_callers(start).into_iter().flatten().take(MAX_GETTER_CALLERS) {
+                let mut state: State = Default::default();
+                state[rax] = Some(value.clone());
+                walk.budget = GETTER_CALLER_INSTRUCTIONS;
+                self.walk(&mut walk, returns_to, state, 0, false);
+            }
+        }
         walk.accesses
     }
 
@@ -301,6 +357,15 @@ impl<'a> Tracer<'a> {
         }
     }
 
+    /// An instruction's displacement, sign extended (iced zero extends 32-bit addressing's)
+    fn displacement(&self, instruction: &Instruction) -> i64 {
+        if self.image.is_64 {
+            instruction.memory_displacement64() as i64
+        } else {
+            instruction.memory_displacement32() as i32 as i64
+        }
+    }
+
     /// The chain an instruction's memory operand refers to, if it's static or based on a tracked register
     fn memory_chain(&self, instruction: &Instruction, state: &State) -> Option<Vec<i64>> {
         if !(0..instruction.op_count()).any(|i| instruction.op_kind(i) == OpKind::Memory) {
@@ -310,14 +375,7 @@ impl<'a> Tracer<'a> {
         } else if instruction.memory_index() == Register::None {
             slot(instruction.memory_base())
                 .and_then(|s| state[s].as_ref())
-                .map(|t| {
-                    let displacement = if self.image.is_64 {
-                        instruction.memory_displacement64() as i64
-                    } else {
-                        instruction.memory_displacement32() as i32 as i64
-                    };
-                    t.chain_at(displacement)
-                })
+                .map(|t| t.chain_at(self.displacement(instruction)))
         } else {
             None
         }
@@ -370,7 +428,7 @@ impl<'a> Tracer<'a> {
                     new_value = slot(instruction.memory_base())
                         .and_then(|s| state[s].clone())
                         .map(|mut t| {
-                            t.add += instruction.memory_displacement64() as i64;
+                            t.add += self.displacement(instruction);
                             t
                         });
                 }
@@ -509,6 +567,35 @@ mod tests {
             .map(|a| a.chain)
             .collect();
         assert_eq!(chains, vec![vec![0x2000], vec![0x2000, 0x0], vec![0x2000, 0x0, 0x70], vec![0x2000, 0x10]]);
+    }
+
+    #[test]
+    fn follows_getters_into_their_callers() {
+        let code = [
+            0xE8, 0x05, 0x00, 0x00, 0x00, // call getter
+            0x8B, 0x48, 0x50, // mov ecx, [eax+0x50]
+            0xC3, // ret
+            0xCC, // padding
+            0xA1, 0x00, 0x20, 0x40, 0x00, // getter at 0x100A: mov eax, [0x402000]
+            0xC3,
+        ];
+        let image = image(&code, false);
+        let tracer = Tracer::new(&image);
+        let chains: Vec<Vec<i64>> = tracer.trace(0x100A).into_iter().map(|a| a.chain).collect();
+        assert_eq!(chains, vec![vec![0x2000], vec![0x2000, 0x50]]);
+    }
+
+    #[test]
+    fn negative_offsets_on_x86_stay_negative() {
+        let code = [
+            0x8B, 0x0D, 0x00, 0x20, 0x40, 0x00, // mov ecx, [0x402000]
+            0x8D, 0x41, 0xF0, // lea eax, [ecx-0x10]
+            0x8B, 0x50, 0x04, // mov edx, [eax+4]
+            0xC3,
+        ];
+        let image = image(&code, false);
+        let chains: Vec<Vec<i64>> = Tracer::new(&image).trace(0x1000).into_iter().map(|a| a.chain).collect();
+        assert_eq!(chains, vec![vec![0x2000], vec![0x2000, -0xC]]);
     }
 
     #[test]

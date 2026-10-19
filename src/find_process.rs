@@ -36,6 +36,7 @@ pub fn find_process(
             details.address_offsets.get(&AddressType::Version)?.clone(),
             base_addr,
             details.version.version.len(),
+            details.arch,
         )
         .ok()?;
 
@@ -170,11 +171,12 @@ pub fn try_read_std_string_utf8(
     offsets: Vec<usize>,
     base_addr: usize,
     length: usize,
+    arch: process_memory::Architecture,
 ) -> Result<String, std::io::Error> {
     let mut offsets_with_base = offsets.clone();
     offsets_with_base[0] += base_addr;
 
-    let offset = DataMember::<u8>::new_offset(handle, offsets_with_base);
+    let offset = DataMember::<u8>::new_offset(handle, offsets_with_base).set_arch(arch);
     let mut bytes = vec![0_u8; length];
     handle.copy_address(offset.get_offset()?, &mut bytes)?;
 

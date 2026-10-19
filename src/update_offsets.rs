@@ -3,6 +3,9 @@
 //! position through the code chains that reach her instance (the one with a PlayerComponent), the ground probes by
 //! their contents, and the version string. Given the previous build (`--from`), it also derives the rest the way
 //! `derive` does. It then saves the entry to the offsets file and runs `check` on it.
+//!
+//! The overlay is 64-bit only, so for a 32-bit game (TR2013) the RTTI statics, Lara's instance and the probes are
+//! skipped: the version string is found, the rest is derived from `--from`, and the values are printed to check.
 
 use crate::chains;
 use crate::check;
@@ -40,9 +43,16 @@ pub fn update_offsets(from: Option<String>, from_version: Option<String>, dry_ru
     println!("Dumping the game...");
     let image = PeImage::dump(pid).map_err(|e| format!("Could not dump the game: {}", e))?;
 
+    let overlay = image.is_64;
+    let pointer_size = if image.is_64 { 8 } else { 4 };
+    if !overlay {
+        println!("A 32-bit game, which the overlay doesn't support, so only looking for the version string here");
+    }
+
     // How each offset list was found, for the summary
     let mut found: BTreeMap<AddressType, (Vec<usize>, String)> = BTreeMap::new();
-    for (address_type, chain) in discover::find_statics(handle, base_address, &image) {
+    let statics = if overlay { discover::find_statics(handle, base_address, &image) } else { BTreeMap::new() };
+    for (address_type, chain) in statics {
         let how = match template.address_offsets.get(&address_type) {
             Some(previous) if *previous == chain => "RTTI, unchanged",
             Some(_) => "RTTI, moved",
@@ -55,9 +65,10 @@ pub fn update_offsets(from: Option<String>, from_version: Option<String>, dry_ru
         .get(&AddressType::InstanceArray)
         .map(|(chain, _)| chain.clone())
         .or_else(|| existing.as_ref().and_then(|d| d.address_offsets.get(&AddressType::InstanceArray).cloned()));
-    let lara = array.and_then(|array| find_lara(handle, base_address, array[0]));
+    let lara = array.filter(|_| overlay).and_then(|array| find_lara(handle, base_address, array[0]));
     let mut targets = vec![];
     match lara {
+        None if !overlay => {}
         Some((address, position)) => {
             println!("Lara's instance is at {:#X}, at ({:.0}, {:.0}, {:.0})", address, position.x, position.y, position.z);
             // Y and Z follow X, so they use its chain
@@ -72,7 +83,7 @@ pub fn update_offsets(from: Option<String>, from_version: Option<String>, dry_ru
         }
         None => println!("Lara: NOT FOUND (no instance with a PlayerComponent; load into a level)"),
     }
-    let version = read_version(handle, base_address, &template);
+    let version = read_version(handle, base_address, &template, pointer_size);
     if let Some((address, string)) = &version {
         println!("Version string \"{}\"", string);
         targets.push((AddressType::Version, *address));
@@ -83,7 +94,7 @@ pub fn update_offsets(from: Option<String>, from_version: Option<String>, dry_ru
         let unchanged = template
             .address_offsets
             .get(&address_type)
-            .filter(|chain| resolve(handle, base_address, chain) == Some(target));
+            .filter(|chain| resolve(handle, base_address, chain, pointer_size) == Some(target));
         match unchanged {
             Some(chain) => {
                 found.insert(address_type, (chain.clone(), "unchanged".to_string()));
@@ -131,7 +142,8 @@ pub fn update_offsets(from: Option<String>, from_version: Option<String>, dry_ru
     // Anything not found keeps what it was (for a known build), or is left for review (for a new one)
     let mut offsets: BTreeMap<AddressType, Vec<usize>> = BTreeMap::new();
     for (address_type, chain) in &template.address_offsets {
-        if found.contains_key(address_type) || unverified.contains_key(address_type) {
+        // An unsure guess doesn't replace what a known build has, but is kept to look at
+        if found.contains_key(address_type) || (existing.is_none() && unverified.contains_key(address_type)) {
             continue;
         }
         if existing.is_some() {
@@ -183,8 +195,14 @@ pub fn update_offsets(from: Option<String>, from_version: Option<String>, dry_ru
     } else {
         discover::save_entry(entry)?;
     }
-    println!("\nChecking it...");
-    check::run(pid, handle, base_address, details)
+    if overlay {
+        println!("\nChecking it...");
+        check::run(pid, handle, base_address, details)
+    } else {
+        println!("\nWhat they point to now (check Lara's position, the camera and so on look right):");
+        chains::print_values(handle, base_address, &details);
+        Ok(())
+    }
 }
 
 /// The running game (a known executable), its known details if this build is known, and the details to start from:
@@ -271,19 +289,24 @@ fn find_probes(image: &PeImage, lara: &Position) -> Option<usize> {
 }
 
 /// Where the chain points, following the same rules as `TrackedMemory`
-fn resolve(handle: ProcessHandle, base_address: usize, chain: &[usize]) -> Option<usize> {
+fn resolve(handle: ProcessHandle, base_address: usize, chain: &[usize], pointer_size: usize) -> Option<usize> {
     let mut address = base_address + chain[0];
     for offset in &chain[1..] {
         let mut pointer = [0u8; 8];
-        handle.copy_address(address, &mut pointer).ok()?;
+        handle.copy_address(address, &mut pointer[..pointer_size]).ok()?;
         address = (u64::from_le_bytes(pointer) as usize).checked_add(*offset)?;
     }
     Some(address)
 }
 
 /// Where the version string is and what it says, if the previous build's `Version` offsets still find one
-fn read_version(handle: ProcessHandle, base_address: usize, template: &ProcessDetails) -> Option<(usize, String)> {
-    let address = resolve(handle, base_address, template.address_offsets.get(&AddressType::Version)?)?;
+fn read_version(
+    handle: ProcessHandle,
+    base_address: usize,
+    template: &ProcessDetails,
+    pointer_size: usize,
+) -> Option<(usize, String)> {
+    let address = resolve(handle, base_address, template.address_offsets.get(&AddressType::Version)?, pointer_size)?;
     let mut bytes = [0u8; VERSION_LENGTH];
     handle.copy_address(address, &mut bytes).ok()?;
     let end = bytes.iter().position(|&b| b == 0)?;

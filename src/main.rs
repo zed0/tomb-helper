@@ -28,6 +28,7 @@ mod collision_mesh;
 mod components;
 mod code_trace;
 mod derive;
+mod normalised;
 mod discover;
 mod pe_image;
 mod position_handler;
