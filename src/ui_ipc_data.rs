@@ -14,6 +14,7 @@ pub const TRIGGER_LABEL_LENGTH: usize = 128;
 pub const MAX_TRIANGLES: usize = 163_840;
 pub const MAX_TRIGGERS: usize = 256;
 pub const MAX_TRIGGER_LINES: usize = 16384;
+pub const MAX_TRIGGER_FACES: usize = 32768;
 
 #[repr(u32)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -167,6 +168,7 @@ pub fn trigger_action_mask(names: &[String]) -> u32 {
 pub struct TriggerLabel {
     pub position: Position,
     pub category: TriggerCategory,
+    pub action: u32,
     pub name: [u8; TRIGGER_LABEL_LENGTH],
 }
 
@@ -176,6 +178,16 @@ impl TriggerLabel {
     }
 }
 
+// Part of a trigger's surface, in world space (drawn from both sides)
+#[repr(C)]
+#[derive(Copy, Clone, Debug)]
+pub struct TriggerFace {
+    pub corners: [Position; 3],
+    pub category: TriggerCategory,
+    // The `TRIGGER_ACTIONS` index it's coloured by when shown by what triggers do
+    pub action: u32,
+}
+
 // Part of a trigger's outline, in world space
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
@@ -183,6 +195,9 @@ pub struct Line {
     pub a: Position,
     pub b: Position,
     pub category: TriggerCategory,
+    pub action: u32,
+    // Lara's in the trigger
+    pub inside: bool,
 }
 
 // Nul padded
@@ -282,6 +297,8 @@ pub struct UiData {
     pub triggers: [TriggerLabel; MAX_TRIGGERS],
     pub trigger_line_count: usize,
     pub trigger_lines: [Line; MAX_TRIGGER_LINES],
+    pub trigger_face_count: usize,
+    pub trigger_faces: [TriggerFace; MAX_TRIGGER_FACES],
     // The level's collision near Lara, closest first. Last, as only the used part of it is copied.
     pub triangle_count: usize,
     // How long the exe took to find them
@@ -353,6 +370,8 @@ pub struct UiSettings {
     pub fade_strength: AtomicU32,
     // Only draw the triangles not hidden behind others
     pub cull_hidden: AtomicBool,
+    // How opaque trigger volumes are filled, 0 to 1
+    pub trigger_opacity: AtomicU32,
     // Boxes round things Lara can interact with, and trigger volumes
     pub interactables: AtomicBool,
     pub triggers: AtomicBool,

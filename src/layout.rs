@@ -317,9 +317,9 @@ group! {
         /// Floats, as many as the type needs
         size = 0x8,
         record_size = 0x38,
-        /// Half extents x, y, z (unverified whether they're half)
+        /// Half extents x, y, z
         box_type = 1,
-        /// A rectangle in the x/y plane, half width and height (unverified)
+        /// An upright rectangle in the x/z plane, half width (x) and half height (z)
         plane_type = 3,
         /// Radius
         sphere_type = 4,

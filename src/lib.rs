@@ -37,7 +37,51 @@ fn trigger_style(category: TriggerCategory) -> ([f32; 4], &'static str) {
         TriggerCategory::Objects => ([0.6, 0.5, 0.35, 1.0], "Objects (bushes, pickups, ...)"),
     }
 }
+// For each of `TRIGGER_ACTIONS`, in order. Not white, which is for triggers Lara's in.
+const TRIGGER_ACTION_COLOURS: [[f32; 4]; 28] = [
+    [0.3, 1.0, 0.3, 1.0],    // checkpoint
+    [1.0, 0.85, 0.2, 1.0],   // objective
+    [0.8, 0.7, 0.3, 1.0],    // progress
+    [1.0, 0.3, 0.9, 1.0],    // cutscene
+    [0.2, 0.9, 0.9, 1.0],    // moveset
+    [0.7, 0.7, 0.7, 1.0],    // camera
+    [0.4, 0.65, 1.0, 1.0],   // streaming
+    [0.6, 0.4, 1.0, 1.0],    // teleport
+    [1.0, 0.55, 0.1, 1.0],   // combat
+    [1.0, 0.4, 0.3, 1.0],    // spawn
+    [0.7, 0.3, 0.25, 1.0],   // despawn
+    [1.0, 0.15, 0.15, 1.0],  // damage
+    [1.0, 0.6, 0.75, 1.0],   // dialogue
+    [1.0, 1.0, 0.4, 1.0],    // tutorial
+    [0.8, 0.8, 0.55, 1.0],   // look at
+    [0.85, 0.6, 0.4, 1.0],   // NPC
+    [0.5, 0.8, 0.45, 1.0],   // inventory
+    [1.0, 0.7, 0.4, 1.0],    // campsite
+    [1.0, 0.9, 0.55, 1.0],   // lighting
+    [0.6, 0.8, 0.95, 1.0],   // weather
+    [0.75, 0.6, 1.0, 1.0],   // audio
+    [0.6, 1.0, 0.8, 1.0],    // UI
+    [0.8, 0.5, 0.6, 1.0],    // rumble
+    [0.55, 0.55, 0.75, 1.0], // saves state
+    [0.95, 0.75, 0.55, 1.0], // instances
+    [1.0, 0.45, 0.7, 1.0],   // something else
+    [0.5, 0.5, 0.5, 1.0],    // no script
+    [0.35, 0.35, 0.35, 1.0], // unchecked
+];
+
+const _: () = assert!(TRIGGER_ACTION_COLOURS.len() == TRIGGER_ACTIONS.len());
+
+// A trigger's colour: by what it does, or by the category of its name
+fn trigger_colour(by_action: bool, category: TriggerCategory, action: u32) -> [f32; 4] {
+    match TRIGGER_ACTION_COLOURS.get(action as usize) {
+        Some(colour) if by_action => *colour,
+        _ => trigger_style(category).0,
+    }
+}
+
 const PROBE_COLOUR: [f32; 4] = [0.0, 1.0, 1.0, 1.0];
+// The outline of a trigger Lara's in
+const INSIDE_TRIGGER_COLOUR: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
 // Lara's movement capsule, and the shape it's changing to
 const PROXY_COLOURS: [[f32; 4]; 2] = [COLLISION_COLOUR, [1.0, 0.0, 0.0, 1.0]];
 // Her collision capsules (her own, and those attached to it while they're used), normally and while they're pushing
@@ -232,7 +276,7 @@ impl Projector {
     }
 }
 
-fn draw_box(draw_list: &DrawListMut, projector: &Projector, object: &ObjectBox) {
+fn draw_box(ui: &Ui, draw_list: &DrawListMut, projector: &Projector, object: &ObjectBox) {
     let colour = match (object.category, object.kind) {
         (ObjectCategory::Interactable, _) => INTERACTABLE_COLOUR,
         (ObjectCategory::Npc, _) => NPC_COLOUR,
@@ -243,16 +287,16 @@ fn draw_box(draw_list: &DrawListMut, projector: &Projector, object: &ObjectBox) 
     let model = game_matrix(&object.transform);
     let (min, max) = (object.min, object.max);
     // Corner i uses max for each axis whose bit is set in i
-    let corners: Vec<Vector4<f32>> = (0..8)
+    let local: Vec<Vector3<f32>> = (0..8)
         .map(|i| {
-            let point = Vector3::new(
+            Vector3::new(
                 if i & 1 != 0 { max.x } else { min.x },
                 if i & 2 != 0 { max.y } else { min.y },
                 if i & 4 != 0 { max.z } else { min.z },
-            );
-            projector.to_clip(&model, point)
+            )
         })
         .collect();
+    let corners: Vec<Vector4<f32>> = local.iter().map(|&point| projector.to_clip(&model, point)).collect();
 
     for a in 0..8 {
         for axis in [1, 2, 4] {
@@ -264,9 +308,13 @@ fn draw_box(draw_list: &DrawListMut, projector: &Projector, object: &ObjectBox) 
         }
     }
 
-    let top = (corners[4] + corners[5] + corners[6] + corners[7]) / 4.0;
-    if top.w >= NEAR_CLIP_W {
-        draw_list.add_text(projector.to_screen(top), colour, object.name());
+    // Centred above its highest point in the world (it can be tilted), like the trigger labels
+    let world: Vec<Vector3<f32>> = local.iter().map(|&p| (model * p.push(1.0)).xyz()).collect();
+    let (low, high) = world.iter().fold((world[0], world[0]), |(low, high), p| (low.inf(p), high.sup(p)));
+    let top = Vector3::new((low.x + high.x) / 2.0, (low.y + high.y) / 2.0, high.z);
+    if let Some(point) = projector.project(top) {
+        let size = ui.calc_text_size(object.name());
+        draw_list.add_text([point[0] - size[0] / 2.0, point[1] - size[1]], colour, object.name());
     }
 }
 
@@ -339,6 +387,11 @@ fn triangle_on_screen(projector: &Projector, triangle: &Triangle) -> Option<[Vec
     if normal.dot(&(projector.camera_position - world[0])) <= 0.0 {
         return None;
     }
+    face_on_screen(projector, world)
+}
+
+// The corners in clip space, unless they can't be on screen
+fn face_on_screen(projector: &Projector, world: [Vector3<f32>; 3]) -> Option<[Vector4<f32>; 3]> {
     let corners = world.map(|c| projector.world_to_clip(c));
     // All off the same side of the screen, or behind the camera
     let outside = |test: fn(&Vector4<f32>) -> bool| corners.iter().all(test);
@@ -502,10 +555,12 @@ impl ImguiRenderLoop for TombHelperHud {
                                 ui.same_line_with_pos(190.);
                             }
                             let mut value = actions & 1 << i != 0;
+                            let style = ui.push_style_color(StyleColor::Text, TRIGGER_ACTION_COLOURS[i]);
                             if ui.checkbox(action, &mut value) {
                                 actions ^= 1 << i;
                                 UiSettings::set_u32(&settings.trigger_actions, actions);
                             }
+                            style.pop();
                         }
                     } else {
                         let mut categories = UiSettings::get_u32(&settings.trigger_categories);
@@ -520,6 +575,7 @@ impl ImguiRenderLoop for TombHelperHud {
                             style.pop();
                         }
                     }
+                    slider(ui, "Opacity##triggers", 0.0, 1.0, "%.2f", &settings.trigger_opacity);
                     ui.unindent();
                 }
                 checkbox(ui, "Collision meshes (F10)", &settings.collision);
@@ -617,18 +673,38 @@ impl ImguiRenderLoop for TombHelperHud {
                 ObjectCategory::Named => true,
             };
             if shown {
-                draw_box(&draw_list, &projector, object);
+                draw_box(ui, &draw_list, &projector, object);
             }
         }
         if triggers {
+            let trigger_opacity = UiSettings::get_f32(&settings.trigger_opacity);
+            let by_action = UiSettings::get(&settings.triggers_by_action);
+            if trigger_opacity > 0.0 {
+                let face_count = ui_data.trigger_face_count.min(ui_data.trigger_faces.len());
+                for face in &ui_data.trigger_faces[..face_count] {
+                    let world = face.corners.map(|c| Vector3::new(c.x, c.y, c.z));
+                    if let Some(corners) = face_on_screen(&projector, world) {
+                        let fill = with_opacity(trigger_colour(by_action, face.category, face.action), trigger_opacity);
+                        let polygon = projector.project_polygon(&corners);
+                        for i in 2..polygon.len() {
+                            draw_list.add_triangle(polygon[0], polygon[i - 1], polygon[i], fill).filled(true).build();
+                        }
+                    }
+                }
+            }
             let line_count = ui_data.trigger_line_count.min(ui_data.trigger_lines.len());
             for line in &ui_data.trigger_lines[..line_count] {
                 let vector = |p: &crate::position::Position| Vector3::new(p.x, p.y, p.z);
-                draw_world_line(&draw_list, &projector, vector(&line.a), vector(&line.b), trigger_style(line.category).0);
+                let colour =
+                    if line.inside { INSIDE_TRIGGER_COLOUR } else { trigger_colour(by_action, line.category, line.action) };
+                draw_world_line(&draw_list, &projector, vector(&line.a), vector(&line.b), colour);
             }
             for label in &ui_data.triggers[..ui_data.trigger_count.min(ui_data.triggers.len())] {
                 if let Some(point) = projector.project(Vector3::new(label.position.x, label.position.y, label.position.z)) {
-                    draw_list.add_text(point, trigger_style(label.category).0, label.name());
+                    // Above the top of the volume, centred
+                    let size = ui.calc_text_size(label.name());
+                    let point = [point[0] - size[0] / 2.0, point[1] - size[1]];
+                    draw_list.add_text(point, trigger_colour(by_action, label.category, label.action), label.name());
                 }
             }
         }

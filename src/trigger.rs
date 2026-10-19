@@ -2,7 +2,7 @@ use crate::components::{self, Components};
 use crate::layout;
 use crate::position::Position;
 use crate::ui_ipc_data::TriggerCategory;
-use nalgebra::Vector3;
+use nalgebra::{Matrix3, Vector3};
 use process_memory::{CopyAddress, ProcessHandle};
 use std::convert::TryInto;
 
@@ -53,6 +53,9 @@ pub fn categorise(name: &str, full_name: &str) -> TriggerCategory {
 const MAX_POLY_POINTS: usize = 64;
 // Lines per circle when drawing spheres
 const SPHERE_SEGMENTS: usize = 24;
+// The filled sphere's slices round and from pole to pole
+const SPHERE_FACE_SEGMENTS: usize = 12;
+const SPHERE_FACE_RINGS: usize = 6;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Kinds {
@@ -144,13 +147,8 @@ pub fn outline(shape: &Shape, matrix: &[f32; 16]) -> Vec<(Position, Position)> {
                 }
             }
         }
-        Shape::Plane(x, y) => {
-            let corners = [
-                Vector3::new(-x, -y, 0.0),
-                Vector3::new(*x, -y, 0.0),
-                Vector3::new(*x, *y, 0.0),
-                Vector3::new(-x, *y, 0.0),
-            ];
+        Shape::Plane(x, z) => {
+            let corners = plane_corners(*x, *z);
             for i in 0..4 {
                 line(corners[i], corners[(i + 1) % 4]);
             }
@@ -177,6 +175,169 @@ pub fn outline(shape: &Shape, matrix: &[f32; 16]) -> Vec<(Position, Position)> {
         }
     }
     lines
+}
+
+// A plane is upright in its instance's space: half its width along x, half its height along z (going by the bounds the
+// game keeps for it, TriggerComponent +0xC0/+0xD0)
+fn plane_corners(x: f32, z: f32) -> [Vector3<f32>; 4] {
+    [Vector3::new(-x, 0.0, -z), Vector3::new(x, 0.0, -z), Vector3::new(x, 0.0, z), Vector3::new(-x, 0.0, z)]
+}
+
+/// Whether a world space point is inside the shape (never for a plane, which has no inside), for a row-major
+/// object-to-world matrix of row vectors
+pub fn contains(shape: &Shape, matrix: &[f32; 16], point: &Position) -> bool {
+    // Back into the shape's space: solve local * M3 + translation = point
+    let m = Matrix3::new(
+        matrix[0], matrix[4], matrix[8], matrix[1], matrix[5], matrix[9], matrix[2], matrix[6], matrix[10],
+    );
+    let offset = Vector3::new(point.x - matrix[12], point.y - matrix[13], point.z - matrix[14]);
+    let local = match m.try_inverse() {
+        Some(inverse) => inverse * offset,
+        None => return false,
+    };
+    match shape {
+        Shape::Box(half) => local.iter().zip(half.iter()).all(|(p, h)| p.abs() <= h.abs()),
+        Shape::Plane(_, _) => false,
+        Shape::Sphere(radius) => local.norm() <= *radius,
+        Shape::Poly(points) => {
+            // Between the polygon and where it's swept to (taking the sweep as the same for every corner), and inside
+            // the polygon seen along the sweep
+            let sweep = match points.first() {
+                Some((_, sweep)) if sweep.norm() > 0.0 => *sweep,
+                _ => return false,
+            };
+            let along = |p: &Vector3<f32>| p.dot(&sweep) / sweep.norm_squared();
+            let base = points.iter().map(|(p, _)| along(p)).sum::<f32>() / points.len() as f32;
+            let t = along(&local) - base;
+            if !(0.0..=1.0).contains(&t) {
+                return false;
+            }
+            let u = sweep.cross(&if sweep.x.abs() < 0.9 { Vector3::x() } else { Vector3::y() }).normalize();
+            let v = sweep.normalize().cross(&u);
+            let flat = |p: &Vector3<f32>| (p.dot(&u), p.dot(&v));
+            let (x, y) = flat(&local);
+            // Crossings of a ray along +u
+            let mut inside = false;
+            for (i, (a, _)) in points.iter().enumerate() {
+                let ((ax, ay), (bx, by)) = (flat(a), flat(&points[(i + 1) % points.len()].0));
+                if (ay > y) != (by > y) && x < ax + (y - ay) * (bx - ax) / (by - ay) {
+                    inside = !inside;
+                }
+            }
+            inside
+        }
+    }
+}
+
+// The shape's surface as world space triangles (winding not consistent), for a row-major object-to-world matrix of row
+// vectors
+pub fn faces(shape: &Shape, matrix: &[f32; 16]) -> Vec<[Position; 3]> {
+    let row = |r: usize| Vector3::new(matrix[r * 4], matrix[r * 4 + 1], matrix[r * 4 + 2]);
+    let world = |p: Vector3<f32>| {
+        let w = row(0) * p.x + row(1) * p.y + row(2) * p.z + row(3);
+        Position { x: w.x, y: w.y, z: w.z }
+    };
+    let mut faces = vec![];
+    let quad = |a: Vector3<f32>, b: Vector3<f32>, c: Vector3<f32>, d: Vector3<f32>| {
+        [[world(a), world(b), world(c)], [world(a), world(c), world(d)]]
+    };
+    match shape {
+        Shape::Box(half) => {
+            let corner = |i: usize| {
+                Vector3::new(
+                    if i & 1 != 0 { half.x } else { -half.x },
+                    if i & 2 != 0 { half.y } else { -half.y },
+                    if i & 4 != 0 { half.z } else { -half.z },
+                )
+            };
+            // Each side is the corners with one axis' bit fixed, in order round it
+            for (axis, others) in [(1, [2, 4]), (2, [1, 4]), (4, [1, 2])] {
+                for side in [0, axis] {
+                    let [u, v] = others;
+                    faces.extend(quad(corner(side), corner(side | u), corner(side | u | v), corner(side | v)));
+                }
+            }
+        }
+        Shape::Plane(x, z) => {
+            let [a, b, c, d] = plane_corners(*x, *z);
+            faces.extend(quad(a, b, c, d))
+        }
+        Shape::Sphere(radius) => {
+            let point = |segment: usize, ring: usize| {
+                let around = segment as f32 * std::f32::consts::TAU / SPHERE_FACE_SEGMENTS as f32;
+                let down = ring as f32 * std::f32::consts::PI / SPHERE_FACE_RINGS as f32;
+                Vector3::new(down.sin() * around.cos(), down.sin() * around.sin(), down.cos()) * *radius
+            };
+            for ring in 0..SPHERE_FACE_RINGS {
+                for segment in 0..SPHERE_FACE_SEGMENTS {
+                    let (a, b) = (point(segment, ring), point(segment + 1, ring));
+                    let (c, d) = (point(segment + 1, ring + 1), point(segment, ring + 1));
+                    // The rings at the poles are points, so those quads are triangles
+                    if ring == 0 {
+                        faces.push([world(a), world(c), world(d)]);
+                    } else if ring == SPHERE_FACE_RINGS - 1 {
+                        faces.push([world(a), world(b), world(c)]);
+                    } else {
+                        faces.extend(quad(a, b, c, d));
+                    }
+                }
+            }
+        }
+        Shape::Poly(points) => {
+            for (i, (point, sweep)) in points.iter().enumerate() {
+                let (next, next_sweep) = &points[(i + 1) % points.len()];
+                faces.extend(quad(*point, *next, next + next_sweep, point + sweep));
+            }
+            let bottom: Vec<Vector3<f32>> = points.iter().map(|(p, _)| *p).collect();
+            let top: Vec<Vector3<f32>> = points.iter().map(|(p, s)| p + s).collect();
+            for cap in [bottom, top] {
+                for [a, b, c] in triangulate(&cap) {
+                    faces.push([world(cap[a]), world(cap[b]), world(cap[c])]);
+                }
+            }
+        }
+    }
+    faces
+}
+
+// A polygon (roughly flat, maybe concave) as triangles of its corners' indices, by clipping off ears
+fn triangulate(polygon: &[Vector3<f32>]) -> Vec<[usize; 3]> {
+    if polygon.len() < 3 {
+        return vec![];
+    }
+    // Newell's normal, which also says which way round the corners go
+    let mut normal = Vector3::zeros();
+    for (i, a) in polygon.iter().enumerate() {
+        let b = polygon[(i + 1) % polygon.len()];
+        normal += Vector3::new((a.y - b.y) * (a.z + b.z), (a.z - b.z) * (a.x + b.x), (a.x - b.x) * (a.y + b.y));
+    }
+    let convex = |a: Vector3<f32>, b: Vector3<f32>, c: Vector3<f32>| (b - a).cross(&(c - b)).dot(&normal) > 0.0;
+    // Including on its edges, so an ear can't have another corner on its far side
+    let left_of = |a: Vector3<f32>, b: Vector3<f32>, p: Vector3<f32>| (b - a).cross(&(p - b)).dot(&normal) >= 0.0;
+    let inside = |p: Vector3<f32>, a: Vector3<f32>, b: Vector3<f32>, c: Vector3<f32>| {
+        left_of(a, b, p) && left_of(b, c, p) && left_of(c, a, p)
+    };
+    let mut left: Vec<usize> = (0..polygon.len()).collect();
+    let mut triangles = vec![];
+    while left.len() > 3 {
+        let n = left.len();
+        let ear = (0..n).find(|&i| {
+            let (a, b, c) = (left[(i + n - 1) % n], left[i], left[(i + 1) % n]);
+            convex(polygon[a], polygon[b], polygon[c])
+                && !left.iter().any(|&p| ![a, b, c].contains(&p) && inside(polygon[p], polygon[a], polygon[b], polygon[c]))
+        });
+        // None if it's twisted or degenerate; just fan the rest
+        let i = match ear {
+            Some(i) => i,
+            None => break,
+        };
+        triangles.push([left[(i + n - 1) % n], left[i], left[(i + 1) % n]]);
+        left.remove(i);
+    }
+    for i in 1..left.len() - 1 {
+        triangles.push([left[0], left[i], left[i + 1]]);
+    }
+    triangles
 }
 
 fn read_usize_at(handle: ProcessHandle, address: usize) -> Option<usize> {
@@ -207,6 +368,69 @@ fn vector_at(bytes: &[u8], offset: usize) -> Vector3<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn area(faces: &[[Position; 3]]) -> f32 {
+        let v = |p: &Position| Vector3::new(p.x, p.y, p.z);
+        faces.iter().map(|[a, b, c]| (v(b) - v(a)).cross(&(v(c) - v(a))).norm() / 2.0).sum()
+    }
+
+    #[test]
+    fn points_inside_shapes() {
+        let p = |x, y, z| Position { x, y, z };
+        // Scaled by 2 and moved to (100, 0, 0)
+        let matrix = [2.0, 0.0, 0.0, 0.0, 0.0, 2.0, 0.0, 0.0, 0.0, 0.0, 2.0, 0.0, 100.0, 0.0, 0.0, 1.0];
+        let cube = Shape::Box(Vector3::new(1.0, 1.0, 1.0));
+        assert!(contains(&cube, &matrix, &p(101.5, -1.5, 1.9)));
+        assert!(!contains(&cube, &matrix, &p(102.5, 0.0, 0.0)));
+        assert!(contains(&Shape::Sphere(3.0), &matrix, &p(100.0, 5.0, 0.0)));
+        // (2, 2.5, 0) in its space
+        assert!(!contains(&Shape::Sphere(3.0), &matrix, &p(104.0, 5.0, 0.0)));
+        assert!(!contains(&Shape::Plane(10.0, 10.0), &matrix, &p(100.0, 0.0, 0.0)));
+        // An L shaped prism 10 high
+        let l = [(0.0, 0.0), (2.0, 0.0), (2.0, 1.0), (1.0, 1.0), (1.0, 2.0), (0.0, 2.0)];
+        let prism = Shape::Poly(l.iter().map(|&(x, y)| (Vector3::new(x, y, 0.0), Vector3::new(0.0, 0.0, 10.0))).collect());
+        assert!(contains(&prism, &IDENTITY, &p(0.5, 1.5, 5.0)));
+        assert!(contains(&prism, &IDENTITY, &p(1.5, 0.5, 9.0)));
+        assert!(!contains(&prism, &IDENTITY, &p(1.5, 1.5, 5.0)));
+        assert!(!contains(&prism, &IDENTITY, &p(0.5, 0.5, 11.0)));
+    }
+
+    #[test]
+    fn planes_are_upright() {
+        let corners: Vec<Position> = faces(&Shape::Plane(1.0, 2.0), &IDENTITY).into_iter().flatten().collect();
+        assert!(corners.iter().all(|c| c.y == 0.0 && c.x.abs() == 1.0 && c.z.abs() == 2.0));
+    }
+
+    #[test]
+    fn box_faces_cover_its_sides() {
+        let faces = faces(&Shape::Box(Vector3::new(1.0, 2.0, 3.0)), &IDENTITY);
+        assert_eq!(faces.len(), 12);
+        // 2 * (2*4 + 2*6 + 4*6)
+        assert!((area(&faces) - 88.0).abs() < 1e-3, "{}", area(&faces));
+    }
+
+    #[test]
+    fn sphere_faces_are_nearly_its_area() {
+        let faces = faces(&Shape::Sphere(10.0), &IDENTITY);
+        let sphere = 4.0 * std::f32::consts::PI * 100.0;
+        assert!(area(&faces) < sphere && area(&faces) > sphere * 0.9, "{}", area(&faces));
+    }
+
+    #[test]
+    fn concave_caps_are_triangulated_inside_the_polygon() {
+        // An L shape, area 3
+        let l = [(0.0, 0.0), (2.0, 0.0), (2.0, 1.0), (1.0, 1.0), (1.0, 2.0), (0.0, 2.0)];
+        for points in [l.to_vec(), l.iter().rev().copied().collect()] {
+            let polygon: Vec<Vector3<f32>> = points.iter().map(|&(x, y)| Vector3::new(x, y, 5.0)).collect();
+            let triangles = triangulate(&polygon);
+            assert_eq!(triangles.len(), 4);
+            let faces: Vec<[Position; 3]> = triangles
+                .iter()
+                .map(|t| t.map(|i| Position { x: polygon[i].x, y: polygon[i].y, z: polygon[i].z }))
+                .collect();
+            assert!((area(&faces) - 3.0).abs() < 1e-4, "{}", area(&faces));
+        }
+    }
 
     const IDENTITY: [f32; 16] = [1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1.];
 
