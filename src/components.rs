@@ -3,6 +3,7 @@
 //! which is learnt by looking through a table for a component of that class (one whose back pointer is the instance;
 //! many tables are shorter than the slots used, so a slot can hold something else).
 
+use crate::game_memory::{pointer_from, pointer_size, read_pointer};
 use crate::layout;
 use process_memory::{CopyAddress, ProcessHandle};
 use std::collections::{HashMap, HashSet};
@@ -60,7 +61,7 @@ impl Classes {
     }
 
     pub fn name(&mut self, handle: ProcessHandle, object: usize) -> Option<String> {
-        let vtable = read_usize(handle, object)?;
+        let vtable = read_pointer(handle, object)?;
         self.vtable_name(handle, vtable)
     }
 
@@ -70,8 +71,8 @@ impl Classes {
             .entry(vtable)
             .or_insert_with(|| {
                 // Garbage pointers can be anywhere, and reading from them just fails
-                let pointer_size = layout::pointer_size();
-                let locator = read_usize(handle, vtable.checked_sub(pointer_size)?)?;
+                let pointer_size = pointer_size();
+                let locator = read_pointer(handle, vtable.checked_sub(pointer_size)?)?;
                 let mut field = [0u8; 4];
                 handle.copy_address(locator.wrapping_add(LOCATOR_TYPE_DESCRIPTOR), &mut field).ok()?;
                 let field = u32::from_le_bytes(field) as usize;
@@ -129,7 +130,7 @@ impl Components {
 
     /// The instance's component of the class, if it has one
     pub fn get(&mut self, handle: ProcessHandle, instance: usize, class: &str) -> Option<usize> {
-        let table = read_usize(handle, instance.wrapping_add(layout::current().instance.components?))?;
+        let table = read_pointer(handle, instance.wrapping_add(layout::current().instance.components?))?;
         if !self.slots.contains_key(class) {
             if self.scans_left == 0 || !self.scanned.insert(table) {
                 return None;
@@ -138,8 +139,8 @@ impl Components {
             self.learn(handle, instance, table);
         }
         let slot = *self.slots.get(class)?;
-        let component = read_usize(handle, table.wrapping_add(slot * layout::pointer_size()))?;
-        let back = read_usize(handle, component.wrapping_add(layout::current().component.instance))?;
+        let component = read_pointer(handle, table.wrapping_add(slot * pointer_size()))?;
+        let back = read_pointer(handle, component.wrapping_add(layout::current().component.instance))?;
         if back != instance || self.classes.name(handle, component).as_deref() != Some(class) {
             return None;
         }
@@ -149,15 +150,15 @@ impl Components {
     /// Learns the slot of every component in the table
     fn learn(&mut self, handle: ProcessHandle, instance: usize, table: usize) {
         let back_offset = layout::current().component.instance;
-        let size = layout::pointer_size();
+        let size = pointer_size();
         for first in (0..MAX_SLOTS).step_by(SLOTS_PER_READ) {
             let mut bytes = vec![0u8; SLOTS_PER_READ * size];
             if handle.copy_address(table.wrapping_add(first * size), &mut bytes).is_err() {
                 return;
             }
             for (i, pointer) in bytes.chunks_exact(size).enumerate() {
-                let component = layout::pointer_from(pointer);
-                if component == 0 || read_usize(handle, component.wrapping_add(back_offset)) != Some(instance) {
+                let component = pointer_from(pointer);
+                if component == 0 || read_pointer(handle, component.wrapping_add(back_offset)) != Some(instance) {
                     continue;
                 }
                 if let Some(name) = self.classes.name(handle, component) {
@@ -168,12 +169,3 @@ impl Components {
     }
 }
 
-// A pointer, at the game's pointer size, None if it's null
-fn read_usize(handle: ProcessHandle, address: usize) -> Option<usize> {
-    let mut bytes = vec![0u8; layout::pointer_size()];
-    handle.copy_address(address, &mut bytes).ok()?;
-    match layout::pointer_from(&bytes) {
-        0 => None,
-        value => Some(value),
-    }
-}

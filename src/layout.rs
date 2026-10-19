@@ -3,11 +3,9 @@
 //! `"layout": {"instance": {"position": "0x20"}}`. Run `tomb-helper check` to test them against the running game.
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock, RwLock};
 
 use crate::process_details::ProcessDetails;
-use process_memory::Architecture;
 
 use crate::offsets_file::Hex;
 
@@ -598,26 +596,10 @@ pub fn set(layout: Layout) {
     *CURRENT.write().unwrap() = Some(Arc::new(layout));
 }
 
-static POINTER_SIZE: AtomicUsize = AtomicUsize::new(8);
-
-/// Uses the layout of a game version, and its pointer size
+/// Uses the layout of a game version, and reads its pointers at its size (`game_memory`)
 pub fn set_for(details: &ProcessDetails) {
     set(details.layout.clone());
-    let size = if matches!(details.arch, Architecture::Arch64Bit) { 8 } else { 4 };
-    POINTER_SIZE.store(size, Ordering::Relaxed);
-}
-
-/// How big the game's pointers are: 8 bytes, or 4 for a 32-bit game (TR2013)
-pub fn pointer_size() -> usize {
-    POINTER_SIZE.load(Ordering::Relaxed)
-}
-
-/// The pointer at the start of `bytes`, at the game's pointer size
-pub fn pointer_from(bytes: &[u8]) -> usize {
-    let mut value = [0u8; 8];
-    let size = pointer_size().min(bytes.len());
-    value[..size].copy_from_slice(&bytes[..size]);
-    u64::from_le_bytes(value) as usize
+    crate::game_memory::set_architecture(details.arch);
 }
 
 #[cfg(test)]

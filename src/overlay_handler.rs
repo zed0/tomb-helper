@@ -1,3 +1,4 @@
+use crate::game_memory::{floats_at, pointer_from, pointer_size};
 use crate::collision::{self, CapsuleShape};
 use crate::collision_mesh::CollisionMeshes;
 use crate::components::{self, Components};
@@ -192,14 +193,14 @@ impl OverlayHandler {
     // TR2013's aim sweep, found from Lara's proxy, and whether it's hitting something
     fn read_aim_sweep(&self, proxy: usize) -> Option<(Capsule, bool)> {
         let (instances, inventories, types) = self.aim_sweep_offsets.as_ref()?;
-        let mut lara = vec![0u8; crate::layout::pointer_size()];
+        let mut lara = vec![0u8; pointer_size()];
         self.handle.copy_address(proxy + crate::layout::current().aim_sweep.proxy_instance, &mut lara).ok()?;
         crate::aim_sweep::read(
             self.handle,
             self.resolve(instances).ok()?,
             self.resolve(inventories).ok()?,
             self.resolve(types).ok()?,
-            crate::layout::pointer_from(&lara),
+            pointer_from(&lara),
         )
     }
 
@@ -760,9 +761,7 @@ impl TrackedCameraMatrix {
             .get_offset()?;
         let mut bytes = [0u8; 64];
         handle.copy_address(address, &mut bytes)?;
-        for (i, element) in self.matrix.iter_mut().enumerate() {
-            *element = f32::from_le_bytes(bytes[i * 4..i * 4 + 4].try_into().unwrap());
-        }
+        self.matrix = floats_at(&bytes, 0);
         Ok(())
     }
 

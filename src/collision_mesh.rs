@@ -1,3 +1,4 @@
+use crate::game_memory::{f32_at, pointer_at, u16_at, u32_at, vector_at};
 use crate::layout;
 use crate::position::Position;
 use crate::ui_ipc_data::{SurfaceKind, Triangle};
@@ -86,17 +87,17 @@ impl CollisionMeshes {
         // Many meshes are loaded twice and placed in the same place, with different kinds; the index of the one kept
         let mut seen = HashMap::new();
         let mut kind_counts = [0u32; 16];
-        let mut address = usize_at(&scene, scene_layout.first);
+        let mut address = pointer_at(&scene, scene_layout.first);
         let mut bytes = vec![0u8; instance.size];
         let mut visited = 0;
         while address != 0 && visited < count {
             visited += 1;
             handle.copy_address(address, &mut bytes)?;
-            let next = usize_at(&bytes, instance.next);
+            let next = pointer_at(&bytes, instance.next);
             // Without a filter, the kinds are in the instance, or every mesh counts as Lara's
             let kinds = match (instance.filter, instance.kinds) {
                 (Some(offset), _) => {
-                    let filter = usize_at(&bytes, offset);
+                    let filter = pointer_at(&bytes, offset);
                     if !filters.contains_key(&filter) {
                         let mut kind_bytes = [0u8; 4];
                         handle.copy_address(filter + instance.filter_kinds, &mut kind_bytes)?;
@@ -116,7 +117,7 @@ impl CollisionMeshes {
                 continue;
             }
             let is_detailed = !for_lara;
-            let mesh = usize_at(&bytes, instance.mesh);
+            let mesh = pointer_at(&bytes, instance.mesh);
             if !headers.contains_key(&mesh) {
                 headers.insert(mesh, self.mesh_header(handle, mesh)?);
             }
@@ -309,11 +310,11 @@ pub fn read_mesh(handle: ProcessHandle, address: usize) -> io::Result<Mesh> {
     let format = u16_at(&header, layout.vertex_format) as usize;
     let vertices = if format == layout.format_float {
         let mut bytes = vec![0u8; vertex_count * 12];
-        handle.copy_address(usize_at(&header, layout.vertices), &mut bytes)?;
+        handle.copy_address(pointer_at(&header, layout.vertices), &mut bytes)?;
         bytes.chunks_exact(12).map(|v| vector_at(v, 0)).collect()
     } else if format == layout.format_half {
         let mut bytes = vec![0u8; vertex_count * 6];
-        handle.copy_address(usize_at(&header, layout.vertices), &mut bytes)?;
+        handle.copy_address(pointer_at(&header, layout.vertices), &mut bytes)?;
         bytes
             .chunks_exact(6)
             .map(|v| Vector3::new(half_at(v, 0), half_at(v, 2), half_at(v, 4)))
@@ -324,7 +325,7 @@ pub fn read_mesh(handle: ProcessHandle, address: usize) -> io::Result<Mesh> {
     };
 
     let mut bytes = vec![0u8; triangle_count * layout.triangle_size];
-    handle.copy_address(usize_at(&header, layout.triangles), &mut bytes)?;
+    handle.copy_address(pointer_at(&header, layout.triangles), &mut bytes)?;
     let triangles = bytes
         .chunks_exact(layout.triangle_size)
         .filter(|t| t[layout.triangle_flags] as usize & layout.triangle_ignored == 0)
@@ -382,26 +383,10 @@ fn box_distance(point: &Vector3<f32>, min: &Vector3<f32>, max: &Vector3<f32>) ->
     (min - point).sup(&(point - max)).sup(&Vector3::zeros()).norm()
 }
 
-// A pointer, at the game's pointer size
-fn usize_at(bytes: &[u8], offset: usize) -> usize {
-    layout::pointer_from(&bytes[offset..])
-}
 
-fn u32_at(bytes: &[u8], offset: usize) -> u32 {
-    u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap())
-}
 
-fn u16_at(bytes: &[u8], offset: usize) -> u16 {
-    u16::from_le_bytes(bytes[offset..offset + 2].try_into().unwrap())
-}
 
-fn f32_at(bytes: &[u8], offset: usize) -> f32 {
-    f32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap())
-}
 
-fn vector_at(bytes: &[u8], offset: usize) -> Vector3<f32> {
-    Vector3::new(f32_at(bytes, offset), f32_at(bytes, offset + 4), f32_at(bytes, offset + 8))
-}
 
 // IEEE half precision, without infinities or NaNs (like the game's conversion)
 fn half_at(bytes: &[u8], offset: usize) -> f32 {

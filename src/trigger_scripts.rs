@@ -13,6 +13,7 @@
 //! TR2013 (32-bit) has no trigger nodes: a trigger is used through an AGInstanceNode (or AGObjectNode) with its id,
 //! like any other instance, whose outputs are its events. Which of them means Lara isn't known, so they're all "script".
 
+use crate::game_memory::{pointer_from, pointer_size, read_pointer, read_u32, read_u64, u16_at};
 use crate::layout::{self, ScriptLayout};
 use crate::ui_ipc_data::trigger_action_bit;
 use crate::pe_image::PeImage;
@@ -291,7 +292,7 @@ fn scan(
     let image_end = base_address + crate::find_process::get_image_size(handle, base_address).unwrap_or(0);
     let lowest = *classes.triggers.keys().min().unwrap();
     let highest = *classes.triggers.keys().max().unwrap();
-    let pointer_size = layout::pointer_size();
+    let pointer_size = pointer_size();
     let mut nodes = vec![];
     let mut chunk = vec![0u8; CHUNK];
     for (start, size) in heap_regions(handle) {
@@ -304,7 +305,7 @@ fn scan(
                 continue;
             }
             for (i, word) in chunk[..length].chunks_exact(pointer_size).enumerate() {
-                let value = layout::pointer_from(word);
+                let value = pointer_from(word);
                 // Vtables are in the game's image, which rules out nearly everything without a lookup
                 if value < lowest || value > highest {
                     continue;
@@ -325,16 +326,16 @@ fn scan(
     let nodes = nodes
         .into_iter()
         .map(|(address, mut node)| {
-            let graph = read_pointer(handle, address + layout.node_graph);
+            let graph = read_pointer(handle, address + layout.node_graph).unwrap_or(0);
             let graph = graphs.entry(graph).or_insert_with(|| read_graph(handle, layout, graph));
             // Nodes with more than one vtable are found once per vtable, but only the start of one is in its graph
             if let Some(graph) = graph {
                 if let Some(index) = graph.nodes.iter().position(|&n| n == address) {
                     for reached in leads_to(graph, index) {
-                        let vtable = read_pointer(handle, reached);
+                        let vtable = read_pointer(handle, reached).unwrap_or(0);
                         match classes.effects.get(&vtable) {
                             Some(Effect::Action(action)) => node.actions.push(*action),
-                            Some(Effect::ActsOn(offset)) => node.targets.push(read_u64(handle, reached + offset)),
+                            Some(Effect::ActsOn(offset)) => node.targets.push(read_u64(handle, reached + offset).unwrap_or(0)),
                             None => {}
                         }
                     }
@@ -346,40 +347,26 @@ fn scan(
     Ok((classes, nodes))
 }
 
-fn read_u64(handle: ProcessHandle, address: usize) -> u64 {
-    let mut bytes = [0u8; 8];
-    handle.copy_address(address, &mut bytes).map_or(0, |_| u64::from_le_bytes(bytes))
-}
 
-// At the game's pointer size
-fn read_pointer(handle: ProcessHandle, address: usize) -> usize {
-    let mut bytes = vec![0u8; layout::pointer_size()];
-    handle.copy_address(address, &mut bytes).map_or(0, |_| layout::pointer_from(&bytes))
-}
 
 fn read_graph(handle: ProcessHandle, layout: &ScriptLayout, graph: usize) -> Option<Graph> {
-    let nodes_at = read_pointer(handle, graph.checked_add(layout.graph_nodes)?);
-    let header = read_pointer(handle, graph.checked_add(layout.graph_links)?);
-    let u32_at = |address: usize| {
-        let mut bytes = [0u8; 4];
-        handle.copy_address(address, &mut bytes).ok().map(|_| u32::from_le_bytes(bytes) as usize)
-    };
-    let node_count = u32_at(header.checked_add(layout.node_count)?)?;
-    let link_count = u32_at(header.checked_add(layout.link_count)?)?;
+    let nodes_at = read_pointer(handle, graph.checked_add(layout.graph_nodes)?)?;
+    let header = read_pointer(handle, graph.checked_add(layout.graph_links)?)?;
+    let node_count = read_u32(handle, header.checked_add(layout.node_count)?)? as usize;
+    let link_count = read_u32(handle, header.checked_add(layout.link_count)?)? as usize;
     if node_count > MAX_GRAPH_NODES || link_count > MAX_LINKS {
         return None;
     }
-    let pointer_size = layout::pointer_size();
+    let pointer_size = pointer_size();
     let mut node_bytes = vec![0u8; node_count * pointer_size];
     handle.copy_address(nodes_at, &mut node_bytes).ok()?;
     let mut link_bytes = vec![0u8; link_count * layout.link_size];
-    let links_at = read_pointer(handle, header.checked_add(layout.links)?);
+    let links_at = read_pointer(handle, header.checked_add(layout.links)?)?;
     handle.copy_address(links_at, &mut link_bytes).ok()?;
-    let nodes = node_bytes.chunks_exact(pointer_size).map(layout::pointer_from).collect();
+    let nodes = node_bytes.chunks_exact(pointer_size).map(pointer_from).collect();
     let mut links: HashMap<u16, Vec<u16>> = HashMap::new();
     for link in link_bytes.chunks_exact(layout.link_size) {
-        let from = u16::from_le_bytes([link[0], link[1]]);
-        let to = u16::from_le_bytes([link[2], link[3]]);
+        let (from, to) = (u16_at(link, 0), u16_at(link, 2));
         links.entry(from).or_default().push(to);
     }
     Some(Graph { nodes, links })
@@ -407,7 +394,7 @@ fn leads_to(graph: &Graph, start: usize) -> Vec<usize> {
 // Trigger nodes' vtables, and those of nodes that say what a script does
 fn find_classes(data: &[u8], base_address: usize, layout: &ScriptLayout) -> Classes {
     let mut classes = Classes::default();
-    let tr2013 = layout::pointer_size() == 4;
+    let tr2013 = pointer_size() == 4;
     let vtables = if tr2013 { all_vtables_32(data, base_address) } else { all_vtables(data, base_address) };
     for (vtable, name) in vtables {
         let trigger = match name.as_str() {

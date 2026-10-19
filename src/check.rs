@@ -2,6 +2,7 @@
 //! the overlay does and checking the results make sense (RTTI classes, magic numbers, sizes, things being where Lara
 //! is). Run it with Lara standing somewhere ordinary in a level.
 
+use crate::game_memory::{pointer_size, read_floats, read_pointer};
 use crate::chains;
 use crate::collision;
 use crate::collision_mesh::CollisionMeshes;
@@ -69,20 +70,11 @@ impl Game {
         let offsets = self.details.address_offsets.get(&address_type)?;
         let mut address = self.base_address + offsets[0];
         for offset in &offsets[1..] {
-            address = read_usize(self.handle, address)? + offset;
+            address = read_pointer(self.handle, address)? + offset;
         }
         Some(address)
     }
 
-    fn read_floats<const N: usize>(&self, address: usize) -> Option<[f32; N]> {
-        let mut bytes = vec![0u8; N * 4];
-        self.handle.copy_address(address, &mut bytes).ok()?;
-        let mut floats = [0f32; N];
-        for (i, f) in floats.iter_mut().enumerate() {
-            *f = f32::from_le_bytes(bytes[i * 4..i * 4 + 4].try_into().unwrap());
-        }
-        Some(floats)
-    }
 }
 
 pub fn check(version: Option<String>) -> Result<(), String> {
@@ -150,7 +142,7 @@ pub fn run(pid: Pid, handle: ProcessHandle, base_address: usize, details: Proces
 }
 
 fn check_position(game: &Game, report: &mut Report) -> Option<Position> {
-    let read = |t| game.resolve(t).and_then(|a| game.read_floats::<1>(a)).map(|f| f[0]);
+    let read = |t| game.resolve(t).and_then(|a| read_floats::<1>(game.handle, a)).map(|f| f[0]);
     match (read(AddressType::XPosition), read(AddressType::YPosition), read(AddressType::ZPosition)) {
         (Some(x), Some(y), Some(z)) if [x, y, z].iter().all(|v| v.is_finite()) => {
             report.pass("position", format!("Lara is at ({:.0}, {:.0}, {:.0})", x, y, z));
@@ -192,7 +184,7 @@ fn check_instances(game: &Game, report: &mut Report) -> Option<Vec<Instance>> {
             layout
                 .instance
                 .transform
-                .and_then(|offset| read_usize(game.handle, i.address + offset))
+                .and_then(|offset| read_pointer(game.handle, i.address + offset))
                 .and_then(|t| classes.name(game.handle, t))
                 .as_deref()
                 == Some(components::TRANSFORM)
@@ -285,7 +277,7 @@ fn check_bounds(game: &Game, report: &mut Report, components: &mut Components, n
 }
 
 fn check_camera(game: &Game, report: &mut Report) {
-    match game.resolve(AddressType::CameraView).and_then(|a| game.read_floats::<16>(a)) {
+    match game.resolve(AddressType::CameraView).and_then(|a| read_floats::<16>(game.handle, a)) {
         Some(view) => report.result(
             "camera view",
             is_rotation(&view, false),
@@ -293,7 +285,7 @@ fn check_camera(game: &Game, report: &mut Report) {
         ),
         None => report.fail("camera view", "CameraView doesn't resolve".to_string()),
     }
-    match game.resolve(AddressType::CameraLens).and_then(|a| game.read_floats::<8>(a)) {
+    match game.resolve(AddressType::CameraLens).and_then(|a| read_floats::<8>(game.handle, a)) {
         Some(lens) => {
             let camera = &crate::layout::current().camera;
             let field = |i: usize| lens[i.min(lens.len() - 1)];
@@ -364,7 +356,7 @@ fn check_aim_sweep(game: &Game, report: &mut Report, position: &Position) {
         (Some(p), Some(i), Some(v), Some(t)) => (p, i, v, t),
         _ => return,
     };
-    let lara = match read_usize(game.handle, proxy + crate::layout::current().aim_sweep.proxy_instance) {
+    let lara = match read_pointer(game.handle, proxy + crate::layout::current().aim_sweep.proxy_instance) {
         Some(lara) => lara,
         None => return report.fail("aim sweep", "Lara's proxy doesn't point at her".to_string()),
     };
@@ -559,7 +551,7 @@ fn check_trigger_scripts(
             let with_script = found.values().filter(|s| s.set_off_by != SetOffBy::Nothing).count();
             // Most of SOTTR's are used by a script, but only about a third of TR2013's (its effect volumes and many
             // plain ones aren't used by any)
-            let needed = if crate::layout::pointer_size() == 4 { 4 } else { 2 };
+            let needed = if pointer_size() == 4 { 4 } else { 2 };
             report.result(
                 "trigger scripts",
                 with_script * needed >= found.len(),
@@ -600,15 +592,6 @@ fn midpoint(a: &Position, b: &Position) -> Position {
     Position { x: (a.x + b.x) / 2.0, y: (a.y + b.y) / 2.0, z: (a.z + b.z) / 2.0 }
 }
 
-// A pointer, at the game's pointer size, None if it's null
-fn read_usize(handle: ProcessHandle, address: usize) -> Option<usize> {
-    let mut bytes = vec![0u8; crate::layout::pointer_size()];
-    handle.copy_address(address, &mut bytes).ok()?;
-    match crate::layout::pointer_from(&bytes) {
-        0 => None,
-        value => Some(value),
-    }
-}
 
 #[cfg(test)]
 mod tests {
