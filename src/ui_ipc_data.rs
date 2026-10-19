@@ -276,6 +276,9 @@ pub struct UiData {
     pub has_saved_position: bool,
     pub saved_position: Position,
     pub flying: bool,
+    // Where the collision meshes are drawn round (Lara, or where she's aiming), and whether she's aiming at it
+    pub mesh_centre: Position,
+    pub aiming: bool,
     // Row-major world-to-view and projection matrices as stored by the game (row vectors)
     pub camera_view: [f32; 16],
     pub camera_projection: [f32; 16],
@@ -387,6 +390,8 @@ pub struct UiSettings {
     pub fade_strength: AtomicU32,
     // Only draw the triangles not hidden behind others
     pub cull_hidden: AtomicBool,
+    // Draw the collision meshes round where Lara's aiming while she aims
+    pub follow_aim: AtomicBool,
     // How opaque trigger volumes are filled, 0 to 1
     pub trigger_opacity: AtomicU32,
     // Boxes round things Lara can interact with, and trigger volumes

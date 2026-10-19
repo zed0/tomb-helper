@@ -80,6 +80,9 @@ fn trigger_colour(by_action: bool, category: TriggerCategory, action: u32) -> [f
 }
 
 const PROBE_COLOUR: [f32; 4] = [0.0, 1.0, 1.0, 1.0];
+// The cross where Lara's aiming, when the collision meshes are drawn round it, and its half size
+const AIM_MARKER_COLOUR: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
+const AIM_MARKER_SIZE: f32 = 15.0;
 // The outline of a trigger Lara's in
 const INSIDE_TRIGGER_COLOUR: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
 // Lara's movement capsule, and the shape it's changing to
@@ -548,7 +551,9 @@ impl ImguiRenderLoop for TombHelperHud {
         *flags &= !((imgui::sys::ImDrawListFlags_AntiAliasedLines
             | imgui::sys::ImDrawListFlags_AntiAliasedLinesUseTex
             | imgui::sys::ImDrawListFlags_AntiAliasedFill) as i32);
-        let lara = Vector3::new(ui_data.position.x, ui_data.position.y, ui_data.position.z);
+        // Faded by distance from where they're drawn round, Lara or where she's aiming
+        let centre = ui_data.mesh_centre;
+        let lara = Vector3::new(centre.x, centre.y, centre.z);
         let mut shown = vec![];
         for triangle in ui_data.triangles[..triangle_count].iter().rev() {
             if !((triangle.detailed && detailed_meshes) || (!triangle.detailed && coarse_meshes)) {
@@ -623,6 +628,15 @@ impl ImguiRenderLoop for TombHelperHud {
                     let point = [point[0] - size[0] / 2.0, point[1] - size[1]];
                     draw_list.add_text(point, trigger_colour(by_action, label.category, label.action), label.name());
                 }
+            }
+        }
+        // Where she's aiming, which the meshes are drawn round
+        if ui_data.aiming {
+            let centre = ui_data.mesh_centre;
+            let centre = Vector3::new(centre.x, centre.y, centre.z);
+            for axis in [Vector3::x(), Vector3::y(), Vector3::z()] {
+                let arm = axis * AIM_MARKER_SIZE;
+                draw_world_line(&draw_list, &projector, centre - arm, centre + arm, AIM_MARKER_COLOUR);
             }
         }
         if lara_collision {
@@ -821,6 +835,7 @@ impl TombHelperHud {
                         checkbox(ui, "Fade with distance from Lara", &settings.fade_with_distance);
                         slider(ui, "Fade strength", 1.0, MAX_FADE_STRENGTH, "%.1f", &settings.fade_strength);
                         checkbox(ui, "Hide triangles behind others", &settings.cull_hidden);
+                        checkbox(ui, "Round where Lara's aiming, while she aims", &settings.follow_aim);
                         ui.unindent();
                     }
                 }

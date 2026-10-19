@@ -21,6 +21,8 @@ use crate::trigger_scripts::{SetOffBy, TriggerScripts};
 use crate::handler::HelperState;
 use crate::ui_ipc_data::{REQUEST_RESTORE_POSITION, REQUEST_STORE_POSITION, REQUEST_TOGGLE_FLYING, name_bytes, text_bytes, trigger_action_bit, trigger_action_mask, projection_from_lens, BoxKind, Capsule, Line, ObjectBox, ObjectCategory, SharedMemoryManager, TriggerCategory, TriggerFace, TriggerLabel, UiSettings, MAX_ATTACHED, MAX_OBJECTS, MAX_TRIANGLES, MAX_TRIGGERS};
 
+// How far the camera's ray is followed to find where Lara's aiming
+const MAX_AIM_DISTANCE: f32 = 20000.0;
 // How far above her feet the middle of Lara is (her standing capsule's centre), which counts as her being in a trigger
 // as well as her feet
 const LARA_MIDDLE: f32 = 85.0;
@@ -41,6 +43,8 @@ pub struct OverlayHandler {
     position: TrackedPosition,
     camera_view: TrackedCameraMatrix,
     camera_lens: TrackedMemory<[f32; 8]>,
+    // Camera to world, which starts at `CameraSin`
+    camera_to_world: Option<TrackedCameraMatrix>,
     camera_view_offsets: Vec<usize>,
     camera_lens_offsets: Vec<usize>,
     instance_array_offsets: Vec<usize>,
@@ -102,6 +106,7 @@ impl OverlayHandler {
             UiSettings::set(&settings.fade_with_distance, config.collision_mesh_fade);
             UiSettings::set_f32(&settings.fade_strength, config.collision_mesh_fade_strength);
             UiSettings::set(&settings.cull_hidden, config.collision_mesh_cull_hidden);
+            UiSettings::set(&settings.follow_aim, config.collision_mesh_follow_aim);
             UiSettings::set(&settings.interactables, config.interactables);
             UiSettings::set(&settings.triggers, config.triggers);
             UiSettings::set(&settings.npcs, config.npcs);
@@ -143,6 +148,9 @@ impl OverlayHandler {
                 *arch,
                 *base_addr,
             ),
+            camera_to_world: address_offsets
+                .get(&AddressType::CameraSin)
+                .map(|offsets| TrackedCameraMatrix::new(offsets.clone(), *arch, *base_addr)),
             camera_view_offsets: address_offsets.get(&AddressType::CameraView)?.clone(),
             camera_lens_offsets: address_offsets.get(&AddressType::CameraLens)?.clone(),
             instance_array_offsets: address_offsets.get(&AddressType::InstanceArray)?.clone(),
@@ -402,6 +410,7 @@ impl Handler for OverlayHandler {
             UiSettings::get_u32(&settings.other_kinds),
         );
         let show_meshes = mesh_settings.0 || mesh_settings.1;
+        let follow_aim = show_meshes && UiSettings::get(&settings.follow_aim);
         let coarse_radius = UiSettings::get_f32(&settings.coarse_radius);
         let detailed_radius = UiSettings::get_f32(&settings.detailed_radius);
 
@@ -438,17 +447,20 @@ impl Handler for OverlayHandler {
             }
             _ => vec![],
         };
-        // Lara can be reloaded (and moved) between refreshes, which `components.get` notices
-        let proxies = match (lara_collision && self.config.lara_proxy, self.lara_address) {
+        // Lara can be reloaded (and moved) between refreshes, which `components.get` notices. Her attached proxies being
+        // used is also the best sign she's aiming.
+        let show_proxy = lara_collision && self.config.lara_proxy;
+        let proxies = match (show_proxy || follow_aim, self.lara_address) {
             (true, Some(lara)) => self
                 .components
                 .get(self.handle, lara, components::PROXY)
                 .and_then(|proxy| collision::read_proxy(self.handle, proxy).ok()),
             _ => None,
         };
+        let aiming = proxies.as_ref().map_or(false, |p| p.attached_active);
         let (proxies, proxy_touching, attached, attached_active) = match proxies {
-            Some(p) => (p.shapes, p.touching, p.attached, p.attached_active),
-            None => (vec![], false, vec![], false),
+            Some(p) if show_proxy => (p.shapes, p.touching, p.attached, p.attached_active),
+            _ => (vec![], false, vec![], false),
         };
         if proxy_touching {
             self.proxy_last_touching = Some(time::Instant::now());
@@ -526,8 +538,22 @@ impl Handler for OverlayHandler {
 
         let position = self.position.to_position();
         let started = time::Instant::now();
+        // Where the camera's looking (the reticle's in the middle of the screen), while Lara aims
+        let camera = match (follow_aim && aiming, &mut self.camera_to_world) {
+            (true, Some(camera)) => camera.fetch_from_game(self.handle).ok().map(|_| camera.matrix),
+            _ => None,
+        };
+        let aim_point = camera.and_then(|m| {
+            // Its last row is where it is, the one before which way it faces
+            let origin = Vector3::new(m[12], m[13], m[14]);
+            let forward = Vector3::new(m[8], m[9], m[10]).try_normalize(1e-6)?;
+            let hit = self.collision_meshes.raycast(self.handle, origin, forward, MAX_AIM_DISTANCE)?;
+            let point = origin + forward * hit;
+            Some(Position { x: point.x, y: point.y, z: point.z })
+        });
+        let mesh_centre = aim_point.unwrap_or(position);
         let triangles = if show_meshes {
-            self.collision_meshes.triangles_near(self.handle, &position, coarse_radius, detailed_radius, MAX_TRIANGLES)
+            self.collision_meshes.triangles_near(self.handle, &mesh_centre, coarse_radius, detailed_radius, MAX_TRIANGLES)
         } else {
             vec![]
         };
@@ -544,6 +570,8 @@ impl Handler for OverlayHandler {
             val.has_saved_position = helper_state.saved_position.is_some();
             val.saved_position = helper_state.saved_position.unwrap_or_default();
             val.flying = helper_state.flying;
+            val.mesh_centre = mesh_centre;
+            val.aiming = aim_point.is_some();
             val.position = position;
             val.camera_view = camera_view;
             val.camera_projection = camera_projection;
