@@ -173,6 +173,10 @@ fn default_collision_opacity() -> f32 {
     0.25
 }
 
+fn default_trigger_opacity() -> f32 {
+    0.15
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct OverlayConfig {
     // Objects whose placement name contains any of these (case insensitive) get a box. "" matches everything.
@@ -235,6 +239,9 @@ pub struct OverlayConfig {
     // Scales how opaque the collision meshes and Lara's collision are drawn, 0 to 1 (to start with)
     #[serde(default = "default_collision_opacity")]
     pub collision_opacity: f32,
+    // How opaque trigger volumes are filled, 0 to 1 (0 just draws their outlines) (to start with)
+    #[serde(default = "default_trigger_opacity")]
+    pub trigger_opacity: f32,
     // Open a console in the game for the overlay's logs
     #[serde(default)]
     pub console: bool,

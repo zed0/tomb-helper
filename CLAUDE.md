@@ -68,7 +68,7 @@ User docs (hotkeys, config, cutscene timing generation) live in `README.md`.
 | `src/object_list.rs` | Reads the game's static instance array (`InstanceArray`, 0x120 byte records until a zero header): position, placement names, world matrix (built from the instance's position + Rx*Ry*Rz Euler rotation, with only the scale from `cdc::TransformComponent`, which goes stale for Lara), and model bounds (`read_bounds`: component table -> DrawableComponent -> InstanceDrawable -> CommonRenderModelInstance -> CommonRenderModel -> `Mesh` header min/max). Layout offsets are constants found in ROTTR Steam |
 | `src/collision.rs` | Lara's collision, see "Lara's collision" below: hit capsules (`read_capsule_shapes`/`place_capsules`), ground probes (`read_probes`), and her movement proxy with the camera/weapon proxies attached to it (`read_proxy`), including which of them is pushing her (contacts on their surface). Has unit tests for the capsule geometry |
 | `src/collision_mesh.rs` | The level's collision meshes (see "Level collision" below): `CollisionMeshes::refresh` walks the scene's instance list (dropping duplicates), `triangles_near` caches each mesh's vertices/triangles and returns the world space triangles near Lara, closest first, tagged floor/wall/ceiling by their normal |
-| `src/trigger.rs` | What an instance is from its component table (`read_kinds`: interactable via Interactable/Loot/Collectible components, trigger via TriggerComponent, character/animal via Npc or Health + Corpse components; RTTI checked), resources by name (`is_resource`), trigger categories by name (`categorise`), trigger shapes (`read_shape`: box, plane, sphere, polygon volume) and their world space outlines |
+| `src/trigger.rs` | What an instance is from its component table (`read_kinds`: interactable via Interactable/Loot/Collectible components, trigger via TriggerComponent, character/animal via Npc or Health + Corpse components; RTTI checked), resources by name (`is_resource`), trigger categories by name (`categorise`), trigger shapes (`read_shape`: box, plane, sphere, polygon volume), their world space outlines and faces (`faces`, which the overlay fills in at `trigger_opacity`; polygon caps are ear clipped as they can be concave) |
 | `src/layout.rs` | `Layout`: where everything the overlay reads is in the game's structures (instance, drawable, collide, proxy, body, physics shape, probes, camera, collision scene/instance/mesh, trigger shape), ROTTR Steam's by default, overridable per version in the offsets file's `layout` section. `layout::current()` is set on connecting |
 | `src/components.rs` | Components by RTTI class name: `Classes` (vtable -> class name via the CompleteObjectLocator), `Components::get` learns each class's slot from a table (budgeted per `start_refresh`) and checks class + back pointer. Class name constants |
 | `src/discover.rs` | `discover [--save]`: finds GameRender (camera), TR9MultibodyClient (-> CollisionSceneClient) and the instance array statics through what they point to, optionally writing them to the offsets file |
@@ -179,9 +179,15 @@ again (`derive` plus live checks).
   `trigger::for_lara` leaves out by name. Unsure: `ll_chair_vh`, `tr2_lookat_interact_parent`.
 - Triggers (~920 placed `triggervolume_*`/`triggerplane_*`/`triggersphere_*`/`triggerpolyvolume_*`/`streaming_*`):
   ShapeComponent +0x18 -> 0x38 byte shape record in instance space, u32 type: 1 box (+0x8 three sizes), 3 plane (+0x8 two
-  sizes, the x/y plane), 4 sphere (+0x8 radius), 5 polygon volume (+0x8 u32 count, +0x10 -> 0x20 byte entries: corner
-  x, y, z, 1 then the vector it's swept along, e.g. (0, 0, 1000); +0x18/+0x1C two more floats, unknown). Whether box and
-  plane sizes are half sizes is unverified. Slot 14 holds other things on non-triggers.
+  sizes, the x/z plane, i.e. upright), 4 sphere (+0x8 radius), 5 polygon volume (+0x8 u32 count, +0x10 -> 0x20 byte entries: corner
+  x, y, z, 1 then the vector it's swept along, e.g. (0, 0, 1000); +0x18/+0x1C two more floats, unknown). Sizes are half sizes:
+  the TriggerComponent keeps world bounds at +0xC0/+0xD0, twice the size plus 25 each side for boxes and spheres, and
+  2x for planes, which shows they're upright (a 200 x 200 plane's bounds are 400 x 5 x 400). The overlap test (SOTTR
+  mod+0x46EBC0, called by +0x47C390) treats the thing tested as its position and a point 60 (or its own height, [[+0x60]
+  +0x20]+0x8) above, and returns which of the two are inside (1 both, 3 the bottom, 2 the top): boxes against the
+  half extents (+0x40), spheres by distance (radius +0x3C), polygon volumes via +0x470330; planes never overlap there,
+  so whatever sets off the ~155 plane triggers (unnamed `triggervolume`s, a `checkpoint`, `triggerplane_camera_in*`)
+  is elsewhere, probably a crossing test. Slot 14 holds other things on non-triggers.
 - What sets a trigger off isn't in it either: TriggerComponent +0x38 (ROTTR +0x48) is runtime state (0x40 enabled, 0x10/0x20
   moved/turned this frame, 0x08/0x04 something inside; set by SOTTR mod+0x47EA10) and every trigger is tested against the
   same global list of things (mod+0x47C390 -> +0x46EBC0, geometry only). It's decided by the ActionGraph nodes using the

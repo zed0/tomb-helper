@@ -18,8 +18,11 @@ use hudhook::inject::Process;
 use process_memory::{Architecture, CopyAddress, DataMember, Memory, Pid, ProcessHandle};
 use crate::trigger::{self, Shape};
 use crate::trigger_scripts::{SetOffBy, TriggerScripts};
-use crate::ui_ipc_data::{name_bytes, text_bytes, trigger_action_bit, trigger_action_mask, projection_from_lens, BoxKind, Capsule, Line, ObjectBox, ObjectCategory, SharedMemoryManager, TriggerCategory, TriggerLabel, UiSettings, MAX_ATTACHED, MAX_OBJECTS, MAX_TRIANGLES, MAX_TRIGGERS};
+use crate::ui_ipc_data::{name_bytes, text_bytes, trigger_action_bit, trigger_action_mask, projection_from_lens, BoxKind, Capsule, Line, ObjectBox, ObjectCategory, SharedMemoryManager, TriggerCategory, TriggerFace, TriggerLabel, UiSettings, MAX_ATTACHED, MAX_OBJECTS, MAX_TRIANGLES, MAX_TRIGGERS};
 
+// How far above her feet the middle of Lara is (her standing capsule's centre), which counts as her being in a trigger
+// as well as her feet
+const LARA_MIDDLE: f32 = 85.0;
 // Lara is the nearest instance with a PlayerComponent, out of this many
 const LARA_CANDIDATES: usize = 8;
 // How often to rescan the instance array for objects matching the filters
@@ -51,7 +54,8 @@ pub struct OverlayHandler {
     // them (people are several models), so they're boxed round these instead.
     npc_capsules: HashMap<usize, Vec<CapsuleShape>>,
     // With their labels
-    triggers: Vec<(Instance, Shape, TriggerCategory, String)>,
+    // With their labels, and the `TRIGGER_ACTIONS` index they're coloured by
+    triggers: Vec<(Instance, Shape, TriggerCategory, String, u32)>,
     trigger_scripts: TriggerScripts,
     components: Components,
     // Found by her PlayerComponent each refresh
@@ -89,6 +93,7 @@ impl OverlayHandler {
             UiSettings::set_f32(&settings.coarse_radius, config.collision_mesh_radius);
             UiSettings::set_f32(&settings.detailed_radius, config.detailed_collision_mesh_radius);
             UiSettings::set_f32(&settings.mesh_opacity, config.collision_opacity);
+            UiSettings::set_f32(&settings.trigger_opacity, config.trigger_opacity);
             UiSettings::set(&settings.fade_with_distance, config.collision_mesh_fade);
             UiSettings::set_f32(&settings.fade_strength, config.collision_mesh_fade_strength);
             UiSettings::set(&settings.cull_hidden, config.collision_mesh_cull_hidden);
@@ -257,10 +262,11 @@ impl OverlayHandler {
                 };
                 // What it does on a second line
                 if let Some(script) = script.filter(|s| !s.does.is_empty()) {
-                    label = format!("{}
-{}", label, script.does.join(", "));
+                    label = format!("{}\n{}", label, script.does.join(", "));
                 }
-                shown.push((instance, shape, category, label));
+                // The first of what it does that's shown (all of it when shown by name)
+                let shown_does = if by_action { does & actions } else { does };
+                shown.push((instance, shape, category, label, shown_does.trailing_zeros()));
             }
         }
         self.triggers = shown;
@@ -312,6 +318,17 @@ impl OverlayHandler {
 
 // The box round the (world space) capsules in the space of the object-to-world `transform` (row-major, row
 // vectors), so it turns with the object. None if there aren't any capsules, or the transform can't be inverted.
+// The middle of the top of an outline (world z is up), for its label
+fn top_of(outline: &[(Position, Position)]) -> Option<Position> {
+    let points = || outline.iter().flat_map(|(a, b)| [a, b]);
+    let fold = |f: fn(f32, f32) -> f32, axis: fn(&Position) -> f32, start: f32| points().map(axis).fold(start, f);
+    if outline.is_empty() {
+        return None;
+    }
+    let middle = |axis: fn(&Position) -> f32| (fold(f32::min, axis, f32::MAX) + fold(f32::max, axis, f32::MIN)) / 2.0;
+    Some(Position { x: middle(|p| p.x), y: middle(|p| p.y), z: fold(f32::max, |p| p.z, f32::MIN) })
+}
+
 fn capsule_bounds(capsules: &[Capsule], transform: &[f32; 16]) -> Option<(Position, Position)> {
     // Columns are the object's axes in world space
     let axes = Matrix3::from_column_slice(&[
@@ -449,19 +466,28 @@ impl Handler for OverlayHandler {
         }
 
         let mut trigger_labels = vec![];
+        let lara = self.position.to_position();
         let mut trigger_lines = vec![];
-        for (trigger, shape, category, label) in &self.triggers {
+        let mut trigger_faces = vec![];
+        for (trigger, shape, category, label, action) in &self.triggers {
             let transform = match object_list::read_transform(self.handle, trigger.address) {
                 Ok(t) => t,
                 Err(_) => continue,
             };
+            let outline = trigger::outline(shape, &transform);
+            let origin = Position { x: transform[12], y: transform[13], z: transform[14] };
             trigger_labels.push(TriggerLabel {
-                position: Position { x: transform[12], y: transform[13], z: transform[14] },
+                position: top_of(&outline).unwrap_or(origin),
                 category: *category,
+                action: *action,
                 name: text_bytes(label),
             });
-            let outline = trigger::outline(shape, &transform);
-            trigger_lines.extend(outline.into_iter().map(|(a, b)| Line { a, b, category: *category }));
+            let inside = [0.0, LARA_MIDDLE]
+                .iter()
+                .any(|up| trigger::contains(shape, &transform, &Position { z: lara.z + up, ..lara }));
+            trigger_lines.extend(outline.into_iter().map(|(a, b)| Line { a, b, category: *category, action: *action, inside }));
+            let faces = trigger::faces(shape, &transform);
+            trigger_faces.extend(faces.into_iter().map(|corners| TriggerFace { corners, category: *category, action: *action }));
         }
 
         let proxy_touching = self.proxy_last_touching.map_or(false, |t| t.elapsed() < TOUCHING_HOLD);
@@ -508,6 +534,7 @@ impl Handler for OverlayHandler {
             val.capsule_count = fill(&mut val.capsules, &capsules);
             val.trigger_count = fill(&mut val.triggers, &trigger_labels);
             val.trigger_line_count = fill(&mut val.trigger_lines, &trigger_lines);
+            val.trigger_face_count = fill(&mut val.trigger_faces, &trigger_faces);
             val.triangle_count = fill(&mut val.triangles, &triangles);
             val.triangle_milliseconds = triangle_milliseconds;
         });
@@ -608,6 +635,16 @@ impl fmt::Display for TrackedCameraMatrix {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn labels_go_at_the_middle_of_the_top() {
+        let p = |x, y, z| Position { x, y, z };
+        // A tilted edge and a low one
+        let outline = vec![(p(0.0, 0.0, 0.0), p(10.0, 4.0, 30.0)), (p(-10.0, -4.0, 5.0), p(2.0, 0.0, 0.0))];
+        let top = top_of(&outline).unwrap();
+        assert_eq!((top.x, top.y, top.z), (0.0, 0.0, 30.0));
+        assert!(top_of(&[]).is_none());
+    }
 
     #[test]
     fn capsule_bounds_turn_with_the_object() {
