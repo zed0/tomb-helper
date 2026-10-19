@@ -303,6 +303,8 @@ pub struct UiData {
     pub triangle_count: usize,
     // How long the exe took to find them
     pub triangle_milliseconds: f32,
+    // How many of the level's collision instances have each kind bit
+    pub mesh_kind_counts: [u32; 16],
     pub triangles: [Triangle; MAX_TRIANGLES],
 }
 
@@ -360,6 +362,8 @@ pub struct UiSettings {
     // The level's collision meshes Lara collides with, and the rest
     pub coarse_meshes: AtomicBool,
     pub detailed_meshes: AtomicBool,
+    // Which kind bits the other ("detailed") collision is drawn for
+    pub other_kinds: AtomicU32,
     // How far from Lara to draw each of them (f32 bits)
     pub coarse_radius: AtomicU32,
     pub detailed_radius: AtomicU32,

@@ -370,7 +370,7 @@ fn check_collision_meshes(game: &Game, report: &mut Report, lara: &Position) {
         return report.fail("collision meshes", format!("CollisionScene is a {:?}, not a CollisionSceneClient", class));
     }
     let mut meshes = CollisionMeshes::default();
-    if let Err(e) = meshes.refresh(game.handle, scene, true, true) {
+    if let Err(e) = meshes.refresh(game.handle, scene, true, true, u32::MAX) {
         return report.fail("collision meshes", format!("the instance list couldn't be read: {}", e));
     }
     let triangles = meshes.triangles_near(game.handle, lara, NEAR_LARA, NEAR_LARA, usize::MAX);
