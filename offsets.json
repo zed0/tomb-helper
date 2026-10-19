@@ -132,6 +132,7 @@
       "game": "Shadow of the Tomb Raider",
       "executable": "SOTTR.exe",
       "version": "v1.0 build 234.1_64",
+      "image_size": 310804480,
       "bits": 64,
       "offsets": {
         "Version": ["0x3621B00", "0xD8", "0xB70"],
@@ -140,11 +141,29 @@
         "ZPosition": ["0x141E298", "0x0", "0x33C8", "0x18"],
         "CameraSin": ["0x36079A0", "0x70"],
         "CameraCos": ["0x36079A0", "0x74"],
+        "CameraView": ["0x36079A0", "0x2F0"],
+        "CameraLens": ["0x36079A0", "0x30"],
+        "InstanceArray": ["0x2F6D500"],
+        "PlayerProbes": ["0x232B980"],
+        "CollisionScene": ["0x3525458", "0x10", "0x0"],
         "CutscenePrompt": ["0x141B8C0", "0x10"],
         "CutsceneStatus": ["0x141B8C0", "0x129"],
         "CutsceneTimeline": ["0x141B8C0", "0x60"],
         "CutsceneLength": ["0x141B8A0", "0x0", "0x20"],
         "CutsceneId": ["0x360E0D0", "0x0", "0x120", "0x10", "0x1D4"]
+      },
+      "layout": {
+        "instance": {"object_name": ["0x80", "0x8", "0x60", "0x8"]},
+        "drawable": {"instance_drawable": "0xA8", "model_instance": "0x78", "mesh": "0x38"},
+        "camera": {"view": "0x2F0"},
+        "trigger_shape": {"shape": "0xA0"},
+        "collide": {"shapes": "0x78", "shape_count": "0x80"},
+        "body": {"next": "0x38", "parent": "0x50"},
+        "proxy": {
+          "centre": "0x70", "in_use_size": "0xA0", "in_use_offset": "0xB0", "in_use_local_rotation": "0xE0", "in_use_rotation": "0xF0",
+          "next_size": "0x120", "next_offset": "0x130", "next_local_rotation": "0x150", "next_rotation": "0x160",
+          "body": "0x1A8", "size": "0x1B0", "contact_count": "0x1C4", "second_contact_count": "0x1CC", "contacts": "0x200"
+        }
       }
     },
     {
