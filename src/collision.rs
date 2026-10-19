@@ -5,7 +5,6 @@ use crate::position::Position;
 use crate::ui_ipc_data::{Capsule, Probe};
 use nalgebra::{Quaternion, UnitQuaternion, Vector3};
 use process_memory::{CopyAddress, ProcessHandle};
-use std::convert::TryInto;
 use std::io;
 
 // Lara's (and characters') hit capsules ("DefensiveCapsule_head", ...) are listed in their CollideComponent, each

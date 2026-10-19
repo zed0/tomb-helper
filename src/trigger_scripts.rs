@@ -395,8 +395,7 @@ fn leads_to(graph: &Graph, start: usize) -> Vec<usize> {
 fn find_classes(data: &[u8], base_address: usize, layout: &ScriptLayout) -> Classes {
     let mut classes = Classes::default();
     let tr2013 = pointer_size() == 4;
-    let vtables = if tr2013 { all_vtables_32(data, base_address) } else { all_vtables(data, base_address) };
-    for (vtable, name) in vtables {
+    for (vtable, name) in crate::rtti::all_vtables(data, base_address) {
         let trigger = match name.as_str() {
             PLAYER_NODE => Some(NodeKind::Player),
             INSTANCE_NODE => Some(NodeKind::Instance),
@@ -423,71 +422,6 @@ fn find_classes(data: &[u8], base_address: usize, layout: &ScriptLayout) -> Clas
         }
     }
     classes
-}
-
-/// Every vtable in a 64 bit image's data (laid out as in memory) and its class's RTTI name. An MSVC
-/// CompleteObjectLocator starts with 1, has its type descriptor's RVA at +0xC (whose name is at +0x10) and its own
-/// RVA at +0x14; a vtable starts right after a pointer to its locator.
-fn all_vtables(data: &[u8], base_address: usize) -> Vec<(usize, String)> {
-    let u32_at = |offset: usize| data.get(offset..offset + 4).map(|b| u32::from_le_bytes(b.try_into().unwrap()) as usize);
-    let mut locators: HashMap<usize, String> = HashMap::new();
-    for rva in (0..data.len().saturating_sub(0x18)).step_by(4) {
-        if u32_at(rva) != Some(1) || u32_at(rva + 0x14) != Some(rva) {
-            continue;
-        }
-        let name_at = match u32_at(rva + 0xC) {
-            Some(descriptor) => descriptor + 0x10,
-            None => continue,
-        };
-        let name = match data.get(name_at..(name_at + 128).min(data.len())) {
-            Some(bytes) => bytes.split(|&b| b == 0).next().unwrap_or(&[]),
-            None => continue,
-        };
-        if name.starts_with(b".?A") {
-            locators.insert(base_address + rva, String::from_utf8_lossy(name).into_owned());
-        }
-    }
-    let mut vtables = vec![];
-    for (i, word) in data.chunks_exact(8).enumerate() {
-        let value = u64::from_le_bytes(word.try_into().unwrap()) as usize;
-        if let Some(name) = locators.get(&value) {
-            vtables.push((base_address + i * 8 + 8, name.clone()));
-        }
-    }
-    vtables
-}
-
-/// Every vtable in a 32 bit image's data and its class's RTTI name. A 32 bit CompleteObjectLocator starts with 0 and
-/// has the address of its type descriptor (whose name is at +0x8) at +0xC and of its class hierarchy at +0x10; a vtable
-/// starts right after a pointer to its locator.
-fn all_vtables_32(data: &[u8], base_address: usize) -> Vec<(usize, String)> {
-    let u32_at = |offset: usize| data.get(offset..offset + 4).map(|b| u32::from_le_bytes(b.try_into().unwrap()) as usize);
-    let in_image = |address: usize| address >= base_address && address - base_address < data.len();
-    let mut locators: HashMap<usize, String> = HashMap::new();
-    for rva in (0..data.len().saturating_sub(0x14)).step_by(4) {
-        if u32_at(rva) != Some(0) {
-            continue;
-        }
-        let (descriptor, hierarchy) = match (u32_at(rva + 0xC), u32_at(rva + 0x10)) {
-            (Some(d), Some(h)) if in_image(d) && in_image(h) => (d - base_address, h),
-            _ => continue,
-        };
-        let name = match data.get(descriptor + 8..(descriptor + 8 + 128).min(data.len())) {
-            Some(bytes) => bytes.split(|&b| b == 0).next().unwrap_or(&[]),
-            None => continue,
-        };
-        if name.starts_with(b".?A") && hierarchy != 0 {
-            locators.insert(base_address + rva, String::from_utf8_lossy(name).into_owned());
-        }
-    }
-    let mut vtables = vec![];
-    for (i, word) in data.chunks_exact(4).enumerate() {
-        let value = u32::from_le_bytes(word.try_into().unwrap()) as usize;
-        if let Some(name) = locators.get(&value) {
-            vtables.push((base_address + i * 4 + 4, name.clone()));
-        }
-    }
-    vtables
 }
 
 // Committed, readable, private memory (the heaps)
@@ -587,19 +521,5 @@ mod tests {
         let mut reached = leads_to(&graph, 0);
         reached.sort();
         assert_eq!(reached, vec![12, 13]);
-    }
-
-    #[test]
-    fn vtables_are_found_from_their_locators() {
-        // A locator at 0x10 naming the type descriptor at 0x40, and a vtable at 0x88 after a pointer to it
-        let base = 0x1000_0000usize;
-        let mut data = vec![0u8; 0x100];
-        let put32 = |data: &mut Vec<u8>, at: usize, v: u32| data[at..at + 4].copy_from_slice(&v.to_le_bytes());
-        put32(&mut data, 0x10, 1);
-        put32(&mut data, 0x1C, 0x40);
-        put32(&mut data, 0x24, 0x10);
-        data[0x50..0x50 + 9].copy_from_slice(b".?AVNode@");
-        data[0x80..0x88].copy_from_slice(&((base + 0x10) as u64).to_le_bytes());
-        assert_eq!(all_vtables(&data, base), vec![(base + 0x88, ".?AVNode@".to_string())]);
     }
 }

@@ -14,9 +14,8 @@ use crate::trigger::{self, Shape};
 use crate::trigger_scripts::SetOffBy;
 use crate::ui_ipc_data::SurfaceKind;
 use nalgebra::{Matrix3, Vector3};
-use process_memory::{CopyAddress, Pid, ProcessHandle};
+use process_memory::{Pid, ProcessHandle};
 use std::collections::BTreeSet;
-use std::convert::TryInto;
 
 // Things of Lara's should be this close to her
 const NEAR_LARA: f32 = 300.0;
@@ -176,7 +175,7 @@ fn check_instances(game: &Game, report: &mut Report) -> Option<Vec<Instance>> {
     };
 
     let layout = crate::layout::current();
-    let mut classes = components::Classes::new(game.base_address);
+    let mut classes = crate::rtti::Classes::new(game.base_address);
     let sample: Vec<&Instance> = instances.iter().step_by((instances.len() / SAMPLE).max(1)).collect();
     let transforms = sample
         .iter()
@@ -437,7 +436,7 @@ fn check_collision_meshes(game: &Game, report: &mut Report, lara: &Position) {
         Some(s) => s,
         None => return report.skip("collision meshes", "no CollisionScene offsets".to_string()),
     };
-    let mut classes = components::Classes::new(game.base_address);
+    let mut classes = crate::rtti::Classes::new(game.base_address);
     // TR2013's scene has no RTTI, so it can only be checked by what's in it
     let class = classes.name(game.handle, scene);
     if class.is_some() && class.as_deref() != Some(".?AVCollisionSceneClient@cdc@@") {

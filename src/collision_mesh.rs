@@ -1,11 +1,10 @@
-use crate::game_memory::{f32_at, pointer_at, u16_at, u32_at, vector_at};
+use crate::game_memory::{pointer_at, u16_at, u32_at, vector_at};
 use crate::layout;
 use crate::position::Position;
 use crate::ui_ipc_data::{SurfaceKind, Triangle};
 use nalgebra::Vector3;
 use process_memory::{CopyAddress, ProcessHandle};
 use std::collections::{HashMap, HashSet};
-use std::convert::TryInto;
 use std::io;
 
 // The level's collision is triangle meshes placed in the world by instances, which the cdc::CollisionSceneClient

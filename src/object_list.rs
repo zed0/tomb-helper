@@ -5,7 +5,6 @@ use crate::position::Position;
 use nalgebra::{Rotation3, Vector3};
 use process_memory::{CopyAddress, ProcessHandle};
 use std::collections::HashMap;
-use std::convert::TryInto;
 use std::io;
 
 // The game's instances (game objects) live in a static array (`InstanceArray`); Lara is one of them. Where things are
