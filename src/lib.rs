@@ -17,6 +17,9 @@ use std::sync::atomic::{AtomicBool, AtomicU32};
 use winapi::um::memoryapi::ReadProcessMemory;
 use winapi::um::processthreadsapi::GetCurrentProcess;
 
+// How long without an update from the exe before the overlay decides it's gone and ejects itself
+const EXE_GONE: std::time::Duration = std::time::Duration::from_secs(5);
+
 // How many of a list are in use, given the count the exe sent, which may be mid write
 fn count(count: u32, len: usize) -> usize {
     (count as usize).min(len)
@@ -468,6 +471,10 @@ struct TombHelperHud {
     // Where the next copy is read to
     scratch: Box<UiData>,
     ejecting: bool,
+    // When the exe last updated the shared memory, to notice it's gone (e.g. its window was closed, so it never said to
+    // eject), as injecting again then does nothing while this copy is still loaded
+    last_generation: u32,
+    last_update: std::time::Instant,
     // How long the last frame's drawing took
     draw_milliseconds: f32,
     // Reused between frames
@@ -501,6 +508,8 @@ impl TombHelperHud {
             ui_data,
             scratch: UiData::zeroed(),
             ejecting: false,
+            last_generation: 0,
+            last_update: std::time::Instant::now(),
             draw_milliseconds: 0.0,
             occlusion: OcclusionBuffer::default(),
         }
@@ -517,6 +526,16 @@ impl ImguiRenderLoop for TombHelperHud {
         if !self.ejecting && ui_data.should_exit {
             self.ejecting = true;
             error!("ejecting!");
+            eject();
+        }
+        // The exe updates every tick while the overlay's on, even while the game's paused
+        let generation = self.ui_memory_manager.get().generation();
+        if generation != self.last_generation {
+            self.last_generation = generation;
+            self.last_update = std::time::Instant::now();
+        } else if !self.ejecting && self.last_update.elapsed() > EXE_GONE {
+            self.ejecting = true;
+            error!("tomb-helper stopped updating, ejecting!");
             eject();
         }
 

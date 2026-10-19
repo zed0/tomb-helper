@@ -669,6 +669,41 @@ impl Handler for OverlayHandler {
     }
 }
 
+/// `overlay-data`: what the overlay would be sent now, from one update with collision on, without injecting it
+pub fn print_overlay_data(version: Option<String>, delay: u64) -> Result<(), String> {
+    if delay > 0 {
+        println!("Starting in {} seconds...", delay);
+        std::thread::sleep(time::Duration::from_secs(delay));
+    }
+    let (pid, handle, base_addr, details) = crate::chains::connect(version)?;
+    println!("Found {} {}", details.name, details.version.version);
+    let config = crate::config::get_config();
+    let mut handler =
+        OverlayHandler::new_overlay_handler(&details.address_offsets, &details.arch, &base_addr, &handle, &pid, &config.overlay)
+            .ok_or("This version has no overlay")?;
+    UiSettings::set(&handler.ui_memory_manager.get().settings.collision, true);
+    handler.active = true;
+    handler.handle_tick().map_err(|e| format!("The update failed: {}", e))?;
+    handler.active = false;
+    let mut data = crate::ui_ipc_data::UiData::zeroed();
+    handler.ui_memory_manager.get().read(&mut data);
+    let capsule = |c: &Capsule| {
+        format!("({:.0}, {:.0}, {:.0}) to ({:.0}, {:.0}, {:.0}) radius {:.1}", c.a.x, c.a.y, c.a.z, c.b.x, c.b.y, c.b.z, c.radius)
+    };
+    println!("Lara at ({:.0}, {:.0}, {:.0}), camera {}", data.position.x, data.position.y, data.position.z,
+        if data.camera_view_address == 0 { "missing" } else { "found" });
+    println!("{} objects", data.object_count);
+    println!("Lara's proxy shapes (pushing her: {}):", data.proxy_touching);
+    for c in &data.proxies[..(data.proxy_count as usize).min(data.proxies.len())] {
+        println!("    {}", capsule(c));
+    }
+    println!("Attached proxies (drawn: {}):", data.attached_active);
+    for (c, touching) in data.attached[..(data.attached_count as usize).min(data.attached.len())].iter().zip(data.attached_touching) {
+        println!("    {}{}", capsule(c), if touching { ", pushing her" } else { "" });
+    }
+    Ok(())
+}
+
 impl Drop for OverlayHandler {
     fn drop(&mut self) {
         println!("Ejecting injected overlay dll");
