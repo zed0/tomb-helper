@@ -28,6 +28,12 @@ pub enum AddressType {
     InstanceArray,
     // Count and records of the ground probes the game casts for Lara, see `collision::read_probes`
     PlayerProbes,
+    // Lara's movement proxy (see `collision::read_proxy`), for a game where it isn't found through her components:
+    // TR2013 keeps it in a static
+    PlayerProxy,
+    // The combat proxy, attached to Lara's, which collides while she aims (holding her off walls in front of her), where
+    // it isn't found through her proxy's physics body (TR2013's belongs to the "combatproxy" instance)
+    CombatProxy,
     // The cdc::CollisionSceneClient listing the level's collision meshes (resolves to its address), see
     // `collision_mesh`
     CollisionScene,

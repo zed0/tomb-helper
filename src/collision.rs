@@ -147,8 +147,9 @@ pub struct ProxyCapsules {
     pub attached_active: bool,
 }
 
-// The shapes of a proxy (Lara's cdc::ProxyComponent) in world space
-pub fn read_proxy(handle: ProcessHandle, proxy: usize) -> io::Result<ProxyCapsules> {
+// The shapes of a proxy (Lara's cdc::ProxyComponent) in world space. `standalone` are proxies attached to it that
+// aren't found through its physics body (TR2013's combat proxy).
+pub fn read_proxy(handle: ProcessHandle, proxy: usize, standalone: &[usize]) -> io::Result<ProxyCapsules> {
     let layout = &layout::current().proxy;
     let shapes = proxy_shapes(layout);
     let mut bytes = vec![0u8; layout.size];
@@ -161,7 +162,8 @@ pub fn read_proxy(handle: ProcessHandle, proxy: usize) -> io::Result<ProxyCapsul
     let mut capsules: Vec<(Vector3<f32>, Vector3<f32>, Capsule)> = vec![];
 
     // The physics shape is what's actually swept, so prefer it for the shape in use
-    if let Some((capsule, physics_centre, _)) = read_physics_capsule(handle, usize_at(&bytes, layout.body)) {
+    let body = layout.body.map_or(0, |offset| usize_at(&bytes, offset));
+    if let Some((capsule, physics_centre, _)) = read_physics_capsule(handle, body) {
         let size = Vector3::new(f32_at(&bytes, shapes[0].size), f32_at(&bytes, shapes[0].size + 4), 0.0);
         capsules.push((size, in_use_offset, capsule));
         centre = physics_centre;
@@ -192,10 +194,17 @@ pub fn read_proxy(handle: ProcessHandle, proxy: usize) -> io::Result<ProxyCapsul
     let on_contact = |capsule: &Capsule| {
         contacts.iter().any(|c| (distance_to_capsule(c, capsule) - capsule.radius).abs() <= CONTACT_TOLERANCE)
     };
-    let attached = read_attached_capsules(handle, usize_at(&bytes, layout.body));
+    let mut attached = if body == 0 { vec![] } else { read_attached_capsules(handle, body) };
     // They only collide while she aims, when the camera's touching flag is always set as it overlaps her capsule
     // (and the weapon's can only be set then)
-    let attached_active = attached.iter().any(|(_, touching)| *touching);
+    let mut attached_active = attached.iter().any(|(_, touching)| *touching);
+    // Ones found on their own say whether they collide in their flags, and are only touching if on a contact
+    for &other in standalone {
+        if let Ok((capsule, collides)) = read_attached_proxy(handle, other) {
+            attached.push((capsule, false));
+            attached_active |= collides;
+        }
+    }
     let attached = attached
         .into_iter()
         .map(|(capsule, touching)| {
@@ -214,15 +223,39 @@ pub fn read_proxy(handle: ProcessHandle, proxy: usize) -> io::Result<ProxyCapsul
     })
 }
 
+/// A proxy attached to Lara's that's found on its own (TR2013's camera): its shape in use, and whether it collides,
+/// from its flags
+pub fn read_attached_proxy(handle: ProcessHandle, proxy: usize) -> io::Result<(Capsule, bool)> {
+    let layout = &layout::current().proxy;
+    let capsule = read_proxy(handle, proxy, &[])?
+        .shapes
+        .first()
+        .copied()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "the proxy has no shapes"))?;
+    let collides = match layout.flags {
+        Some(offset) => {
+            let mut flags = [0u8; 4];
+            handle.copy_address(proxy + offset, &mut flags)?;
+            u32::from_le_bytes(flags) as usize & layout.collides != 0
+        }
+        None => false,
+    };
+    Ok((capsule, collides))
+}
+
 fn read_contacts(handle: ProcessHandle, proxy: usize) -> Vec<Vector3<f32>> {
     let layout = &layout::current().proxy;
+    let contacts = match layout.contacts {
+        Some(offset) => offset,
+        None => return vec![],
+    };
     let count_at = |offset: usize| {
         let mut bytes = [0u8; 4];
         handle.copy_address(proxy + offset, &mut bytes).ok().map(|_| i32::from_le_bytes(bytes).max(0) as usize)
     };
     let mut records = vec![0u8; MAX_CONTACTS * layout.contact_size];
-    let counts = (count_at(layout.contact_count), count_at(layout.second_contact_count));
-    let count = match (counts, handle.copy_address(proxy + layout.contacts, &mut records)) {
+    let counts = (count_at(layout.contact_count), layout.second_contact_count.map_or(Some(0), count_at));
+    let count = match (counts, handle.copy_address(proxy + contacts, &mut records)) {
         ((Some(first), Some(second)), Ok(_)) => (first + second).min(MAX_CONTACTS),
         _ => return vec![],
     };

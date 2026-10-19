@@ -278,9 +278,21 @@ again (`derive` plus live checks).
     +0x48 (not quite unique), no placement/components/transform). +0x64 -> component data: +0x8 count, 0xC byte
     entries from +0x14 (hash, -> name, -> data), e.g. InteractComponent, LootComponent, RagdollComponent,
     InventoryMemberComponent (Lara's gear), which `trigger::read_kinds` goes by when there's no component table.
-  - Lara's movement capsule is a static block at mod+0x1113850: +0x0 centre, +0x20 radius/length (25, 60), +0x30 offset
-    (0, -5, 85), +0x60 rotation quaternion, +0x80/+0x90 the shape it's changing to, +0xA0 her feet, +0xD8 -> her instance;
-    0x50 byte contact records (normal + distance, then point) from mod+0x1113960.
+  - Lara's movement proxy is a statically allocated `cdc::ProxyComponent` at mod+0x1113830 (`PlayerProxy`, layout
+    `proxy`): +0x10 u32 flags (bit 0x20 clears while aiming, as in ROTTR), +0x18 -> its instance, +0x20 centre, +0x48
+    radius/length (25, 60; aiming 25, 40), +0x50 offset (0, -5, 85; aiming (0, -10, 90)), +0x70 tilt and +0x80 facing
+    quaternions, +0xA0/+0xB0/+0xD0/+0xE0 the shape it's changing to, +0xC0 her feet (feet + facing * offset = centre,
+    checked), +0xF8 -> what it's attached to (her instance). No physics body (`proxy.body` null). Contacts: u32 count at
+    +0x120 (the records keep their old values when it's 0, which is why they looked stale), 0x50 byte records from +0x130
+    (normal + distance, then the point at +0x10). Aiming at a wall she faced, every live contact was on the combat
+    proxy (`collision::read_proxy`'s `standalone`), none on hers.
+  - The combat proxy is another static `cdc::ProxyComponent` at mod+0x11175B0 (`CombatProxy`), belonging to the
+    "combatproxy" instance and attached to Lara's (+0xF8): radius 30, length 30, offset (0, 30, 90), with her facing. Its
+    flags' bit 0x2 (`proxy.collides`) is set while she aims. The wall she faced while aiming was at local +y, so +y is
+    forward then, and it's in front of her, pushing her off walls she faces (it only seemed to with some walls, probably
+    a collision filter). One time not aiming, the game camera was at local +y, but the camera can face her. Those are the
+    only two `ProxyComponent`s live even while aiming the bow; ROTTR's "camera" proxy (moving to (0, 30, 90) when
+    aiming) may be the same thing.
   - Not found: ground probes, and the collision scene (`CollisionSceneClient` doesn't exist; `TR9MultibodyClient` at
     [mod+0x1DDBAEC] has no scene at +0x10).
 - Live tools all work on Steam TR2013: `probe`, `chains`, `update-offsets` (32-bit path), `watch`/`watch-raw` (debug
