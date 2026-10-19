@@ -286,8 +286,10 @@ again (`derive` plus live checks).
     +0x120 (the records keep their old values when it's 0, which is why they looked stale), 0x50 byte records from +0x130
     (normal + distance, then the point at +0x10). Aiming at a wall she faced, every live contact was on the combat
     proxy (`collision::read_proxy`'s `standalone`), none on hers.
-  - The combat proxy is another static `cdc::ProxyComponent` at mod+0x11175B0 (`CombatProxy`), belonging to the
-    "combatproxy" instance and attached to Lara's (+0xF8): radius 30, length 30, offset (0, 30, 90), with her facing. Its
+  - The combat proxy is another `cdc::ProxyComponent` in the same static pool (0x7B0 apart; it was at mod+0x11175B0 one
+    session and mod+0x1113FE0 the next, the slot zeroed), found through Lara's proxy +0x788 (`CombatProxy` [0x1113FB8,
+    0x0]; its own +0x788 is null, so maybe a list of attached proxies), belonging to the "combatproxy" instance and
+    attached to Lara's (+0xF8): radius 30, length 30, offset (0, 30, 90), with her facing. Its
     flags' bit 0x2 (`proxy.collides`) is set while she aims. The wall she faced while aiming was at local +y, so +y is
     forward then, and it's in front of her, pushing her off walls she faces (it only seemed to with some walls, probably
     a collision filter). One time not aiming, the game camera was at local +y, but the camera can face her. Those are the

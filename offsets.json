@@ -45,7 +45,7 @@
         "CameraLens": ["0x20CCDC0", "0x30"],
         "InstanceArray": ["0x1D24910"],
         "PlayerProxy": ["0x1113830"],
-        "CombatProxy": ["0x11175B0"]
+        "CombatProxy": ["0x1113FB8", "0x0"]
       },
       "layout": {
         "instance": {"size": "0xD0", "header": "0xC0", "position": "0x0", "rotation": "0x20", "in_use": "0x40", "placement": null, "id": "0x48", "object_name": ["0x40", "0x4C"], "components": null, "transform": null, "component_data": "0x64"},
