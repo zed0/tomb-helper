@@ -33,6 +33,7 @@ mod discover;
 mod pe_image;
 mod position_handler;
 mod handler;
+mod inject32;
 mod layout;
 mod object_list;
 mod overlay_handler;
@@ -117,7 +118,7 @@ fn create_handlers(
     details: &ProcessDetails,
 ) -> Vec<Box<dyn Handler>> {
     let mut handlers: Vec<Box<dyn Handler>> = vec![];
-    layout::set(details.layout.clone());
+    layout::set_for(&details);
 
     match &config.record_cutscene_timing {
         CutsceneTiming::On { timing_file, livesplit_port } => {

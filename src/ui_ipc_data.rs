@@ -1,5 +1,5 @@
 use std::ptr;
-use std::sync::atomic::{fence, AtomicBool, AtomicU32, AtomicUsize, Ordering};
+use std::sync::atomic::{fence, AtomicBool, AtomicU32, Ordering};
 use shared_memory::{Shmem, ShmemConf, ShmemError};
 use crate::position::Position;
 
@@ -267,6 +267,7 @@ pub struct Triangle {
 // All zeros is a valid (empty) value, which `zeroed` relies on
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
+// Shared between the 64-bit exe and the overlay, which is 32-bit in a 32-bit game, so nothing in it is pointer sized
 pub struct UiData {
     pub debug: bool,
     pub should_exit: bool,
@@ -283,36 +284,39 @@ pub struct UiData {
     pub camera_view: [f32; 16],
     pub camera_projection: [f32; 16],
     // Where `CameraView` and `CameraLens` are in the game, so the overlay can read the camera for the frame it's
-    // drawing on. The ones above lag behind, which makes everything judder as the camera turns.
-    pub camera_view_address: usize,
-    pub camera_lens_address: usize,
-    pub object_count: usize,
+    // drawing on. The ones above lag behind, which makes everything judder as the camera turns. 0 if the game has no
+    // camera offsets, when nothing is drawn in the world.
+    pub camera_view_address: u64,
+    pub camera_lens_address: u64,
+    // Which of the lens's floats are its near, far, fov and aspect (`projection_from_lens`)
+    pub lens_fields: [u32; 4],
+    pub object_count: u32,
     pub objects: [ObjectBox; MAX_OBJECTS],
     // Lara's collision
-    pub capsule_count: usize,
+    pub capsule_count: u32,
     pub capsules: [Capsule; MAX_CAPSULES],
-    pub probe_count: usize,
+    pub probe_count: u32,
     pub probes: [Probe; MAX_PROBES],
     // Lara's movement collision: her proxy's shape, and the one it's changing to if that's different
-    pub proxy_count: usize,
+    pub proxy_count: u32,
     pub proxies: [Capsule; MAX_PROXIES],
     // Whether the shape in use is pushing her off something
     pub proxy_touching: bool,
     // Proxies attached to Lara's, e.g. the one that moves behind her when she aims
-    pub attached_count: usize,
+    pub attached_count: u32,
     pub attached: [Capsule; MAX_ATTACHED],
     pub attached_touching: [bool; MAX_ATTACHED],
     // They only collide while Lara aims
     pub attached_active: bool,
     // Trigger volumes near Lara
-    pub trigger_count: usize,
+    pub trigger_count: u32,
     pub triggers: [TriggerLabel; MAX_TRIGGERS],
-    pub trigger_line_count: usize,
+    pub trigger_line_count: u32,
     pub trigger_lines: [Line; MAX_TRIGGER_LINES],
-    pub trigger_face_count: usize,
+    pub trigger_face_count: u32,
     pub trigger_faces: [TriggerFace; MAX_TRIGGER_FACES],
     // The level's collision near Lara, closest first. Last, as only the used part of it is copied.
-    pub triangle_count: usize,
+    pub triangle_count: u32,
     // How long the exe took to find them
     pub triangle_milliseconds: f32,
     // How many of the level's collision instances have each kind bit
@@ -324,7 +328,7 @@ impl UiData {
     // Bytes up to the end of the triangles in use, which is all that needs copying. The count is read
     // volatile and clamped as it may be mid write.
     unsafe fn used_size(data: *const UiData) -> usize {
-        let count = ptr::read_volatile(ptr::addr_of!((*data).triangle_count)).min(MAX_TRIANGLES);
+        let count = (ptr::read_volatile(ptr::addr_of!((*data).triangle_count)) as usize).min(MAX_TRIANGLES);
         std::mem::offset_of!(UiData, triangles) + count * size_of::<Triangle>()
     }
 
@@ -348,8 +352,9 @@ impl UiData {
 // The game's projection matrix is reused for another pass with a narrower fov part way through each
 // frame, so build the main camera's from its lens instead: near, far, near, far, fov, aspect, fov, aspect.
 // The second copies are the more stable ones.
-pub fn projection_from_lens(lens: &[f32; 8]) -> [f32; 16] {
-    let (near, far, fov, aspect) = (lens[2], lens[3], lens[6], lens[7]);
+pub fn projection_from_lens(lens: &[f32; 8], fields: [u32; 4]) -> [f32; 16] {
+    let field = |i: usize| lens[(fields[i] as usize).min(lens.len() - 1)];
+    let (near, far, fov, aspect) = (field(0), field(1), field(2), field(3));
     let y = 1.0 / (fov / 2.0).tan();
     let z = far / (far - near);
     // Row-major for row vectors, like the game's
@@ -437,9 +442,9 @@ impl UiSettings {
 #[repr(C)]
 pub struct UiDoubleBuffer {
     pub settings: UiSettings,
-    active_buffer: AtomicUsize,
+    active_buffer: AtomicU32,
     // Odd while the matching buffer is being written
-    sequences: [AtomicUsize; 2],
+    sequences: [AtomicU32; 2],
     buffers: [UiData; 2],
 }
 
@@ -447,7 +452,7 @@ impl UiDoubleBuffer {
     // Copies the current value into the other buffer, changes it there, then makes that one current. Done in
     // place since `UiData` is too big to pass around by value.
     pub fn update(&mut self, change: impl FnOnce(&mut UiData)) {
-        let current = self.active_buffer.load(Ordering::Relaxed);
+        let current = self.active_buffer.load(Ordering::Relaxed) as usize;
         let next = 1 - current;
         self.sequences[next].fetch_add(1, Ordering::Relaxed);
         fence(Ordering::Release);
@@ -457,14 +462,14 @@ impl UiDoubleBuffer {
             change(&mut *buffers.add(next));
         }
         self.sequences[next].fetch_add(1, Ordering::Release);
-        self.active_buffer.store(next, Ordering::Release);
+        self.active_buffer.store(next as u32, Ordering::Release);
     }
 
     // The writer is in another process and doesn't wait for readers, so it can start rewriting a buffer
     // while it's being copied. Returns false if that happened, in which case `out` is left part written. Triangles
     // past `triangle_count` aren't copied.
     pub fn try_read(&self, out: &mut UiData) -> bool {
-        let current = self.active_buffer.load(Ordering::Acquire);
+        let current = self.active_buffer.load(Ordering::Acquire) as usize;
         let before = self.sequences[current].load(Ordering::Acquire);
         if before % 2 == 1 {
             return false;

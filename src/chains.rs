@@ -18,7 +18,7 @@ pub fn connect(version: Option<String>) -> Result<(Pid, ProcessHandle, usize, Pr
     let connected = find_process::find_process(known_process_details(), version).ok_or_else(|| {
         "No known game version is running (pass --version to force one from process_details.rs)".to_string()
     })?;
-    crate::layout::set(connected.3.layout.clone());
+    crate::layout::set_for(&connected.3);
     Ok(connected)
 }
 

@@ -8,6 +8,7 @@ use crate::tracked_memory::TrackedMemory;
 use crate::tracked_position::TrackedPosition;
 use crate::action::Action;
 use crate::handler::Handler;
+use crate::inject32;
 use crate::process_details::{AddressOffsets, AddressType};
 use nalgebra::{Matrix3, Vector3};
 use std::collections::HashMap;
@@ -41,13 +42,15 @@ pub struct OverlayHandler {
     base_addr: usize,
     config: OverlayConfig,
     position: TrackedPosition,
-    camera_view: TrackedCameraMatrix,
-    camera_lens: TrackedMemory<[f32; 8]>,
+    // The camera and objects, for drawing in the world, if this game has the offsets (TR2013 doesn't yet), else only
+    // the window is shown
+    camera_view: Option<TrackedCameraMatrix>,
+    camera_lens: Option<TrackedMemory<[f32; 8]>>,
     // Camera to world, which starts at `CameraSin`
     camera_to_world: Option<TrackedCameraMatrix>,
-    camera_view_offsets: Vec<usize>,
-    camera_lens_offsets: Vec<usize>,
-    instance_array_offsets: Vec<usize>,
+    camera_view_offsets: Option<Vec<usize>>,
+    camera_lens_offsets: Option<Vec<usize>>,
+    instance_array_offsets: Option<Vec<usize>>,
     player_probes_offsets: Option<Vec<usize>>,
     collision_scene_offsets: Option<Vec<usize>>,
     collision_meshes: CollisionMeshes,
@@ -137,23 +140,18 @@ impl OverlayHandler {
                 *arch,
                 *base_addr,
             ),
-            camera_view: TrackedCameraMatrix::new(
-                address_offsets.get(&AddressType::CameraView)?.clone(),
-                *arch,
-                *base_addr,
-            ),
-            camera_lens: TrackedMemory::new(
-                [0.0; 8],
-                address_offsets.get(&AddressType::CameraLens)?.clone(),
-                *arch,
-                *base_addr,
-            ),
+            camera_view: address_offsets
+                .get(&AddressType::CameraView)
+                .map(|offsets| TrackedCameraMatrix::new(offsets.clone(), *arch, *base_addr)),
+            camera_lens: address_offsets
+                .get(&AddressType::CameraLens)
+                .map(|offsets| TrackedMemory::new([0.0; 8], offsets.clone(), *arch, *base_addr)),
             camera_to_world: address_offsets
                 .get(&AddressType::CameraSin)
                 .map(|offsets| TrackedCameraMatrix::new(offsets.clone(), *arch, *base_addr)),
-            camera_view_offsets: address_offsets.get(&AddressType::CameraView)?.clone(),
-            camera_lens_offsets: address_offsets.get(&AddressType::CameraLens)?.clone(),
-            instance_array_offsets: address_offsets.get(&AddressType::InstanceArray)?.clone(),
+            camera_view_offsets: address_offsets.get(&AddressType::CameraView).cloned(),
+            camera_lens_offsets: address_offsets.get(&AddressType::CameraLens).cloned(),
+            instance_array_offsets: address_offsets.get(&AddressType::InstanceArray).cloned(),
             player_probes_offsets: address_offsets.get(&AddressType::PlayerProbes).cloned(),
             collision_scene_offsets: address_offsets.get(&AddressType::CollisionScene).cloned(),
             collision_meshes: CollisionMeshes::default(),
@@ -194,7 +192,11 @@ impl OverlayHandler {
         actions: u32,
     ) -> Result<(), Box<dyn Error>> {
         if self.object_list.is_none() {
-            self.object_list = Some(ObjectList::new(self.resolve(&self.instance_array_offsets)?));
+            let offsets = match &self.instance_array_offsets {
+                Some(offsets) => offsets.clone(),
+                None => return Ok(()),
+            };
+            self.object_list = Some(ObjectList::new(self.resolve(&offsets)?));
         }
 
         let filters: Vec<String> = self.config.object_filters.iter().map(|f| f.to_lowercase()).collect();
@@ -375,10 +377,10 @@ fn capsule_bounds(capsules: &[Capsule], transform: &[f32; 16]) -> Option<(Positi
 }
 
 // Copies as many items as fit, returns how many that was
-fn fill<T: Copy>(slots: &mut [T], items: &[T]) -> usize {
+fn fill<T: Copy>(slots: &mut [T], items: &[T]) -> u32 {
     let count = items.len().min(slots.len());
     slots[..count].copy_from_slice(&items[..count]);
-    count
+    count as u32
 }
 
 impl Handler for OverlayHandler {
@@ -388,8 +390,12 @@ impl Handler for OverlayHandler {
         }
 
         self.position.fetch_from_game(self.handle)?;
-        self.camera_view.fetch_from_game(self.handle)?;
-        self.camera_lens.fetch_from_game(self.handle)?;
+        if let Some(camera_view) = &mut self.camera_view {
+            camera_view.fetch_from_game(self.handle)?;
+        }
+        if let Some(camera_lens) = &mut self.camera_lens {
+            camera_lens.fetch_from_game(self.handle)?;
+        }
 
         let settings = &self.ui_memory_manager.get().settings;
         let requests = settings.requests.swap(0, std::sync::atomic::Ordering::SeqCst);
@@ -559,10 +565,16 @@ impl Handler for OverlayHandler {
         };
         let triangle_milliseconds = started.elapsed().as_secs_f32() * 1000.0;
 
-        let camera_view = self.camera_view.to_array();
-        let camera_projection = projection_from_lens(&self.camera_lens.data);
-        let camera_view_address = self.resolve(&self.camera_view_offsets)?;
-        let camera_lens_address = self.resolve(&self.camera_lens_offsets)?;
+        let camera_view = self.camera_view.as_ref().map_or([0.0; 16], |c| c.to_array());
+        let camera = &crate::layout::current().camera;
+        let lens_fields = [camera.lens_near, camera.lens_far, camera.lens_fov, camera.lens_aspect].map(|f| f as u32);
+        let camera_projection = self.camera_lens.as_ref().map_or([0.0; 16], |l| projection_from_lens(&l.data, lens_fields));
+        // 0 tells the overlay there's no camera
+        let address = |offsets: &Option<Vec<usize>>| -> io::Result<u64> {
+            offsets.as_ref().map_or(Ok(0), |offsets| self.resolve(offsets).map(|a| a as u64))
+        };
+        let camera_view_address = address(&self.camera_view_offsets)?;
+        let camera_lens_address = address(&self.camera_lens_offsets)?;
         let kind_counts = self.collision_meshes.kind_counts;
         let helper_state = self.helper_state.clone();
         self.ui_memory_manager.get_mut().update(|val| {
@@ -575,6 +587,7 @@ impl Handler for OverlayHandler {
             val.position = position;
             val.camera_view = camera_view;
             val.camera_projection = camera_projection;
+            val.lens_fields = lens_fields;
             val.camera_view_address = camera_view_address;
             val.camera_lens_address = camera_lens_address;
             val.object_count = fill(&mut val.objects, &objects);
@@ -611,11 +624,20 @@ impl Handler for OverlayHandler {
                     self.ui_memory_manager.get_mut().update(|val| val.should_exit = false);
 
                     println!("Injecting overlay dll");
-                    let dll_path = env::current_exe().unwrap().with_file_name("tomb_helper_ui.dll");
-                    Process::by_pid(&self.pid)
-                        .unwrap()
-                        .inject(dll_path)
-                        .unwrap();
+                    // A 32-bit game (TR2013) needs the 32-bit build of the overlay, injected its own way
+                    let injected = if matches!(self.arch, Architecture::Arch32Bit) {
+                        let dll_path = env::current_exe()?.with_file_name("tomb_helper_ui32.dll");
+                        inject32::inject(self.pid, &dll_path)
+                    } else {
+                        let dll_path = env::current_exe()?.with_file_name("tomb_helper_ui.dll");
+                        Process::by_pid(&self.pid)
+                            .and_then(|process| process.inject(dll_path))
+                            .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))
+                    };
+                    if let Err(e) = injected {
+                        self.active = false;
+                        return Err(format!("Could not inject the overlay: {}", e).into());
+                    }
                 } else {
                     println!("Ejecting injected overlay dll");
                     self.ui_memory_manager.get_mut().update(|val| val.should_exit = true);

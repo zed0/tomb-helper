@@ -36,11 +36,18 @@
       "bits": 32,
       "offsets": {
         "Version": ["0x107C898"],
-        "XPosition": ["0xA788F0", "0x0"],
-        "YPosition": ["0xA788F0", "0x4"],
-        "ZPosition": ["0xA788F0", "0x8"],
-        "CameraSin": ["0x150C8C", "0x4C4"],
-        "CameraCos": ["0x150C8C", "0x4C8"]
+        "XPosition": ["0x20C96D8", "0x8", "0x0", "0x230C", "0x0"],
+        "YPosition": ["0x20C96D8", "0x8", "0x0", "0x230C", "0x4"],
+        "ZPosition": ["0x20C96D8", "0x8", "0x0", "0x230C", "0x8"],
+        "CameraSin": ["0x20CCDC0", "0x50"],
+        "CameraCos": ["0x20CCDC0", "0x54"],
+        "CameraView": ["0x20CCDC0", "0x4A0"],
+        "CameraLens": ["0x20CCDC0", "0x30"],
+        "InstanceArray": ["0x1D24910"]
+      },
+      "layout": {
+        "instance": {"size": "0xD0", "header": "0xC0", "position": "0x0", "rotation": "0x20", "in_use": "0x40", "placement": null, "id": "0x48", "object_name": ["0x40", "0x4C"], "components": null, "transform": null, "component_data": "0x64"},
+        "camera": {"view": "0x4A0", "lens": "0x30", "lens_near": "0x0", "lens_far": "0x1", "lens_fov": "0x2", "lens_aspect": "0x3", "sin": "0x50", "cos": "0x54"}
       }
     },
     {
