@@ -586,12 +586,32 @@ impl ImguiRenderLoop for TombHelperHud {
                         triangle_count, ui_data.triangle_milliseconds, self.draw_milliseconds
                     ));
                     checkbox(ui, "Lara's collision", &settings.lara_collision);
-                    for (label, setting, radius_label, radius) in [
-                        ("Movement collision", &settings.coarse_meshes, "Radius##coarse", &settings.coarse_radius),
-                        ("Detailed collision", &settings.detailed_meshes, "Radius##detailed", &settings.detailed_radius),
-                    ] {
-                        checkbox(ui, label, setting);
-                        slider(ui, radius_label, 0.0, MAX_MESH_RADIUS, "%.0f", radius);
+                    checkbox(ui, "Movement collision (Lara's, 0x2)", &settings.coarse_meshes);
+                    slider(ui, "Radius##coarse", 0.0, MAX_MESH_RADIUS, "%.0f", &settings.coarse_radius);
+                    checkbox(ui, "Other collision", &settings.detailed_meshes);
+                    slider(ui, "Radius##detailed", 0.0, MAX_MESH_RADIUS, "%.0f", &settings.detailed_radius);
+                    if UiSettings::get(&settings.detailed_meshes) {
+                        // Which kinds of collision (bits of the meshes' filters), and how many meshes in the level have
+                        // each; what they're for isn't known, besides 0x2 (Lara's movement)
+                        ui.indent();
+                        let mut kinds = UiSettings::get_u32(&settings.other_kinds);
+                        let mut shown = 0;
+                        for bit in 0..16 {
+                            let count = ui_data.mesh_kind_counts[bit];
+                            if count == 0 {
+                                continue;
+                            }
+                            if shown % 3 != 0 {
+                                ui.same_line_with_pos(shown as f32 % 3.0 * 125.0 + 30.0);
+                            }
+                            shown += 1;
+                            let mut value = kinds & 1 << bit != 0;
+                            if ui.checkbox(format!("{:X} ({})##kind", 1 << bit, count), &mut value) {
+                                kinds ^= 1 << bit;
+                                UiSettings::set_u32(&settings.other_kinds, kinds);
+                            }
+                        }
+                        ui.unindent();
                     }
                     slider(ui, "Opacity", 0.0, 1.0, "%.2f", &settings.mesh_opacity);
                     checkbox(ui, "Fade with distance from Lara", &settings.fade_with_distance);

@@ -13,7 +13,8 @@ use std::io;
 // Where things are is in `layout`. Each instance's filter has bits for which kinds of collision use the mesh. Everything
 // Lara's movement proxy touched had the player bit set (as did the level's default, 0x2C7F), and objects often have
 // both a detailed mesh without it (0x1C10, probably for projectiles) and a rough one with it (0x204E). About 900 meshes
-// are just 0x0002, presumably invisible walls.
+// are just 0x0002, presumably invisible walls. So the bits are kinds of collision (channels), not levels of detail: the
+// ground is one mesh with nearly every bit set, used by everything. SOTTR's kinds are mostly ROTTR's plus 0x4000.
 // In case the list is broken
 const MAX_INSTANCES: usize = 100_000;
 // Normals with at least this much z are floors, at most minus this ceilings
@@ -51,12 +52,22 @@ pub struct Mesh {
 pub struct CollisionMeshes {
     placements: Vec<Placement>,
     meshes: HashMap<usize, Mesh>,
+    /// How many of the level's instances have each of the 16 kind bits, as of the last refresh
+    pub kind_counts: [u32; 16],
 }
 
 impl CollisionMeshes {
     // Rereads the list of instances, which changes as the level streams in and out. Keeps those Lara collides with if
-    // `coarse`, and the rest if `detailed`.
-    pub fn refresh(&mut self, handle: ProcessHandle, scene_address: usize, coarse: bool, detailed: bool) -> io::Result<()> {
+    // `coarse`, and those with any of `other_kinds` if `detailed` (which are "detailed" in the placements unless Lara
+    // collides with them and `coarse`).
+    pub fn refresh(
+        &mut self,
+        handle: ProcessHandle,
+        scene_address: usize,
+        coarse: bool,
+        detailed: bool,
+        other_kinds: u32,
+    ) -> io::Result<()> {
         let layout = layout::current();
         let (scene_layout, instance) = (&layout.collision_scene, &layout.collision_instance);
         let mesh_layout = &layout.collision_mesh;
@@ -69,9 +80,10 @@ impl CollisionMeshes {
             self.placements.drain(..).map(|p| ((p.address, p.mesh), p)).collect();
         let mut headers = HashMap::new();
         let mut filters = HashMap::new();
-        let mut placements = vec![];
-        // Many meshes are loaded twice and placed in the same place
-        let mut seen = HashSet::new();
+        let mut placements: Vec<Placement> = vec![];
+        // Many meshes are loaded twice and placed in the same place, with different kinds; the index of the one kept
+        let mut seen = HashMap::new();
+        let mut kind_counts = [0u32; 16];
         let mut address = usize_at(&scene, scene_layout.first);
         let mut bytes = vec![0u8; instance.size];
         let mut visited = 0;
@@ -85,11 +97,16 @@ impl CollisionMeshes {
                 handle.copy_address(filter + instance.filter_kinds, &mut kind_bytes)?;
                 filters.insert(filter, u32::from_le_bytes(kind_bytes) as usize);
             }
-            let is_detailed = filters[&filter] & instance.player_kind == 0;
-            if !(if is_detailed { detailed } else { coarse }) {
+            let kinds = filters[&filter];
+            for (bit, count) in kind_counts.iter_mut().enumerate() {
+                *count += (kinds >> bit & 1) as u32;
+            }
+            let for_lara = coarse && kinds & instance.player_kind != 0;
+            if !for_lara && !(detailed && kinds & other_kinds as usize != 0) {
                 address = next;
                 continue;
             }
+            let is_detailed = !for_lara;
             let mesh = usize_at(&bytes, instance.mesh);
             if !headers.contains_key(&mesh) {
                 headers.insert(mesh, self.mesh_header(handle, mesh)?);
@@ -97,7 +114,12 @@ impl CollisionMeshes {
             let header = &headers[&mesh];
             let counts = mesh_layout.triangle_count.min(header.len())..header.len();
             let key = (bytes[..instance.placement_size].to_vec(), header[counts].to_vec());
-            if seen.insert(key) {
+            if let Some(&kept) = seen.get(&key) {
+                // Drawn as Lara's if either copy is
+                let kept: &mut Placement = &mut placements[kept];
+                kept.detailed &= is_detailed;
+            } else {
+                seen.insert(key, placements.len());
                 // Unless it was placed with a mesh that's since been replaced
                 let placed = old
                     .remove(&(address, mesh))
@@ -119,6 +141,7 @@ impl CollisionMeshes {
         let used: HashSet<usize> = placements.iter().map(|p| p.mesh).collect();
         self.meshes.retain(|address, _| used.contains(address));
         self.placements = placements;
+        self.kind_counts = kind_counts;
         Ok(())
     }
 

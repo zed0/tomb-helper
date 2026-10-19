@@ -137,6 +137,10 @@ fn default_collision_mesh_radius() -> f32 {
     1500.0
 }
 
+fn default_collision_mesh_other_kinds() -> u32 {
+    0xFFFF & !0x2
+}
+
 fn default_collision_mesh_fade() -> bool {
     true
 }
@@ -208,9 +212,13 @@ pub struct OverlayConfig {
     pub collision_mesh_radius: f32,
     #[serde(default = "default_collision_mesh_radius")]
     pub detailed_collision_mesh_radius: f32,
-    // Also draw the level's collision meshes Lara doesn't collide with (to start with, they can be toggled)
+    // Also draw the level's collision meshes with any of `collision_mesh_other_kinds` (to start with, they can be
+    // toggled)
     #[serde(default)]
     pub detailed_collision_meshes: bool,
+    // Which kinds of collision (bits of the meshes' filters) those are, all but Lara's (0x2) by default
+    #[serde(default = "default_collision_mesh_other_kinds")]
+    pub collision_mesh_other_kinds: u32,
     // Draw the collision meshes fainter further from Lara, by (1 - distance / radius) ^ strength (to start with)
     #[serde(default = "default_collision_mesh_fade")]
     pub collision_mesh_fade: bool,

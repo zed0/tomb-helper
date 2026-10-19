@@ -46,8 +46,8 @@ pub struct OverlayHandler {
     player_probes_offsets: Option<Vec<usize>>,
     collision_scene_offsets: Option<Vec<usize>>,
     collision_meshes: CollisionMeshes,
-    // Coarse and detailed, as of the last refresh
-    mesh_settings: (bool, bool),
+    // Coarse and detailed, and the kinds that are detailed, as of the last refresh
+    mesh_settings: (bool, bool, u32),
     object_list: Option<ObjectList>,
     objects: Vec<(Instance, BoxKind, ObjectCategory)>,
     // Characters' and animals' hit capsules in bone space, by instance. Their models' bounds are often only part of
@@ -90,6 +90,7 @@ impl OverlayHandler {
             UiSettings::set(&settings.lara_collision, true);
             UiSettings::set(&settings.coarse_meshes, config.collision_meshes);
             UiSettings::set(&settings.detailed_meshes, config.detailed_collision_meshes);
+            UiSettings::set_u32(&settings.other_kinds, config.collision_mesh_other_kinds);
             UiSettings::set_f32(&settings.coarse_radius, config.collision_mesh_radius);
             UiSettings::set_f32(&settings.detailed_radius, config.detailed_collision_mesh_radius);
             UiSettings::set_f32(&settings.mesh_opacity, config.collision_opacity);
@@ -143,7 +144,7 @@ impl OverlayHandler {
             player_probes_offsets: address_offsets.get(&AddressType::PlayerProbes).cloned(),
             collision_scene_offsets: address_offsets.get(&AddressType::CollisionScene).cloned(),
             collision_meshes: CollisionMeshes::default(),
-            mesh_settings: (false, false),
+            mesh_settings: (false, false, 0),
             object_list: None,
             objects: vec![],
             npc_capsules: HashMap::new(),
@@ -381,6 +382,7 @@ impl Handler for OverlayHandler {
         let mesh_settings = (
             collision && UiSettings::get(&settings.coarse_meshes),
             collision && UiSettings::get(&settings.detailed_meshes),
+            UiSettings::get_u32(&settings.other_kinds),
         );
         let show_meshes = mesh_settings.0 || mesh_settings.1;
         let coarse_radius = UiSettings::get_f32(&settings.coarse_radius);
@@ -407,8 +409,8 @@ impl Handler for OverlayHandler {
         if refresh_due || mesh_settings != self.mesh_settings {
             self.mesh_settings = mesh_settings;
             if let (true, Some(offsets)) = (show_meshes, &self.collision_scene_offsets) {
-                let (coarse, detailed) = mesh_settings;
-                self.collision_meshes.refresh(self.handle, self.resolve(offsets)?, coarse, detailed)?;
+                let (coarse, detailed, other_kinds) = mesh_settings;
+                self.collision_meshes.refresh(self.handle, self.resolve(offsets)?, coarse, detailed, other_kinds)?;
             }
         }
 
@@ -518,6 +520,7 @@ impl Handler for OverlayHandler {
         let camera_projection = projection_from_lens(&self.camera_lens.data);
         let camera_view_address = self.resolve(&self.camera_view_offsets)?;
         let camera_lens_address = self.resolve(&self.camera_lens_offsets)?;
+        let kind_counts = self.collision_meshes.kind_counts;
         self.ui_memory_manager.get_mut().update(|val| {
             val.position = position;
             val.camera_view = camera_view;
@@ -537,6 +540,7 @@ impl Handler for OverlayHandler {
             val.trigger_face_count = fill(&mut val.trigger_faces, &trigger_faces);
             val.triangle_count = fill(&mut val.triangles, &triangles);
             val.triangle_milliseconds = triangle_milliseconds;
+            val.mesh_kind_counts = kind_counts;
         });
         Ok(())
     }
