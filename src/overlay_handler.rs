@@ -55,6 +55,8 @@ pub struct OverlayHandler {
     // Lara's movement proxy, where it isn't found through her components (TR2013)
     player_proxy_offsets: Option<Vec<usize>>,
     combat_proxy_offsets: Option<Vec<usize>>,
+    // TR2013's aim sweep: the instance array, inventory pool and type pool
+    aim_sweep_offsets: Option<(Vec<usize>, Vec<usize>, Vec<usize>)>,
     collision_scene_offsets: Option<Vec<usize>>,
     collision_meshes: CollisionMeshes,
     // What the other handlers have to show, and actions the window's buttons asked for
@@ -158,6 +160,14 @@ impl OverlayHandler {
             player_probes_offsets: address_offsets.get(&AddressType::PlayerProbes).cloned(),
             player_proxy_offsets: address_offsets.get(&AddressType::PlayerProxy).cloned(),
             combat_proxy_offsets: address_offsets.get(&AddressType::CombatProxy).cloned(),
+            aim_sweep_offsets: match (
+                address_offsets.get(&AddressType::InstanceArray),
+                address_offsets.get(&AddressType::InventoryPool),
+                address_offsets.get(&AddressType::TypePool),
+            ) {
+                (Some(i), Some(p), Some(t)) => Some((i.clone(), p.clone(), t.clone())),
+                _ => None,
+            },
             collision_scene_offsets: address_offsets.get(&AddressType::CollisionScene).cloned(),
             collision_meshes: CollisionMeshes::default(),
             mesh_settings: (false, false, 0),
@@ -177,6 +187,20 @@ impl OverlayHandler {
             attached_last_touching: [None; MAX_ATTACHED],
             ui_memory_manager,
         })
+    }
+
+    // TR2013's aim sweep, found from Lara's proxy, and whether it's hitting something
+    fn read_aim_sweep(&self, proxy: usize) -> Option<(Capsule, bool)> {
+        let (instances, inventories, types) = self.aim_sweep_offsets.as_ref()?;
+        let mut lara = vec![0u8; crate::layout::pointer_size()];
+        self.handle.copy_address(proxy + crate::layout::current().aim_sweep.proxy_instance, &mut lara).ok()?;
+        crate::aim_sweep::read(
+            self.handle,
+            self.resolve(instances).ok()?,
+            self.resolve(inventories).ok()?,
+            self.resolve(types).ok()?,
+            crate::layout::pointer_from(&lara),
+        )
     }
 
     fn resolve(&self, offsets: &Vec<usize>) -> io::Result<usize> {
@@ -464,9 +488,15 @@ impl Handler for OverlayHandler {
         let proxies = match (show_proxy || follow_aim, &self.player_proxy_offsets, self.lara_address) {
             (true, Some(offsets), _) => {
                 // The combat proxy is found on its own too
-                let camera: Vec<usize> =
+                let combat: Vec<usize> =
                     self.combat_proxy_offsets.as_ref().and_then(|offsets| self.resolve(offsets).ok()).into_iter().collect();
-                self.resolve(offsets).ok().and_then(|proxy| collision::read_proxy(self.handle, proxy, &camera).ok())
+                let proxy = self.resolve(offsets).ok();
+                let mut proxies = proxy.and_then(|proxy| collision::read_proxy(self.handle, proxy, &combat).ok());
+                // The aim sweep is drawn like the proxies attached to hers
+                if let (Some(proxies), Some(rod)) = (&mut proxies, proxy.and_then(|p| self.read_aim_sweep(p))) {
+                    proxies.attached.push(rod);
+                }
+                proxies
             }
             (true, None, Some(lara)) => self
                 .components

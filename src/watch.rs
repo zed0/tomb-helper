@@ -28,6 +28,10 @@ use winapi::um::winnt::{
 };
 use winapi::um::wow64apiset::IsWow64Process;
 
+// EFLAGS.RF
+const RESUME_FLAG: u32 = 0x1_0000;
+// Register sets printed per instruction by `watch-raw --exec`
+const MAX_REGISTER_SETS: usize = 5;
 // x86 has 4 debug address registers
 const MAX_WATCHES: usize = 4;
 const STATUS_SINGLE_STEP: u32 = 0x8000_0004;
@@ -47,6 +51,27 @@ const MAX_CALLER_CHAINS: usize = 3;
 
 #[repr(C, align(16))]
 struct AlignedContext(CONTEXT);
+
+/// What sets a hardware breakpoint off
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Breakpoint {
+    // Reading or writing the address
+    Access,
+    Write,
+    // Running the instruction at the address
+    Execute,
+}
+
+impl Breakpoint {
+    // Dr7's RW bits
+    fn bits(self) -> u64 {
+        match self {
+            Breakpoint::Access => 0b11,
+            Breakpoint::Write => 0b01,
+            Breakpoint::Execute => 0b00,
+        }
+    }
+}
 
 /// A thread's registers. For a 32-bit game these are the WOW64 ones, which are what its code sees: the native
 /// context of a 32-bit thread is the 64-bit layer it runs on.
@@ -135,6 +160,30 @@ impl Context {
         }
     }
 
+    /// Lets the thread carry on past an execute breakpoint, rather than stopping at it again
+    fn set_resume_flag(&mut self) {
+        match self {
+            Context::Native(c) => c.0.EFlags |= RESUME_FLAG,
+            Context::Wow64(c) => c.EFlags |= RESUME_FLAG,
+        }
+    }
+
+    fn registers(&self) -> String {
+        match self {
+            Context::Native(c) => {
+                let c = &c.0;
+                format!(
+                    "rax={:X} rbx={:X} rcx={:X} rdx={:X} rsi={:X} rdi={:X} rbp={:X} rsp={:X} r8={:X} r9={:X}",
+                    c.Rax, c.Rbx, c.Rcx, c.Rdx, c.Rsi, c.Rdi, c.Rbp, c.Rsp, c.R8, c.R9
+                )
+            }
+            Context::Wow64(c) => format!(
+                "eax={:X} ebx={:X} ecx={:X} edx={:X} esi={:X} edi={:X} ebp={:X} esp={:X}",
+                c.Eax, c.Ebx, c.Ecx, c.Edx, c.Esi, c.Edi, c.Ebp, c.Esp
+            ),
+        }
+    }
+
     fn clear_dr6(&mut self) {
         match self {
             Context::Native(c) => c.0.Dr6 = 0,
@@ -185,10 +234,10 @@ impl Context {
     }
 }
 
-/// Points debug registers 0..n at the addresses (1 byte each, break on read or write, or only on
-/// write), or clears them. They're set in the native context even for a 32-bit game, as the processor's debug
-/// registers aren't per mode.
-fn set_watches(thread: HANDLE, addresses: &[usize], write_only: bool) -> bool {
+/// Points debug registers 0..n at the addresses (1 byte each, break on read or write, only on write, or on
+/// running the instruction there), or clears them. They're set in the native context even for a 32-bit game, as the
+/// processor's debug registers aren't per mode.
+fn set_watches(thread: HANDLE, addresses: &[usize], kind: Breakpoint) -> bool {
     let mut context = match Context::get(thread, false, false) {
         Some(c) => c,
         None => return false,
@@ -197,9 +246,9 @@ fn set_watches(thread: HANDLE, addresses: &[usize], write_only: bool) -> bool {
     let mut enable = 0;
     for (i, address) in addresses.iter().enumerate().take(MAX_WATCHES) {
         values[i] = *address as u64;
-        // Local enable, RW = 11 (read or write) or 01 (write), LEN = 00 (1 byte)
+        // Local enable, RW (see `Breakpoint`), LEN = 00 (1 byte, and the only length for execute)
         enable |= 1 << (i * 2);
-        enable |= if write_only { 0b01 } else { 0b11 } << (16 + i * 4);
+        enable |= kind.bits() << (16 + i * 4);
     }
     context.set_debug_registers(values, |dr7| dr7 & !0xFFFF_00FF | enable);
     context.set(thread)
@@ -225,6 +274,13 @@ fn accessing_instruction(handle: ProcessHandle, c: &Context, watched: usize) -> 
         let returns_to = u64::from_le_bytes(bytes) as usize;
         instruction_ending_at(handle, c, returns_to, watched).filter(|i| i.mnemonic() == Mnemonic::Call)
     })
+}
+
+fn instruction_at(handle: ProcessHandle, c: &Context, ip: usize) -> Option<Instruction> {
+    let mut bytes = [0_u8; MAX_INSTRUCTION_LENGTH];
+    handle.copy_address(ip, &mut bytes).ok()?;
+    let instruction = Decoder::with_ip(c.bitness(), &bytes, ip as u64, DecoderOptions::NONE).decode();
+    (!instruction.is_invalid()).then(|| instruction)
 }
 
 fn instruction_ending_at(handle: ProcessHandle, c: &Context, ip: usize, watched: usize) -> Option<Instruction> {
@@ -259,6 +315,8 @@ struct Hit {
     displacement: i64,
     // Return addresses found on the stack (as RVAs), most recent first, and how often each chain was seen
     callers: BTreeMap<Vec<usize>, usize>,
+    // For execute breakpoints, the registers each time, and how often each set was seen
+    registers: BTreeMap<String, usize>,
 }
 
 /// A best guess at the call stack: values on the stack that point just after a call instruction in `code`.
@@ -309,7 +367,7 @@ fn record(
     base_addr: usize,
     addresses: &[usize],
     seconds: u64,
-    write_only: bool,
+    kind: Breakpoint,
     code_range: Option<(usize, usize)>,
 ) -> Result<Vec<BTreeMap<usize, Hit>>, String> {
     let wow64 = is_wow64(handle);
@@ -338,7 +396,7 @@ fn record(
             detaching = true;
             for thread in threads.values() {
                 unsafe { SuspendThread(*thread) };
-                set_watches(*thread, &[], write_only);
+                set_watches(*thread, &[], kind);
                 unsafe { ResumeThread(*thread) };
             }
         }
@@ -361,12 +419,12 @@ fn record(
                 let info = unsafe { event.u.CreateProcessInfo() };
                 unsafe { CloseHandle(info.hFile) };
                 threads.insert(event.dwThreadId, info.hThread);
-                armed += set_watches(info.hThread, if detaching { &[] } else { &addresses }, write_only) as usize;
+                armed += set_watches(info.hThread, if detaching { &[] } else { &addresses }, kind) as usize;
             }
             CREATE_THREAD_DEBUG_EVENT => {
                 let thread = unsafe { event.u.CreateThread() }.hThread;
                 threads.insert(event.dwThreadId, thread);
-                armed += set_watches(thread, if detaching { &[] } else { &addresses }, write_only) as usize;
+                armed += set_watches(thread, if detaching { &[] } else { &addresses }, kind) as usize;
             }
             EXIT_THREAD_DEBUG_EVENT => {
                 threads.remove(&event.dwThreadId);
@@ -385,12 +443,18 @@ fn record(
                         // sees in the WOW64 one for a 32-bit game
                         let debug = Context::get(*thread, false, false);
                         let context = Context::get(*thread, wow64, true);
-                        if let (Some(mut debug), Some(context)) = (debug, context) {
+                        if let (Some(mut debug), Some(mut context)) = (debug, context) {
                             for (i, address) in addresses.iter().enumerate() {
                                 if debug.dr6() & (1 << i) == 0 {
                                     continue;
                                 }
-                                if let Some(instruction) = accessing_instruction(handle, &context, *address) {
+                                // An execute breakpoint stops before the instruction, a data one after it
+                                let instruction = if kind == Breakpoint::Execute {
+                                    instruction_at(handle, &context, context.ip())
+                                } else {
+                                    accessing_instruction(handle, &context, *address)
+                                };
+                                if let Some(instruction) = instruction {
                                     let rva = instruction.ip() as usize - base_addr;
                                     let hit = hits[i].entry(rva).or_insert_with(|| {
                                         let mut text = String::new();
@@ -400,23 +464,33 @@ fn record(
                                             text,
                                             displacement: displacement(&instruction),
                                             callers: BTreeMap::new(),
+                                            registers: BTreeMap::new(),
                                         }
                                     });
                                     hit.count += 1;
+                                    if kind == Breakpoint::Execute {
+                                        *hit.registers.entry(context.registers()).or_insert(0) += 1;
+                                    }
                                     if let Some(code_range) = code_range {
                                         *hit.callers.entry(stack_callers(handle, &context, code_range, base_addr)).or_insert(0) += 1;
                                     }
                                 }
                             }
-                            debug.clear_dr6();
-                            debug.set(*thread);
+                            if kind == Breakpoint::Execute {
+                                context.clear_dr6();
+                                context.set_resume_flag();
+                                context.set(*thread);
+                            } else {
+                                debug.clear_dr6();
+                                debug.set(*thread);
+                            }
                         }
                     }
                 } else if is_breakpoint && !attached {
                     // The breakpoint Windows raises once attached; every thread is known by now
                     attached = true;
                     for thread in threads.values() {
-                        armed += set_watches(*thread, &addresses, write_only) as usize;
+                        armed += set_watches(*thread, &addresses, kind) as usize;
                     }
                 } else if !is_breakpoint {
                     // The game's own exceptions are its business
@@ -455,10 +529,10 @@ fn parse_address(text: &str, base_addr: usize) -> Result<usize, String> {
     }
 }
 
-/// `watch-raw <pid> <address>`: record what accesses (or with `write_only` writes) any address in a process, and
-/// for the main module's code which functions it was called from. Addresses are printed
-/// relative to the main module.
-pub fn watch_raw(pid: &str, address: &str, seconds: u64, delay: u64, write_only: bool) -> Result<(), String> {
+/// `watch-raw <pid> <address>`: record what accesses (or writes, or with `Breakpoint::Execute` runs) any address in a
+/// process, and for the main module's code which functions it was called from (and for an instruction run, the
+/// registers then). Addresses are printed relative to the main module.
+pub fn watch_raw(pid: &str, address: &str, seconds: u64, delay: u64, kind: Breakpoint) -> Result<(), String> {
     let pid: Pid = pid.parse().map_err(|_| "Bad PID")?;
     let handle = pid.try_into_process_handle().map_err(|e| e.to_string())?;
     let base_addr = find_process::get_base_address(pid) as usize;
@@ -468,12 +542,17 @@ pub fn watch_raw(pid: &str, address: &str, seconds: u64, delay: u64, write_only:
         println!("Starting in {} seconds...", delay);
         std::thread::sleep(Duration::from_secs(delay));
     }
-    let hits = record(pid, handle, base_addr, &[address], seconds, write_only, Some((base_addr, base_addr + image_size)))?;
+    let hits = record(pid, handle, base_addr, &[address], seconds, kind, Some((base_addr, base_addr + image_size)))?;
     let mut by_count: Vec<(&usize, &Hit)> = hits[0].iter().collect();
     by_count.sort_by_key(|(rva, hit)| (std::cmp::Reverse(hit.count), **rva));
     for (rva, hit) in by_count {
         println!("    +{:#X} {:>6}x  {}", rva, hit.count, hit.text);
         print_callers(hit);
+        let mut sets: Vec<(&String, &usize)> = hit.registers.iter().collect();
+        sets.sort_by_key(|(_, count)| std::cmp::Reverse(**count));
+        for (registers, count) in sets.into_iter().take(MAX_REGISTER_SETS) {
+            println!("        {:>6}x  {}", count, registers);
+        }
     }
     Ok(())
 }
@@ -509,6 +588,7 @@ pub fn disasm(pid: &str, address: &str, count: &str) -> Result<(), String> {
 }
 
 pub fn watch(names: &[&str], version: Option<String>, seconds: u64, delay: u64, write_only: bool) -> Result<(), String> {
+    let kind = if write_only { Breakpoint::Write } else { Breakpoint::Access };
     if delay > 0 {
         println!("Starting in {} seconds...", delay);
         std::thread::sleep(Duration::from_secs(delay));
@@ -542,7 +622,7 @@ pub fn watch(names: &[&str], version: Option<String>, seconds: u64, delay: u64, 
     let addresses: Vec<usize> = watched.iter().map(|(_, a)| *a).collect();
 
     let image_size = find_process::get_image_size(handle, base_addr).map_err(|e| e.to_string())?;
-    let hits = record(pid, handle, base_addr, &addresses, seconds, write_only, Some((base_addr, base_addr + image_size)))?;
+    let hits = record(pid, handle, base_addr, &addresses, seconds, kind, Some((base_addr, base_addr + image_size)))?;
 
     let mut witnesses: BTreeMap<AddressType, Vec<Hex>> = BTreeMap::new();
     for ((address_type, address), hits) in watched.iter().zip(&hits) {

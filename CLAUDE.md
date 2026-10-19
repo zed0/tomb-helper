@@ -53,7 +53,8 @@ User docs (hotkeys, config, cutscene timing generation) live in `README.md`.
 | `src/derive.rs` | CLI dispatch (`dump`/`derive`/`chains`/`probe`/`trace`/`watch`, hidden `watch-raw`/`disasm`/`check-matching`; flags `--version`/`--seconds`/`--delay`/`--write`/`--watch`). `derive`: fuzzy-matches code references between builds to find static addresses (`Deriver`: byte windows, or when that isn't confident `normalised`, sure only if deriving back lands within 0x400), then aligns `code_trace` accesses at matched sites to map each chain level (`code`/`witness`/`shifted`/`copied`; between compilers only an unchanged offset or a strong vote counts). On x86 a code position only counts as a reference if an instruction uses it. `check-matching <a> <b> [n]` round-trips n statics to measure matching |
 | `src/normalised.rs` | Matching references between builds from different compilers: the code around each (12 instructions either side, within the function) as tokens without registers, stack offsets or addresses (strings/imports/constants by content), plus one for the referencing instruction; weighted cosine (idf), candidates from an inverted index of rare tokens, runner-up only among references to other statics elsewhere |
 | `src/code_trace.rs` | `Tracer`: data-flow trace from an instruction using a static address, following pointer loads, branches, direct calls (args + returned `rax`) and, with a live `CallResolver`, virtual calls; on x86 also into the callers of a getter returning the static's pointer (direct `call rel32` index); produces `Access` chains in table form |
-| `src/watch.rs` | `watch <AddressType>...`: attaches as a debugger (`DebugActiveProcess`), sets DR0-3 data breakpoints on up to 4 values (resolved after `--delay`), records accessing instructions ("witnesses") and the caller chain of each (return addresses scanned off the stack), clears and detaches. `--write` breaks on writes only. 32-bit games: debug registers in the native context, the registers the code sees from the WOW64 one (`Context`); an access by a `call [mem]` is found at the return address. Hidden `watch-raw <pid> <addr or +rva>` for any address, and `disasm <pid> <addr or +rva> [count]` (prints RVAs; call targets are absolute) |
+| `src/watch.rs` | `watch <AddressType>...`: attaches as a debugger (`DebugActiveProcess`), sets DR0-3 data breakpoints on up to 4 values (resolved after `--delay`), records accessing instructions ("witnesses") and the caller chain of each (return addresses scanned off the stack), clears and detaches. `--write` breaks on writes only. 32-bit games: debug registers in the native context, the registers the code sees from the WOW64 one (`Context`); an access by a `call [mem]` is found at the return address. Hidden `watch-raw <pid> <addr or +rva>` for any address (`--exec` breaks on running the instruction there and records the registers, resuming with the resume flag), and `disasm <pid> <addr or +rva> [count]` (prints RVAs; call targets are absolute) |
+| `src/aim_sweep.rs` | TR2013's aim sweep (the rod that holds Lara off walls in front of her while she aims): finds the equipped weapon's tuning through Lara's handle, inventory record, its item map, the weapon's instance and type record (`InventoryPool`/`TypePool`, layout `aim_sweep`), and places the swept capsule with her transform; drawn as an attached proxy |
 | `src/witness.rs` | Matches witness instructions into a new build by byte-window similarity around the displacement; the displacement change gives the new last offset |
 | `src/chains.rs` | Live: `chains` traces every static reference, evaluates the chains in the running game and lists code chains landing on each current value; `probe` prints current values |
 | `src/pe_image.rs` | `PeImage`: load an exe in memory layout (or a dump), or dump a running process's main module (works on Denuvo builds); `sections()`, `imports()` (IAT slot -> name) |
@@ -294,7 +295,26 @@ again (`derive` plus live checks).
     forward then, and it's in front of her, pushing her off walls she faces (it only seemed to with some walls, probably
     a collision filter). One time not aiming, the game camera was at local +y, but the camera can face her. Those are the
     only two `ProxyComponent`s live even while aiming the bow; ROTTR's "camera" proxy (moving to (0, 30, 90) when
-    aiming) may be the same thing.
+    aiming) may be the same thing. Correction: the user sees it *behind* Lara, and her local -y is forward (the aim
+    sweep below points along -y), so the contacts were from walls at her back.
+  - The aim sweep (what holds her off walls she faces while aiming, ROTTR's weapon rod): mod+0x5C5100 (found by `watch
+    XPosition --write`: the writer +0x57DF7F is called from it about half the frames) sweeps a sphere (query vtable
+    0xCE3078, collision filter 0x2C1AC7) through [`TR9MultibodyClient` (mod+0x1DDBAEC)]+0x10, which is the collision
+    world after all (query functions +0x1EC6E0, +0x1EAE80), and pushes her back by the overlap, up to a maximum. Its
+    shape is the equipped weapon type's tuning block ([type record+0x10]+0x298): start +0x0, middle +0xC (swept to it
+    less the radius in y), weapon offsets +0x18/+0x24, a mirrored set from +0x30 (flag from [[player+0x2324]+0x10]
+    +0x7690), radius +0x60, max pushes +0x64/+0x68; in her space, moved by her rotation and position and an extra
+    offset (+0x56F940 on player+0x2E80). The bow: (-10, 0, 125) to (-20, -95, 125), radius 5. Found with `watch-raw
+    --exec` on +0x5C53E4 (esi = the block). The weapon is found as the getter +0x56AE20 does: player
+    ([[instance+0xA8]+0x14], RTTI `Player`) weapon slot ([[player+0x2324]+0x14] +0x1B8 if +0x1C7) or +0x30D8, else
+    (as with the bow) Lara's handle (+0x50) -> `InventoryPool` (mod+0x1F6FA90) -> 0xC0 byte record, whose map (+0x20
+    buckets, +0x2C count) has the item keyed by +0x64 -> its instance handle (+0x20) -> the instance's type handle
+    (+0x50) -> `TypePool` (mod+0x1EFEED0) -> 0x250 byte record (bow: record 4, wp_bow_zingler). Pools: 0xBB8 0x10 byte
+    handle entries (record index, id at +0x8), records from +0xBC10, each with its index and id. Instance handles index
+    from mod+0x1D249E0 (one record after `InstanceArray`), checked against +0xC8/+0xCC. Only the first point set is
+    drawn (no offsets). The push is added (+0x559B50) to the player's movement by kind, the third at player+0x540
+    (x/y nonzero only while pushed), which the overlay shows as pushing. The static byte mod+0x20CBF31 is set while
+    the sweep hits something (the next one is made longer), but isn't updated when the first sweep misses, so sticks.
   - Not found: ground probes, and the collision scene (`CollisionSceneClient` doesn't exist; `TR9MultibodyClient` at
     [mod+0x1DDBAEC] has no scene at +0x10).
 - Live tools all work on Steam TR2013: `probe`, `chains`, `update-offsets` (32-bit path), `watch`/`watch-raw` (debug

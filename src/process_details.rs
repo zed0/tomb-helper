@@ -35,6 +35,9 @@ pub enum AddressType {
     // it isn't found through her proxy's physics body (TR2013's belongs to the "combatproxy" instance, and is in a pool
     // of proxies, so it's found through Lara's, which points at it)
     CombatProxy,
+    // TR2013: pools of inventory and type records (see `aim_sweep`), to find the tuning of the weapon Lara has out
+    InventoryPool,
+    TypePool,
     // The cdc::CollisionSceneClient listing the level's collision meshes (resolves to its address), see
     // `collision_mesh`
     CollisionScene,
