@@ -321,3 +321,8 @@ again (`derive` plus live checks).
 - In a `.claude/worktrees/` checkout the `../hudhook` patch doesn't resolve: build with
   `cargo build --config "patch.crates-io.hudhook.path='H:/hudhook'"`.
 - `tomb-helper.json`'s `overlay.console` turns the injected overlay's console back on for debugging.
+- If the exe ends without setting `should_exit` (e.g. its window is closed), an overlay that stays loaded keeps that
+  run's shared memory and draws its last data; injecting again does nothing as the DLL is already loaded, and its file
+  can't be replaced. The overlay now ejects itself after 5s without an update (`EXE_GONE`); check the game's modules
+  (32-bit ones for TR2013) if changes to the overlay don't show. `overlay-data [--delay N]` (hidden) prints what the exe
+  would send without injecting; it owns the shared memory, so not while tomb-helper runs.

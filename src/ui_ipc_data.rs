@@ -465,6 +465,11 @@ impl UiDoubleBuffer {
         self.active_buffer.store(next as u32, Ordering::Release);
     }
 
+    // Changes with every update, so the reader can tell the writer is still there
+    pub fn generation(&self) -> u32 {
+        self.sequences[0].load(Ordering::Relaxed).wrapping_add(self.sequences[1].load(Ordering::Relaxed))
+    }
+
     // The writer is in another process and doesn't wait for readers, so it can start rewriting a buffer
     // while it's being copied. Returns false if that happened, in which case `out` is left part written. Triangles
     // past `triangle_count` aren't copied.

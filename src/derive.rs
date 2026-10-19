@@ -130,6 +130,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
         ["check"] => crate::check::check(version),
         ["update-offsets"] => crate::update_offsets::update_offsets(from, version, dry_run),
         ["trace", image, address] => trace(image, address),
+        ["overlay-data"] => crate::overlay_handler::print_overlay_data(version, delay),
         ["check-matching", a, b] => check_matching(a, b, 200),
         ["check-matching", a, b, count] => check_matching(a, b, count.parse().map_err(|_| "Bad count")?),
         _ => Err(USAGE.to_string()),
