@@ -195,7 +195,7 @@ again (`derive` plus live checks).
   the instance's id in it too, e.g. a roaming musician's animhost), AGTriggerNode/AGTriggerMasterNode. A node's
   references are (id, other id, u32 -1, u32 type << 16 | flag): type 2 or 0xE for triggers, 3/0xF for others; no
   enter/exit event is stored per trigger. In SOTTR's village 414/477 triggers had a node: 382 player only.
-- Scripts (SOTTR; `layout.script`): no names or tags anywhere, everything is a 64 bit hash, and the ones in scripts are
+- Scripts (SOTTR, and the same in ROTTR Steam; `layout.script`): no names or tags anywhere, everything is a 64 bit hash, and the ones in scripts are
   instance ids (instance +0x60; +0x70 is shared by many instances, a parent or unit). A node's +0x8 -> its graph (no
   RTTI, one per instance with a script, the owner's at instance +0x58; graph +0x8/+0x10 link every graph in a list,
   +0xA8 is its id = the owner's instance id). Graph +0x78 -> its nodes (pointers, with null gaps), +0x90 -> links header:
