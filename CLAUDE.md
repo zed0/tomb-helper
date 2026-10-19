@@ -74,7 +74,7 @@ User docs (hotkeys, config, cutscene timing generation) live in `README.md`.
 | `src/collision_mesh.rs` | The level's collision meshes (see "Level collision" below): `CollisionMeshes::refresh` walks the scene's instance list (dropping duplicates), `triangles_near` caches each mesh's vertices/triangles and returns the world space triangles near Lara, closest first, tagged floor/wall/ceiling by their normal |
 | `src/trigger.rs` | What an instance is from its component table (`read_kinds`: interactable via Interactable/Loot/Collectible components, trigger via TriggerComponent, character/animal via Npc or Health + Corpse components; RTTI checked), resources by name (`is_resource`), trigger categories by name (`categorise`), trigger shapes (`read_shape`: box, plane, sphere, polygon volume), their world space outlines and faces (`faces`, which the overlay fills in at `trigger_opacity`; polygon caps are ear clipped as they can be concave) |
 | `src/layout.rs` | `Layout`: where everything the overlay reads is in the game's structures (instance, drawable, collide, proxy, body, physics shape, probes, camera, collision scene/instance/mesh, trigger shape), ROTTR Steam's by default, overridable per version in the offsets file's `layout` section (optional offsets, e.g. TR2013's missing instance `transform`, are `null`). `layout::set_for(details)` on connecting sets it and the game's pointer size (`pointer_size()`/`pointer_from()`, which everything reading game pointers uses) |
-| `src/components.rs` | Components by RTTI class name: `Classes` (vtable -> class name via the CompleteObjectLocator), `Components::get` learns each class's slot from a table (budgeted per `start_refresh`) and checks class + back pointer. Class name constants |
+| `src/components.rs` | Components by RTTI class name: `Classes` (vtable -> class name via the CompleteObjectLocator, at the pointer size before it; its type descriptor is an RVA in 64-bit code and an address in 32-bit), `Components::get` learns each class's slot from a table (budgeted per `start_refresh`) and checks class + back pointer. Class name constants |
 | `src/discover.rs` | `discover [--save]`: finds GameRender (camera), TR9MultibodyClient (-> CollisionSceneClient) and the instance array statics through what they point to, optionally writing them to the offsets file |
 | `src/update_offsets.rs` | `update-offsets [--from <exe or dump>] [--dry-run]`: the one command for a new build. Attaches to any known exe (new builds start from the last known entry for it; an entry without a layout borrows the last one of the same game that has one), finds statics (`discover::find_statics`), Lara (PlayerComponent) -> position chain (kept if the previous chain still lands there, else `chains::best_code_chains`; Y/Z = X + 4/8), ground probes by contents, version string; `--from` adds `derive::derive_lines`; the rest goes to `unverified` for a new build. Saves (`discover::save_entry`) and runs `check::run`. For a 32-bit game only the version string and `--from`, then `chains::print_values` |
 | `src/check.rs` | `check`: reads everything the overlay does from the running game and checks it makes sense, to port the layout |
@@ -335,6 +335,25 @@ again (`derive` plus live checks).
     Every triangle test (`GeomTriangle` users +0x128300, +0x12F600) reads these meshes' 0x14 byte triangles (+0xC bit
     0x40 skipped, +0xD a mask against the query), all queries go to this one world, and the world's +0x8 list (369
     0x80 byte entries) is dynamic bodies (Lara's ragdoll parts).
+  - Triggers: instances whose game object (instance +0x74, `instance.game_object`; +0x70 is something else) is an
+    `NsTriggerVolumeBase` (`triggervolume`, `_dry`, `_fire_snuff`, `_waterfall`, `_splash`) or `NsTriggerPlaneBase`
+    (`triggerplane`, `_rain`); 561 in the first area, and nothing else is named trigger. Placed by the instance's position
+    and Euler rotation (the object's +0x40 quaternion matches). Volume (`trigger_object`): +0x80 u32 type, +0x84 bounding
+    radius, +0x88 three sizes, set up by +0x19D720 from the placement data (type byte +0x18, sizes +0x1C, type 2's
+    radius +0x28): 1 box (half extents; the radius is their length), 2 sphere (the three sizes are equal, and +0x79F60
+    uses only the first for types 2 and 3; its bounding radius is bigger). Plane: +0x40 half width, half height, then
+    their length. Assumed upright in the x/z plane like ROTTR's; not checked against the game. The component data at
+    +0x64 is garbage for planes.
+  - Trigger scripts (`trigger_scripts`, TR2013's `script` layout): there are no trigger nodes. Scripts use a trigger like
+    any instance, through an `AGInstanceNode` (or `AGObjectNode`) with its id (u64, instance +0x50, nearly unique; the
+    instance layout's `id`) at +0x40, whose outputs are its events (4, 5 and 6 nearly always; which one is Lara isn't
+    known, so they're all "script"). Node +0xC -> its graph (the level's, e.g. the area master's), graph +0x30 -> node
+    pointers (with gaps), +0x40 -> definition: +0x0 node count, +0x4 link count, +0xC -> links (u16 from, to, output,
+    input, as in ROTTR). An instance's own graph is at instance +0x70 (`GameInstanceData`). AGMessageSendNodes don't
+    hold the instance's id. 223 of the 561 triggers in the first area are used by a script (+47 through AGObjectNodes);
+    the rest only by their own data (the effect volumes and many plain ones). Nodes they lead to: UnitStreamLayerNode
+    (streaming), AGBattleConductor_*, AGNPC*, AGHuntManager_*, GameObjectiveNode, GameTutorialStep, MiscPersistentData,
+    AGSoundPlex/Reverb/SFXMarker, AGInstanceGiveBirth/Destroy/Teleport, AGCamera_*.
   - Not found: ground probes.
 - Live tools all work on Steam TR2013: `probe`, `chains`, `update-offsets` (32-bit path), `watch`/`watch-raw` (debug
   registers set in the native context, registers read from the WOW64 one; 800 traps in 2s on the QueryPerformanceCounter

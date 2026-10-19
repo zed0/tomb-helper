@@ -26,11 +26,17 @@ pub const NPC: &str = ".?AVNpcComponent@@";
 // Birds have no NpcComponent, but like the rest can be hurt and leave a corpse (Lara has no corpse)
 pub const HEALTH: &str = ".?AVHealthComponent@cdc@@";
 pub const CORPSE: &str = ".?AVCorpseComponent@@";
+// TR2013's triggers are game objects of these classes (`layout.instance.game_object`)
+pub const TRIGGER_VOLUME: &str = ".?AVNsTriggerVolumeBase@@";
+pub const TRIGGER_PLANE: &str = ".?AVNsTriggerPlaneBase@@";
 
 // MSVC RTTI: an object's vtable's entry before the first is a CompleteObjectLocator, which has the RVA of a type
 // descriptor with the class name
-const LOCATOR_TYPE_DESCRIPTOR: usize = 0xC; // u32 RVA
-const TYPE_DESCRIPTOR_NAME: usize = 0x10;
+// u32: an RVA in 64-bit code, the address in 32-bit
+const LOCATOR_TYPE_DESCRIPTOR: usize = 0xC;
+// After the descriptor's vtable pointer and a spare pointer
+const TYPE_DESCRIPTOR_NAME_64: usize = 0x10;
+const TYPE_DESCRIPTOR_NAME_32: usize = 0x8;
 const MAX_CLASS_NAME: usize = 96;
 
 // How much of a table to look through when learning slots (ROTTR uses up to 112), and how much to read at once
@@ -64,12 +70,18 @@ impl Classes {
             .entry(vtable)
             .or_insert_with(|| {
                 // Garbage pointers can be anywhere, and reading from them just fails
-                let locator = read_usize(handle, vtable.checked_sub(8)?)?;
-                let mut rva = [0u8; 4];
-                handle.copy_address(locator.wrapping_add(LOCATOR_TYPE_DESCRIPTOR), &mut rva).ok()?;
+                let pointer_size = layout::pointer_size();
+                let locator = read_usize(handle, vtable.checked_sub(pointer_size)?)?;
+                let mut field = [0u8; 4];
+                handle.copy_address(locator.wrapping_add(LOCATOR_TYPE_DESCRIPTOR), &mut field).ok()?;
+                let field = u32::from_le_bytes(field) as usize;
+                let (descriptor, name_offset) = if pointer_size == 4 {
+                    (field, TYPE_DESCRIPTOR_NAME_32)
+                } else {
+                    (base_address.wrapping_add(field), TYPE_DESCRIPTOR_NAME_64)
+                };
                 let mut name = [0u8; MAX_CLASS_NAME];
-                let descriptor = base_address.wrapping_add(u32::from_le_bytes(rva) as usize);
-                handle.copy_address(descriptor.wrapping_add(TYPE_DESCRIPTOR_NAME), &mut name).ok()?;
+                handle.copy_address(descriptor.wrapping_add(name_offset), &mut name).ok()?;
                 let end = name.iter().position(|&c| c == 0)?;
                 let name = String::from_utf8_lossy(&name[..end]).into_owned();
                 Some(name).filter(|n| n.starts_with(".?A"))

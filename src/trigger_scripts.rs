@@ -9,6 +9,9 @@
 //! they act on or send messages to. Links into subgraphs aren't followed. A trigger's script only depends on its id, so
 //! they're cached, and the heap is only scanned again for triggers that are new (or had no script, in case it's loaded
 //! later).
+//!
+//! TR2013 (32-bit) has no trigger nodes: a trigger is used through an AGInstanceNode (or AGObjectNode) with its id,
+//! like any other instance, whose outputs are its events. Which of them means Lara isn't known, so they're all "script".
 
 use crate::layout::{self, ScriptLayout};
 use crate::ui_ipc_data::trigger_action_bit;
@@ -25,9 +28,12 @@ const INSTANCE_NODE: &str = ".?AVAGInstanceTriggerNode@@";
 const OTHER_NODES: [&str; 2] = [".?AVAGTriggerNode@@", ".?AVAGTriggerMasterNode@@"];
 const OBJECT_NODE: &str = ".?AVAGObjectNode@@";
 const MESSAGE_SEND_NODE: &str = ".?AVAGMessageSendNode@@";
+// TR2013's node for an instance (its id at `layout.object_instance`, as in an AGObjectNode), which is how scripts use
+// triggers too
+const INSTANCE_REFERENCE_NODE: &str = ".?AVAGInstanceNode@@";
 // What a script does, by part of the class names of the nodes a trigger leads to, most important first (the words are
 // `TRIGGER_ACTIONS`)
-const ACTIONS: [(&str, &str); 34] = [
+const ACTIONS: [(&str, &str); 40] = [
     ("Checkpoint", "checkpoint"),
     ("GameObjective", "objective"),
     ("GlobalProgress", "progress"),
@@ -36,6 +42,8 @@ const ACTIONS: [(&str, &str); 34] = [
     ("Camera", "camera"),
     ("Streaming", "streaming"),
     ("StreamStates", "streaming"),
+    ("UnitStream", "streaming"),
+    ("UnloadUnit", "streaming"),
     ("Teleport", "teleport"),
     ("BattleConductor", "combat"),
     ("Spawn", "spawn"),
@@ -49,6 +57,7 @@ const ACTIONS: [(&str, &str); 34] = [
     ("Tutorial", "tutorial"),
     ("HeadTrack", "look at"),
     ("NPC", "NPC"),
+    ("HuntManager", "NPC"),
     ("Inventory", "inventory"),
     ("Ammo", "inventory"),
     ("Campsite", "campsite"),
@@ -58,13 +67,14 @@ const ACTIONS: [(&str, &str); 34] = [
     ("Weather", "weather"),
     ("Wetness", "weather"),
     ("Wwise", "audio"),
+    ("SoundPlex", "audio"),
+    ("SoundReverb", "audio"),
+    ("SFX", "audio"),
     ("Notification", "UI"),
     ("UI_", "UI"),
     ("PadShock", "rumble"),
     ("PersistentData", "saves state"),
 ];
-// How much of a node to look through for ids
-const NODE_SIZE: usize = 0x180;
 const MAX_GRAPH_NODES: usize = 20000;
 const MAX_LINKS: usize = 100000;
 const CHUNK: usize = 64 << 20;
@@ -281,6 +291,7 @@ fn scan(
     let image_end = base_address + crate::find_process::get_image_size(handle, base_address).unwrap_or(0);
     let lowest = *classes.triggers.keys().min().unwrap();
     let highest = *classes.triggers.keys().max().unwrap();
+    let pointer_size = layout::pointer_size();
     let mut nodes = vec![];
     let mut chunk = vec![0u8; CHUNK];
     for (start, size) in heap_regions(handle) {
@@ -292,15 +303,15 @@ fn scan(
             if handle.copy_address(start + offset, &mut chunk[..length]).is_err() {
                 continue;
             }
-            for (i, word) in chunk[..length].chunks_exact(8).enumerate() {
-                let value = u64::from_le_bytes(word.try_into().unwrap()) as usize;
+            for (i, word) in chunk[..length].chunks_exact(pointer_size).enumerate() {
+                let value = layout::pointer_from(word);
                 // Vtables are in the game's image, which rules out nearly everything without a lookup
                 if value < lowest || value > highest {
                     continue;
                 }
                 if let Some(kind) = classes.triggers.get(&value) {
-                    let address = start + offset + i * 8;
-                    let mut node = [0u8; NODE_SIZE];
+                    let address = start + offset + i * pointer_size;
+                    let mut node = vec![0u8; layout.node_size];
                     if handle.copy_address(address, &mut node).is_ok() {
                         let values = node.chunks_exact(8).map(|b| u64::from_le_bytes(b.try_into().unwrap())).collect();
                         nodes.push((address, Node { kind: Some(*kind), values, ..Default::default() }));
@@ -314,13 +325,13 @@ fn scan(
     let nodes = nodes
         .into_iter()
         .map(|(address, mut node)| {
-            let graph = read_u64(handle, address + layout.node_graph) as usize;
+            let graph = read_pointer(handle, address + layout.node_graph);
             let graph = graphs.entry(graph).or_insert_with(|| read_graph(handle, layout, graph));
             // Nodes with more than one vtable are found once per vtable, but only the start of one is in its graph
             if let Some(graph) = graph {
                 if let Some(index) = graph.nodes.iter().position(|&n| n == address) {
                     for reached in leads_to(graph, index) {
-                        let vtable = read_u64(handle, reached) as usize;
+                        let vtable = read_pointer(handle, reached);
                         match classes.effects.get(&vtable) {
                             Some(Effect::Action(action)) => node.actions.push(*action),
                             Some(Effect::ActsOn(offset)) => node.targets.push(read_u64(handle, reached + offset)),
@@ -340,9 +351,15 @@ fn read_u64(handle: ProcessHandle, address: usize) -> u64 {
     handle.copy_address(address, &mut bytes).map_or(0, |_| u64::from_le_bytes(bytes))
 }
 
+// At the game's pointer size
+fn read_pointer(handle: ProcessHandle, address: usize) -> usize {
+    let mut bytes = vec![0u8; layout::pointer_size()];
+    handle.copy_address(address, &mut bytes).map_or(0, |_| layout::pointer_from(&bytes))
+}
+
 fn read_graph(handle: ProcessHandle, layout: &ScriptLayout, graph: usize) -> Option<Graph> {
-    let nodes_at = read_u64(handle, graph.checked_add(layout.graph_nodes)?) as usize;
-    let header = read_u64(handle, graph.checked_add(layout.graph_links)?) as usize;
+    let nodes_at = read_pointer(handle, graph.checked_add(layout.graph_nodes)?);
+    let header = read_pointer(handle, graph.checked_add(layout.graph_links)?);
     let u32_at = |address: usize| {
         let mut bytes = [0u8; 4];
         handle.copy_address(address, &mut bytes).ok().map(|_| u32::from_le_bytes(bytes) as usize)
@@ -352,12 +369,13 @@ fn read_graph(handle: ProcessHandle, layout: &ScriptLayout, graph: usize) -> Opt
     if node_count > MAX_GRAPH_NODES || link_count > MAX_LINKS {
         return None;
     }
-    let mut node_bytes = vec![0u8; node_count * 8];
+    let pointer_size = layout::pointer_size();
+    let mut node_bytes = vec![0u8; node_count * pointer_size];
     handle.copy_address(nodes_at, &mut node_bytes).ok()?;
     let mut link_bytes = vec![0u8; link_count * layout.link_size];
-    let links_at = read_u64(handle, header.checked_add(layout.links)?) as usize;
+    let links_at = read_pointer(handle, header.checked_add(layout.links)?);
     handle.copy_address(links_at, &mut link_bytes).ok()?;
-    let nodes = node_bytes.chunks_exact(8).map(|b| u64::from_le_bytes(b.try_into().unwrap()) as usize).collect();
+    let nodes = node_bytes.chunks_exact(pointer_size).map(layout::pointer_from).collect();
     let mut links: HashMap<u16, Vec<u16>> = HashMap::new();
     for link in link_bytes.chunks_exact(layout.link_size) {
         let from = u16::from_le_bytes([link[0], link[1]]);
@@ -389,20 +407,28 @@ fn leads_to(graph: &Graph, start: usize) -> Vec<usize> {
 // Trigger nodes' vtables, and those of nodes that say what a script does
 fn find_classes(data: &[u8], base_address: usize, layout: &ScriptLayout) -> Classes {
     let mut classes = Classes::default();
-    for (vtable, name) in all_vtables(data, base_address) {
+    let tr2013 = layout::pointer_size() == 4;
+    let vtables = if tr2013 { all_vtables_32(data, base_address) } else { all_vtables(data, base_address) };
+    for (vtable, name) in vtables {
         let trigger = match name.as_str() {
             PLAYER_NODE => Some(NodeKind::Player),
             INSTANCE_NODE => Some(NodeKind::Instance),
             n if OTHER_NODES.contains(&n) => Some(NodeKind::Other),
+            INSTANCE_REFERENCE_NODE | OBJECT_NODE if tr2013 => Some(NodeKind::Other),
             _ => None,
         };
         if let Some(kind) = trigger {
             classes.triggers.insert(vtable, kind);
+            // The nodes for other instances are what scripts act on
+            if tr2013 {
+                classes.effects.insert(vtable, Effect::ActsOn(layout.object_instance));
+            }
             continue;
         }
         let effect = match name.as_str() {
             OBJECT_NODE => Some(Effect::ActsOn(layout.object_instance)),
-            MESSAGE_SEND_NODE => Some(Effect::ActsOn(layout.message_instance)),
+            // TR2013's don't hold the instance's id
+            MESSAGE_SEND_NODE if !tr2013 => Some(Effect::ActsOn(layout.message_instance)),
             n => ACTIONS.iter().position(|(part, _)| n.contains(part)).map(Effect::Action),
         };
         if let Some(effect) = effect {
@@ -439,6 +465,39 @@ fn all_vtables(data: &[u8], base_address: usize) -> Vec<(usize, String)> {
         let value = u64::from_le_bytes(word.try_into().unwrap()) as usize;
         if let Some(name) = locators.get(&value) {
             vtables.push((base_address + i * 8 + 8, name.clone()));
+        }
+    }
+    vtables
+}
+
+/// Every vtable in a 32 bit image's data and its class's RTTI name. A 32 bit CompleteObjectLocator starts with 0 and
+/// has the address of its type descriptor (whose name is at +0x8) at +0xC and of its class hierarchy at +0x10; a vtable
+/// starts right after a pointer to its locator.
+fn all_vtables_32(data: &[u8], base_address: usize) -> Vec<(usize, String)> {
+    let u32_at = |offset: usize| data.get(offset..offset + 4).map(|b| u32::from_le_bytes(b.try_into().unwrap()) as usize);
+    let in_image = |address: usize| address >= base_address && address - base_address < data.len();
+    let mut locators: HashMap<usize, String> = HashMap::new();
+    for rva in (0..data.len().saturating_sub(0x14)).step_by(4) {
+        if u32_at(rva) != Some(0) {
+            continue;
+        }
+        let (descriptor, hierarchy) = match (u32_at(rva + 0xC), u32_at(rva + 0x10)) {
+            (Some(d), Some(h)) if in_image(d) && in_image(h) => (d - base_address, h),
+            _ => continue,
+        };
+        let name = match data.get(descriptor + 8..(descriptor + 8 + 128).min(data.len())) {
+            Some(bytes) => bytes.split(|&b| b == 0).next().unwrap_or(&[]),
+            None => continue,
+        };
+        if name.starts_with(b".?A") && hierarchy != 0 {
+            locators.insert(base_address + rva, String::from_utf8_lossy(name).into_owned());
+        }
+    }
+    let mut vtables = vec![];
+    for (i, word) in data.chunks_exact(4).enumerate() {
+        let value = u32::from_le_bytes(word.try_into().unwrap()) as usize;
+        if let Some(name) = locators.get(&value) {
+            vtables.push((base_address + i * 4 + 4, name.clone()));
         }
     }
     vtables

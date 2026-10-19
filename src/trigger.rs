@@ -88,7 +88,7 @@ pub fn read_kinds(handle: ProcessHandle, components: &mut Components, instance_a
         let any = |wanted: &[&str]| names.iter().any(|n| wanted.contains(&n.as_str()));
         return Kinds {
             interactable: any(&INTERACTABLE_DATA) && !any(&INVENTORY_DATA),
-            trigger: false,
+            trigger: trigger_object(handle, components, instance_address).is_some(),
             npc: any(&NPC_DATA),
         };
     }
@@ -127,8 +127,59 @@ fn read_component_names(handle: ProcessHandle, pointer_address: usize) -> Vec<St
         .collect()
 }
 
+// Where triggers are game objects (TR2013), the instance's object and whether it's a volume (else a plane), if it's a
+// trigger
+fn trigger_object(handle: ProcessHandle, components: &mut Components, instance_address: usize) -> Option<(usize, bool)> {
+    let offset = layout::current().instance.game_object?;
+    let object = read_usize_at(handle, instance_address + offset)?;
+    match components.classes.name(handle, object)?.as_str() {
+        components::TRIGGER_VOLUME => Some((object, true)),
+        components::TRIGGER_PLANE => Some((object, false)),
+        _ => None,
+    }
+}
+
+// A trigger's shape from its game object (TR2013)
+fn read_object_shape(handle: ProcessHandle, object: usize, volume: bool) -> Option<Shape> {
+    let layout = &layout::current().trigger_object;
+    let mut bytes = vec![0u8; layout.volume_size.max(layout.plane_size) + 0xC];
+    handle.copy_address(object, &mut bytes).ok()?;
+    if !volume {
+        return Some(Shape::Plane(f32_at(&bytes, layout.plane_size), f32_at(&bytes, layout.plane_size + 4)));
+    }
+    let shape_type = u32_at(&bytes, layout.volume_type) as usize;
+    let size = vector_at(&bytes, layout.volume_size);
+    if shape_type == layout.volume_box {
+        Some(Shape::Box(size))
+    } else if shape_type == layout.volume_sphere {
+        Some(Shape::Sphere(size.x))
+    } else {
+        None
+    }
+}
+
 // The trigger's shape, in its instance's space
 pub fn read_shape(handle: ProcessHandle, components: &mut Components, instance_address: usize) -> Option<Shape> {
+    let shape = match trigger_object(handle, components, instance_address) {
+        Some((object, volume)) => read_object_shape(handle, object, volume),
+        None => read_component_shape(handle, components, instance_address),
+    }?;
+    let sane = |v: f32| v.is_finite() && v.abs() < 1e6;
+    let ok = match &shape {
+        Shape::Box(half) => half.iter().all(|&v| sane(v)),
+        Shape::Plane(x, y) => sane(*x) && sane(*y),
+        Shape::Sphere(radius) => sane(*radius),
+        Shape::Poly(points) => points.iter().all(|(p, e)| p.iter().chain(e.iter()).all(|&v| sane(v))),
+    };
+    if ok {
+        Some(shape)
+    } else {
+        None
+    }
+}
+
+// A trigger's shape from its ShapeComponent (ROTTR, SOTTR)
+fn read_component_shape(handle: ProcessHandle, components: &mut Components, instance_address: usize) -> Option<Shape> {
     let layout = &layout::current().trigger_shape;
     let component = components.get(handle, instance_address, components::SHAPE)?;
     let record = read_usize_at(handle, component + layout.shape)?;
@@ -153,18 +204,7 @@ pub fn read_shape(handle: ProcessHandle, components: &mut Components, instance_a
     } else {
         return None;
     };
-    let sane = |v: f32| v.is_finite() && v.abs() < 1e6;
-    let ok = match &shape {
-        Shape::Box(half) => half.iter().all(|&v| sane(v)),
-        Shape::Plane(x, y) => sane(*x) && sane(*y),
-        Shape::Sphere(radius) => sane(*radius),
-        Shape::Poly(points) => points.iter().all(|(p, e)| p.iter().chain(e.iter()).all(|&v| sane(v))),
-    };
-    if ok {
-        Some(shape)
-    } else {
-        None
-    }
+    Some(shape)
 }
 
 // The shape's outline as world space lines, for a row-major object-to-world matrix of row vectors
