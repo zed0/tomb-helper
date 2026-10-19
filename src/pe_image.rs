@@ -1,5 +1,6 @@
 use crate::find_process;
 use process_memory::{CopyAddress, Pid, TryIntoProcessHandle};
+use std::collections::HashMap;
 use std::fs;
 use std::io;
 use std::path::Path;
@@ -171,4 +172,89 @@ impl PeImage {
     pub fn size_of_image(&self) -> usize {
         self.data.len()
     }
+
+    /// The sections, from the headers at the start of the image (empty if they're missing, as in tests)
+    pub fn sections(&self) -> Vec<Section> {
+        let data = &self.data;
+        let parse = || -> io::Result<Vec<Section>> {
+            let pe = u32_at(data, 0x3C)? as usize;
+            if data.get(pe..pe + 4) != Some(b"PE\0\0") {
+                return Err(invalid("No PE header"));
+            }
+            let section_count = u16_at(data, pe + 6)? as usize;
+            let section_table = pe + 24 + u16_at(data, pe + 20)? as usize;
+            (0..section_count)
+                .map(|i| {
+                    let s = section_table + i * 40;
+                    let characteristics = u32_at(data, s + 36)?;
+                    Ok(Section {
+                        start: u32_at(data, s + 12)? as usize,
+                        end: u32_at(data, s + 12)? as usize + u32_at(data, s + 8)? as usize,
+                        executable: characteristics & SECTION_EXECUTE != 0,
+                        writable: characteristics & SECTION_WRITE != 0,
+                    })
+                })
+                .collect()
+        };
+        parse().unwrap_or_default()
+    }
+
+    /// The name of the function each import address table slot holds, by the slot's RVA
+    pub fn imports(&self) -> HashMap<usize, String> {
+        let data = &self.data;
+        let mut imports = HashMap::new();
+        let parse = |imports: &mut HashMap<usize, String>| -> io::Result<()> {
+            let pe = u32_at(data, 0x3C)? as usize;
+            let optional_header = pe + 24;
+            let directories = optional_header + if self.is_64 { 112 } else { 96 };
+            let mut descriptor = u32_at(data, directories + 8)? as usize;
+            let slot_size = if self.is_64 { 8 } else { 4 };
+            let slot_at = |offset: usize| -> io::Result<u64> {
+                if self.is_64 {
+                    u64_at(data, offset)
+                } else {
+                    u32_at(data, offset).map(u64::from)
+                }
+            };
+            let ordinal_flag = if self.is_64 { 1 << 63 } else { 1 << 31 };
+            while descriptor != 0 && u32_at(data, descriptor + 12)? != 0 {
+                // Names come from the import lookup table, since a loaded image's address table holds the addresses
+                let lookup = match u32_at(data, descriptor)? as usize {
+                    0 => u32_at(data, descriptor + 16)? as usize,
+                    lookup => lookup,
+                };
+                let table = u32_at(data, descriptor + 16)? as usize;
+                for i in 0.. {
+                    let entry = slot_at(lookup + i * slot_size)?;
+                    if entry == 0 {
+                        break;
+                    }
+                    if entry & ordinal_flag == 0 {
+                        let name = (entry as usize + 2..data.len().min(entry as usize + 258))
+                            .find(|&end| data[end] == 0)
+                            .map(|end| String::from_utf8_lossy(&data[entry as usize + 2..end]).into_owned());
+                        if let Some(name) = name {
+                            imports.insert(table + i * slot_size, name);
+                        }
+                    }
+                }
+                descriptor += 20;
+            }
+            Ok(())
+        };
+        let _ = parse(&mut imports);
+        imports
+    }
+}
+
+const SECTION_EXECUTE: u32 = 0x2000_0000;
+const SECTION_WRITE: u32 = 0x8000_0000;
+
+/// Where a section is (as RVAs) and what it holds
+#[derive(Debug, Clone, Copy)]
+pub struct Section {
+    pub start: usize,
+    pub end: usize,
+    pub executable: bool,
+    pub writable: bool,
 }

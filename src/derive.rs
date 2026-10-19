@@ -17,11 +17,13 @@ use crate::code_trace::{Access, Tracer};
 use crate::find_process;
 use crate::offsets_file::{to_json, Hex, OffsetsFile, OffsetsSource, VersionEntry};
 use crate::pe_image::PeImage;
+use crate::normalised;
 use crate::witness;
 use crate::offsets_file::known_process_details;
 use crate::process_details::{AddressType, ProcessDetails};
 use process_memory::Architecture;
 use rayon::prelude::*;
+use std::cell::OnceCell;
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
@@ -36,6 +38,13 @@ const MAX_REFERENCES: usize = 60;
 // Try references to the target's own struct first, then widen (e.g. TR2013 reads position as a
 // field 0x220 into a global struct, so nothing references it directly)
 const SPANS: [usize; 2] = [0x40, 0x400];
+// Another compiler lays out globals differently, so only fields of the same struct move together, which can't be
+// told apart from neighbouring globals: try the target's own references first
+const NORMALISED_SPANS: [usize; 3] = [0, 0x40, 0x400];
+// Between builds from different compilers, a field keeps its offset if the new build's code uses it too, unless
+// another offset has this many times the votes, and a different offset needs at least this many votes
+const RECOMPILED_SAME_OFFSET: f64 = 4.0;
+const RECOMPILED_MIN_VOTES: f64 = 3.0;
 
 const USAGE: &str = "\
 Usage:
@@ -121,6 +130,8 @@ pub fn run(args: &[String]) -> Result<(), String> {
         ["check"] => crate::check::check(version),
         ["update-offsets"] => crate::update_offsets::update_offsets(from, version, dry_run),
         ["trace", image, address] => trace(image, address),
+        ["check-matching", a, b] => check_matching(a, b, 200),
+        ["check-matching", a, b, count] => check_matching(a, b, count.parse().map_err(|_| "Bad count")?),
         _ => Err(USAGE.to_string()),
     }
 }
@@ -262,9 +273,16 @@ pub struct References<'a> {
 impl<'a> References<'a> {
     pub fn new(image: &'a PeImage) -> References<'a> {
         let end = image.data.len() - WINDOW - 4;
+        // On x86 any 4 bytes can look like an absolute address, so in code only count those an instruction uses
+        let code: Vec<_> = image.sections().into_iter().filter(|s| s.executable && !image.is_64).collect();
+        let is_used = |position: usize| {
+            !code.iter().any(|s| (s.start..s.end).contains(&position))
+                || normalised::instruction_at(image, position).is_some()
+        };
         let mut by_target: Vec<(u32, u32)> = (WINDOW + 2..end)
             .into_par_iter()
             .filter_map(|position| reference_target(image, position).map(|t| (t as u32, position as u32)))
+            .filter(|(_, position)| is_used(*position as usize))
             .collect();
         by_target.par_sort_unstable();
         let mut by_key = vec![vec![]; 0x10000];
@@ -320,6 +338,10 @@ struct Derivation {
     // Candidate addresses in the new build, best first
     votes: Vec<(usize, f64)>,
     pairs: Vec<Pair>,
+    // False if deriving the result back again leads somewhere else
+    confirmed: bool,
+    // Matched by what the code does, i.e. between builds from different compilers
+    normalised: bool,
 }
 
 impl Derivation {
@@ -329,28 +351,24 @@ impl Derivation {
 
     fn confident(&self) -> bool {
         let total: f64 = self.votes.iter().map(|(_, v)| v).sum();
-        self.matched >= 2 && self.votes.first().map_or(false, |(_, v)| *v >= 0.8 * total)
+        self.confirmed && self.matched >= 2 && self.votes.first().map_or(false, |(_, v)| *v >= 0.8 * total)
     }
 }
 
-fn derive_address(old: &References, new: &References, target: usize) -> Derivation {
-    let mut result = Derivation {
-        references: 0,
-        matched: 0,
-        votes: vec![],
-        pairs: vec![],
-    };
-    for span in SPANS.iter() {
-        let mut nearby: Vec<(u32, u32)> = old
-            .between(target.saturating_sub(*span), target + span)
-            .to_vec();
-        nearby.sort_by_key(|(t, p)| ((*t as i64 - target as i64).abs(), *p));
-        nearby.truncate(MAX_REFERENCES);
+/// How references in the old build are matched in the new one
+#[derive(Clone, Copy)]
+enum Matching<'a> {
+    // By the bytes around them, which works between builds from the same compiler
+    Bytes,
+    // By what the code around them does, for builds from different compilers (see `normalised`)
+    Normalised(&'a normalised::Matcher<'a>),
+}
 
-        let matches: Vec<Pair> = nearby
-            .par_iter()
-            .filter_map(|&(old_target, position)| {
-                let position = position as usize;
+impl Matching<'_> {
+    /// The best unambiguous match for the old reference at `position`, and its score
+    fn best_match(&self, old: &References, new: &References, position: usize) -> Option<(usize, f64)> {
+        match self {
+            Matching::Bytes => {
                 let mut best = (0, 0);
                 let mut second = 0;
                 for &q in &new.by_key[key(&old.image.data, position)] {
@@ -363,14 +381,68 @@ fn derive_address(old: &References, new: &References, target: usize) -> Derivati
                     }
                 }
                 if fraction(best.0) < MIN_SCORE || fraction(best.0 - second) < MIN_MARGIN {
-                    return None;
+                    None
+                } else {
+                    Some((best.1, fraction(best.0)))
                 }
-                reference_target(new.image, best.1).map(|new_target| Pair {
+            }
+            Matching::Normalised(matcher) => matcher.best_match(position),
+        }
+    }
+
+    /// The most similar of `candidates` (new positions) to the old reference at `p`, and how similar
+    fn most_similar(&self, old: &References, new: &References, p: usize, candidates: &[(u32, u32)]) -> Option<(usize, f64)> {
+        let positions = candidates.iter().map(|(_, q)| *q as usize);
+        match self {
+            Matching::Bytes => positions
+                .map(|q| (q, fraction(similarity(&old.image.data, p, &new.image.data, q))))
+                .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap()),
+            Matching::Normalised(matcher) => matcher.most_similar(p, positions),
+        }
+    }
+
+    fn spans(&self) -> &'static [usize] {
+        match self {
+            Matching::Bytes => &SPANS,
+            Matching::Normalised(_) => &NORMALISED_SPANS,
+        }
+    }
+
+    fn min_pair_score(&self) -> f64 {
+        match self {
+            Matching::Bytes => MIN_PAIR_SCORE,
+            Matching::Normalised(_) => normalised::MIN_PAIR_SCORE,
+        }
+    }
+}
+
+fn derive_address(old: &References, new: &References, matching: Matching, target: usize) -> Derivation {
+    let mut result = Derivation {
+        references: 0,
+        matched: 0,
+        votes: vec![],
+        pairs: vec![],
+        confirmed: true,
+        normalised: false,
+    };
+    for span in matching.spans() {
+        let mut nearby: Vec<(u32, u32)> = old
+            .between(target.saturating_sub(*span), target + span)
+            .to_vec();
+        nearby.sort_by_key(|(t, p)| ((*t as i64 - target as i64).abs(), *p));
+        nearby.truncate(MAX_REFERENCES);
+
+        let matches: Vec<Pair> = nearby
+            .par_iter()
+            .filter_map(|&(old_target, position)| {
+                let position = position as usize;
+                let (new_position, score) = matching.best_match(old, new, position)?;
+                reference_target(new.image, new_position).map(|new_target| Pair {
                     old_position: position,
                     old_target: old_target as usize,
-                    new_position: best.1,
+                    new_position,
                     new_target,
-                    score: fraction(best.0),
+                    score,
                 })
             })
             .collect();
@@ -389,6 +461,8 @@ fn derive_address(old: &References, new: &References, target: usize) -> Derivati
             matched: matches.len(),
             votes,
             pairs: matches,
+            confirmed: true,
+            normalised: false,
         };
         if result.matched > 0 {
             break;
@@ -408,23 +482,136 @@ fn derive_address(old: &References, new: &References, target: usize) -> Derivati
             .par_iter()
             .filter(|(_, p)| !paired.contains(&(*p as usize)))
             .filter_map(|&(_, p)| {
-                candidates
-                    .iter()
-                    .map(|&(_, q)| (similarity(&old.image.data, p as usize, &new.image.data, q as usize), q))
-                    .max()
-                    .filter(|(score, _)| fraction(*score) >= MIN_PAIR_SCORE)
-                    .map(|(score, q)| Pair {
+                matching
+                    .most_similar(old, new, p as usize, candidates)
+                    .filter(|(_, score)| *score >= matching.min_pair_score())
+                    .map(|(q, score)| Pair {
                         old_position: p as usize,
                         old_target: target,
                         new_position: q as usize,
                         new_target: new_base,
-                        score: fraction(score),
+                        score,
                     })
             })
             .collect();
         result.pairs.extend(extra);
     }
     result
+}
+
+/// Finds where statics are in a new build: matched byte for byte, or if that isn't conclusive (usually because the
+/// builds are from different compilers), by what the code does, with the normalised matchers made when first needed
+struct Deriver<'a, 'r> {
+    old: &'r References<'a>,
+    new: &'r References<'a>,
+    forward: OnceCell<normalised::Matcher<'a>>,
+    back: OnceCell<normalised::Matcher<'a>>,
+}
+
+impl<'a, 'r> Deriver<'a, 'r> {
+    fn new(old: &'r References<'a>, new: &'r References<'a>) -> Deriver<'a, 'r> {
+        Deriver { old, new, forward: OnceCell::new(), back: OnceCell::new() }
+    }
+
+    /// Where `base` is in the new build, and how it was found
+    fn derive(&self, base: usize) -> (Derivation, String) {
+        let derivation = derive_address(self.old, self.new, Matching::Bytes, base);
+        if derivation.confident() {
+            return (derivation, String::new());
+        }
+        let forward = self.forward.get_or_init(|| {
+            println!("  (few byte matches for {:#X}, so also matching what the code does)", base);
+            normalised::Matcher::new(self.old, self.new)
+        });
+        let mut by_code = derive_address(self.old, self.new, Matching::Normalised(forward), base);
+        // Code from another compiler is much less alike, and boilerplate (e.g. guards for function statics) can match
+        // the wrong copy, so the result must lead back to where it started, or near it (fields of a struct are told
+        // apart by the code using each of them, which there may not be)
+        let mut back_to = None;
+        if let Some(found) = by_code.best() {
+            let back = self.back.get_or_init(|| normalised::Matcher::new(self.new, self.old));
+            back_to = derive_address(self.new, self.old, Matching::Normalised(back), found).best();
+            by_code.confirmed = back_to.map_or(false, |b| b.abs_diff(base) <= NORMALISED_SPANS[2]);
+        }
+        by_code.normalised = true;
+        let weight = |d: &Derivation| d.votes.first().map_or(0.0, |(_, v)| *v);
+        if by_code.confident() || weight(&by_code) > weight(&derivation) {
+            let how = match back_to {
+                Some(back) if back == base => " (by what the code does)".to_string(),
+                Some(back) => format!(" (by what the code does; deriving it back leads to {:#X})", back),
+                None => " (by what the code does, but it can't be derived back)".to_string(),
+            };
+            (by_code, how)
+        } else {
+            (derivation, String::new())
+        }
+    }
+}
+
+/// `check-matching <a> <b> [count]`: how well statics can be matched between two builds, without knowing any of
+/// them: up to `count` statics of `a` (globals with a few references) are derived in `b` and back again, and a static
+/// that comes back where it started was very likely matched right
+fn check_matching(a: &str, b: &str, count: usize) -> Result<(), String> {
+    let (a, b) = (load(a)?, load(b)?);
+    let (a_refs, b_refs) = (References::new(&a), References::new(&b));
+    let writable: Vec<_> = a.sections().into_iter().filter(|s| s.writable && !s.executable).collect();
+    let mut statics: Vec<usize> = vec![];
+    let all = a_refs.all();
+    let mut i = 0;
+    while i < all.len() {
+        let target = all[i].0;
+        let n = all[i..].iter().take_while(|(t, _)| *t == target).count();
+        if (3..=20).contains(&n) && writable.iter().any(|s| (s.start..s.end).contains(&(target as usize))) {
+            statics.push(target as usize);
+        }
+        i += n;
+    }
+    let step = (statics.len() / count.max(1)).max(1);
+    let statics: Vec<usize> = statics.into_iter().step_by(step).take(count).collect();
+    println!("Checking {} statics...", statics.len());
+
+    let (forward, back) = (Deriver::new(&a_refs, &b_refs), Deriver::new(&b_refs, &a_refs));
+    // (confident, came back) -> count
+    let mut results: BTreeMap<(bool, bool), usize> = BTreeMap::new();
+    let mut not_found = 0;
+    let mut failures = vec![];
+    for &start in &statics {
+        let (there, how) = forward.derive(start);
+        let found = match there.best() {
+            Some(found) => found,
+            None => {
+                not_found += 1;
+                continue;
+            }
+        };
+        let (back_again, how_back) = back.derive(found);
+        let came_back = back_again.best() == Some(start);
+        if there.confident() && !came_back {
+            failures.push(format!(
+                "  {:#X} -> {:#X}{} -> {}{}",
+                start,
+                found,
+                how,
+                back_again.best().map_or("nothing".to_string(), |b| format!("{:#X}", b)),
+                how_back
+            ));
+        }
+        *results.entry((there.confident(), came_back)).or_default() += 1;
+    }
+    println!("\nSure, but didn't come back:\n{}", failures.join("\n"));
+    println!("\n{} not found", not_found);
+    for confident in [true, false] {
+        let came_back = results.get(&(confident, true)).copied().unwrap_or(0);
+        let total = came_back + results.get(&(confident, false)).copied().unwrap_or(0);
+        println!(
+            "{}: {} found, {} ({:.0}%) came back to where they started",
+            if confident { "Sure" } else { "Unsure" },
+            total,
+            came_back,
+            100.0 * came_back as f64 / total.max(1) as f64
+        );
+    }
+    Ok(())
 }
 
 /// Longest common subsequence of two access lists, matching accesses of the same shape
@@ -501,11 +688,14 @@ enum LevelSource {
 /// The new last offset suggested by witness instructions, with its vote
 type WitnessVote = Option<(i64, f64)>;
 
+/// With `recompiled`, the builds are from different compilers, so lining up their accesses is much less reliable, but
+/// structs are likely to be laid out the same
 fn map_chain(
     chain: &[usize],
     new_base: usize,
     votes: &ChainVotes,
     witness: WitnessVote,
+    recompiled: bool,
 ) -> (Vec<usize>, Vec<LevelSource>) {
     let chain: Vec<i64> = chain.iter().map(|o| *o as i64).collect();
     let mut mapped: Vec<i64> = vec![new_base as i64];
@@ -530,7 +720,15 @@ fn map_chain(
             }
         }
 
-        let code = direct.into_iter().max_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        let unchanged = direct.get(&chain[level]).copied();
+        let mut code = direct.into_iter().max_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        if recompiled {
+            code = match (unchanged, code) {
+                (Some(weight), Some((_, best))) if weight * RECOMPILED_SAME_OFFSET >= best => Some((chain[level], weight)),
+                (_, Some((offset, weight))) if weight >= RECOMPILED_MIN_VOTES => Some((offset, weight)),
+                _ => None,
+            };
+        }
 
         // Instructions seen accessing the value itself are the best evidence for the last level
         if let (true, Some((offset, weight))) = (level == chain.len() - 1, witness) {
@@ -549,8 +747,13 @@ fn map_chain(
         }
 
         // Use the shift of the closest field below (fields after an insertion move together),
-        // or above if there is none below
+        // or above if there is none below. A recompile doesn't move fields.
         let wanted = chain[level];
+        if recompiled {
+            mapped.push(wanted);
+            sources.push(LevelSource::Copied);
+            continue;
+        }
         let mut by_neighbour: BTreeMap<i64, HashMap<i64, f64>> = BTreeMap::new();
         for ((old_offset, new_offset), weight) in siblings {
             *by_neighbour
@@ -683,8 +886,9 @@ pub fn derive_lines(
 
     println!("\nStatic addresses derived from {} {}:", details.name, details.version.version);
     let mut derived: HashMap<usize, (Derivation, ChainVotes)> = HashMap::new();
+    let deriver = Deriver::new(&old_refs, &new_refs);
     for (base, types) in &by_base {
-        let derivation = derive_address(&old_refs, &new_refs, *base);
+        let (derivation, how) = deriver.derive(*base);
         let candidates: Vec<String> = derivation
             .votes
             .iter()
@@ -692,11 +896,12 @@ pub fn derive_lines(
             .map(|(address, votes)| format!("{:#X} ({:.1})", address, votes))
             .collect();
         println!(
-            "  {:#010X} {:<60} {:>2}/{:<2} refs matched -> {} {}",
+            "  {:#010X} {:<60} {:>2}/{:<2} refs matched{} -> {} {}",
             base,
             format!("{:?}", types),
             derivation.matched,
             derivation.references,
+            how,
             if candidates.is_empty() { "none".to_string() } else { candidates.join(", ") },
             if derivation.best().is_none() || derivation.confident() { "" } else { "[UNSURE]" },
         );
@@ -743,7 +948,7 @@ pub fn derive_lines(
             match derivation.best() {
                 Some(new_base) => {
                     let witness = witness_votes.get(address_type).cloned().flatten();
-                    let (chain, sources) = map_chain(offsets, new_base, votes, witness);
+                    let (chain, sources) = map_chain(offsets, new_base, votes, witness, derivation.normalised);
                     let sure = derivation.confident()
                         && !sources.iter().any(|s| {
                             matches!(
@@ -842,22 +1047,22 @@ mod tests {
         votes.entry(vec![1, 0xC60, 0x200]).or_default().insert(vec![2, 0xD70, 0x200], 1.0);
         votes.entry(vec![1, 0xC50]).or_default().insert(vec![2, 0xD60], 2.0);
 
-        let (chain, sources) = map_chain(&[1, 0xC60, 0x200], 2, &votes, None);
+        let (chain, sources) = map_chain(&[1, 0xC60, 0x200], 2, &votes, None, false);
         assert_eq!(chain, vec![2, 0xD70, 0x200]);
         assert_eq!(sources, vec![LevelSource::Code(4.0), LevelSource::Code(1.0)]);
 
         // 0xC58 is never accessed directly, but the field below it moved by 0x110
-        let (chain, sources) = map_chain(&[1, 0xC58], 2, &votes, None);
+        let (chain, sources) = map_chain(&[1, 0xC58], 2, &votes, None, false);
         assert_eq!(chain, vec![2, 0xD68]);
         assert_eq!(sources, vec![LevelSource::Shifted { neighbour: 0xC50, shift: 0x110 }]);
 
         // A witness wins for the last level, but a disagreeing code match is reported
-        let (chain, sources) = map_chain(&[1, 0xC60, 0x200], 2, &votes, Some((0x210, 2.0)));
+        let (chain, sources) = map_chain(&[1, 0xC60, 0x200], 2, &votes, Some((0x210, 2.0)), false);
         assert_eq!(chain, vec![2, 0xD70, 0x210]);
         assert_eq!(sources[1], LevelSource::Witness { votes: 2.0, code_disagrees: Some(0x200) });
 
         // Nothing is known below 0xC60, so the last level is kept
-        let (chain, sources) = map_chain(&[1, 0xC60, 0x60, 0x8], 2, &votes, None);
+        let (chain, sources) = map_chain(&[1, 0xC60, 0x60, 0x8], 2, &votes, None, false);
         assert_eq!(chain, vec![2, 0xD70, 0x60 + 0x0, 0x8]);
         assert_eq!(sources[2], LevelSource::Copied);
     }

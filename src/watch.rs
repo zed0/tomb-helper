@@ -7,10 +7,9 @@ use crate::derive::format_offsets;
 use crate::find_process;
 use crate::offsets_file::{known_process_details, to_json, Hex};
 use crate::process_details::AddressType;
-use iced_x86::{Decoder, DecoderOptions, Formatter, Instruction, IntelFormatter, OpKind, Register};
+use iced_x86::{CodeSize, Decoder, DecoderOptions, Formatter, Instruction, IntelFormatter, Mnemonic, OpKind, Register};
 use process_memory::{CopyAddress, DataMember, Memory, Pid, ProcessHandle, TryIntoProcessHandle};
 use std::collections::{BTreeMap, HashMap};
-use std::convert::TryInto;
 use std::time::{Duration, Instant};
 use winapi::shared::minwindef::FALSE;
 use winapi::shared::winerror::ERROR_SEM_TIMEOUT;
@@ -22,13 +21,20 @@ use winapi::um::minwinbase::{
     EXIT_THREAD_DEBUG_EVENT, LOAD_DLL_DEBUG_EVENT,
 };
 use winapi::um::processthreadsapi::{GetThreadContext, ResumeThread, SetThreadContext, SuspendThread};
-use winapi::um::winbase::DebugSetProcessKillOnExit;
-use winapi::um::winnt::{CONTEXT, CONTEXT_DEBUG_REGISTERS, CONTEXT_FULL, DBG_CONTINUE, DBG_EXCEPTION_NOT_HANDLED, HANDLE};
+use winapi::um::winbase::{DebugSetProcessKillOnExit, Wow64GetThreadContext, Wow64SetThreadContext};
+use winapi::um::winnt::{
+    CONTEXT, CONTEXT_DEBUG_REGISTERS, CONTEXT_FULL, DBG_CONTINUE, DBG_EXCEPTION_NOT_HANDLED, HANDLE, WOW64_CONTEXT,
+    WOW64_CONTEXT_DEBUG_REGISTERS, WOW64_CONTEXT_FULL,
+};
+use winapi::um::wow64apiset::IsWow64Process;
 
 // x86 has 4 debug address registers
 const MAX_WATCHES: usize = 4;
 const STATUS_SINGLE_STEP: u32 = 0x8000_0004;
 const STATUS_BREAKPOINT: u32 = 0x8000_0003;
+// The same, raised by a 32-bit game's code under WOW64
+const STATUS_WX86_SINGLE_STEP: u32 = 0x4000_001E;
+const STATUS_WX86_BREAKPOINT: u32 = 0x4000_001F;
 // Longest x86 instruction
 const MAX_INSTRUCTION_LENGTH: usize = 15;
 // Witnesses suggested per value
@@ -42,75 +48,192 @@ const MAX_CALLER_CHAINS: usize = 3;
 #[repr(C, align(16))]
 struct AlignedContext(CONTEXT);
 
-fn thread_context(thread: HANDLE, flags: u32) -> Option<AlignedContext> {
-    let mut context: AlignedContext = unsafe { std::mem::zeroed() };
-    context.0.ContextFlags = flags;
-    if unsafe { GetThreadContext(thread, &mut context.0) } == FALSE {
-        None
-    } else {
-        Some(context)
+/// A thread's registers. For a 32-bit game these are the WOW64 ones, which are what its code sees: the native
+/// context of a 32-bit thread is the 64-bit layer it runs on.
+enum Context {
+    Native(AlignedContext),
+    Wow64(WOW64_CONTEXT),
+}
+
+/// Whether a process is a 32-bit one running on 64-bit Windows
+fn is_wow64(handle: ProcessHandle) -> bool {
+    let mut wow64 = FALSE;
+    unsafe { IsWow64Process(handle, &mut wow64) != FALSE && wow64 != FALSE }
+}
+
+impl Context {
+    /// The debug registers, or with `full` all of them
+    fn get(thread: HANDLE, wow64: bool, full: bool) -> Option<Context> {
+        if wow64 {
+            let mut context: WOW64_CONTEXT = unsafe { std::mem::zeroed() };
+            context.ContextFlags =
+                if full { WOW64_CONTEXT_FULL | WOW64_CONTEXT_DEBUG_REGISTERS } else { WOW64_CONTEXT_DEBUG_REGISTERS };
+            (unsafe { Wow64GetThreadContext(thread, &mut context) } != FALSE).then(|| Context::Wow64(context))
+        } else {
+            let mut context: AlignedContext = unsafe { std::mem::zeroed() };
+            context.0.ContextFlags =
+                if full { CONTEXT_FULL | CONTEXT_DEBUG_REGISTERS } else { CONTEXT_DEBUG_REGISTERS };
+            (unsafe { GetThreadContext(thread, &mut context.0) } != FALSE).then(|| Context::Native(context))
+        }
+    }
+
+    fn set(&self, thread: HANDLE) -> bool {
+        match self {
+            Context::Native(c) => unsafe { SetThreadContext(thread, &c.0) != FALSE },
+            Context::Wow64(c) => unsafe { Wow64SetThreadContext(thread, c) != FALSE },
+        }
+    }
+
+    fn bitness(&self) -> u32 {
+        match self {
+            Context::Native(_) => 64,
+            Context::Wow64(_) => 32,
+        }
+    }
+
+    fn ip(&self) -> usize {
+        match self {
+            Context::Native(c) => c.0.Rip as usize,
+            Context::Wow64(c) => c.Eip as usize,
+        }
+    }
+
+    fn sp(&self) -> usize {
+        match self {
+            Context::Native(c) => c.0.Rsp as usize,
+            Context::Wow64(c) => c.Esp as usize,
+        }
+    }
+
+    fn dr6(&self) -> u64 {
+        match self {
+            Context::Native(c) => c.0.Dr6,
+            Context::Wow64(c) => c.Dr6 as u64,
+        }
+    }
+
+    /// Sets Dr0-3 and Dr7, and clears Dr6
+    fn set_debug_registers(&mut self, addresses: [u64; MAX_WATCHES], dr7: impl FnOnce(u64) -> u64) {
+        match self {
+            Context::Native(c) => {
+                let c = &mut c.0;
+                c.Dr0 = addresses[0];
+                c.Dr1 = addresses[1];
+                c.Dr2 = addresses[2];
+                c.Dr3 = addresses[3];
+                c.Dr7 = dr7(c.Dr7);
+                c.Dr6 = 0;
+            }
+            Context::Wow64(c) => {
+                c.Dr0 = addresses[0] as u32;
+                c.Dr1 = addresses[1] as u32;
+                c.Dr2 = addresses[2] as u32;
+                c.Dr3 = addresses[3] as u32;
+                c.Dr7 = dr7(c.Dr7 as u64) as u32;
+                c.Dr6 = 0;
+            }
+        }
+    }
+
+    fn clear_dr6(&mut self) {
+        match self {
+            Context::Native(c) => c.0.Dr6 = 0,
+            Context::Wow64(c) => c.Dr6 = 0,
+        }
+    }
+
+    fn register(&self, register: Register) -> Option<u64> {
+        // Segment bases are 0 (flat) for everything but fs/gs, which aren't used for game data
+        if matches!(register, Register::ES | Register::CS | Register::SS | Register::DS) {
+            return Some(0);
+        }
+        Some(match self {
+            Context::Native(c) => {
+                let c = &c.0;
+                match register {
+                    Register::RAX => c.Rax,
+                    Register::RBX => c.Rbx,
+                    Register::RCX => c.Rcx,
+                    Register::RDX => c.Rdx,
+                    Register::RSI => c.Rsi,
+                    Register::RDI => c.Rdi,
+                    Register::RBP => c.Rbp,
+                    Register::RSP => c.Rsp,
+                    Register::R8 => c.R8,
+                    Register::R9 => c.R9,
+                    Register::R10 => c.R10,
+                    Register::R11 => c.R11,
+                    Register::R12 => c.R12,
+                    Register::R13 => c.R13,
+                    Register::R14 => c.R14,
+                    Register::R15 => c.R15,
+                    _ => return None,
+                }
+            }
+            Context::Wow64(c) => u64::from(match register {
+                Register::EAX => c.Eax,
+                Register::EBX => c.Ebx,
+                Register::ECX => c.Ecx,
+                Register::EDX => c.Edx,
+                Register::ESI => c.Esi,
+                Register::EDI => c.Edi,
+                Register::EBP => c.Ebp,
+                Register::ESP => c.Esp,
+                _ => return None,
+            }),
+        })
     }
 }
 
 /// Points debug registers 0..n at the addresses (1 byte each, break on read or write, or only on
-/// write), or clears them
+/// write), or clears them. They're set in the native context even for a 32-bit game, as the processor's debug
+/// registers aren't per mode.
 fn set_watches(thread: HANDLE, addresses: &[usize], write_only: bool) -> bool {
-    let mut context = match thread_context(thread, CONTEXT_DEBUG_REGISTERS) {
+    let mut context = match Context::get(thread, false, false) {
         Some(c) => c,
         None => return false,
     };
-    let c = &mut context.0;
-    let mut dr7 = c.Dr7 & !0xFFFF_00FF;
     let mut values = [0_u64; MAX_WATCHES];
+    let mut enable = 0;
     for (i, address) in addresses.iter().enumerate().take(MAX_WATCHES) {
         values[i] = *address as u64;
         // Local enable, RW = 11 (read or write) or 01 (write), LEN = 00 (1 byte)
-        dr7 |= 1 << (i * 2);
-        dr7 |= if write_only { 0b01 } else { 0b11 } << (16 + i * 4);
+        enable |= 1 << (i * 2);
+        enable |= if write_only { 0b01 } else { 0b11 } << (16 + i * 4);
     }
-    c.Dr0 = values[0];
-    c.Dr1 = values[1];
-    c.Dr2 = values[2];
-    c.Dr3 = values[3];
-    c.Dr7 = dr7;
-    c.Dr6 = 0;
-    unsafe { SetThreadContext(thread, &context.0) != FALSE }
+    context.set_debug_registers(values, |dr7| dr7 & !0xFFFF_00FF | enable);
+    context.set(thread)
 }
 
-fn register_value(c: &CONTEXT, register: Register) -> Option<u64> {
-    Some(match register {
-        Register::RAX => c.Rax,
-        Register::RBX => c.Rbx,
-        Register::RCX => c.Rcx,
-        Register::RDX => c.Rdx,
-        Register::RSI => c.Rsi,
-        Register::RDI => c.Rdi,
-        Register::RBP => c.Rbp,
-        Register::RSP => c.Rsp,
-        Register::R8 => c.R8,
-        Register::R9 => c.R9,
-        Register::R10 => c.R10,
-        Register::R11 => c.R11,
-        Register::R12 => c.R12,
-        Register::R13 => c.R13,
-        Register::R14 => c.R14,
-        Register::R15 => c.R15,
-        // Segment bases are 0 in 64-bit mode, except fs/gs which aren't used for game data
-        Register::ES | Register::CS | Register::SS | Register::DS => 0,
-        _ => return None,
+/// An instruction's displacement, sign extended (iced zero extends 32-bit addressing's)
+fn displacement(instruction: &Instruction) -> i64 {
+    if instruction.code_size() == CodeSize::Code64 {
+        instruction.memory_displacement64() as i64
+    } else {
+        instruction.memory_displacement32() as i32 as i64
+    }
+}
+
+/// Data breakpoints trap after the access, so find the instruction ending at the instruction pointer whose memory
+/// operand covers `watched`, using the registers at the time of the trap. After a call through memory (e.g. the
+/// import table) the instruction pointer is in the callee, so the call ends at the return address instead.
+fn accessing_instruction(handle: ProcessHandle, c: &Context, watched: usize) -> Option<Instruction> {
+    instruction_ending_at(handle, c, c.ip(), watched).or_else(|| {
+        let mut bytes = [0_u8; 8];
+        let slot = c.bitness() as usize / 8;
+        handle.copy_address(c.sp(), &mut bytes[..slot]).ok()?;
+        let returns_to = u64::from_le_bytes(bytes) as usize;
+        instruction_ending_at(handle, c, returns_to, watched).filter(|i| i.mnemonic() == Mnemonic::Call)
     })
 }
 
-/// Data breakpoints trap after the access, so find the instruction ending at `rip` whose memory
-/// operand covers `watched`, using the registers at the time of the trap.
-fn accessing_instruction(handle: ProcessHandle, c: &CONTEXT, watched: usize) -> Option<Instruction> {
-    let rip = c.Rip as usize;
+fn instruction_ending_at(handle: ProcessHandle, c: &Context, ip: usize, watched: usize) -> Option<Instruction> {
     let mut bytes = [0_u8; MAX_INSTRUCTION_LENGTH];
-    handle.copy_address(rip - MAX_INSTRUCTION_LENGTH, &mut bytes).ok()?;
+    handle.copy_address(ip - MAX_INSTRUCTION_LENGTH, &mut bytes).ok()?;
     (1..=MAX_INSTRUCTION_LENGTH).rev().find_map(|length| {
-        let start = rip - length;
+        let start = ip - length;
         let mut decoder = Decoder::with_ip(
-            64,
+            c.bitness(),
             &bytes[MAX_INSTRUCTION_LENGTH - length..],
             start as u64,
             DecoderOptions::NONE,
@@ -120,7 +243,7 @@ fn accessing_instruction(handle: ProcessHandle, c: &CONTEXT, watched: usize) -> 
             return None;
         }
         let operand = (0..instruction.op_count()).find(|i| instruction.op_kind(*i) == OpKind::Memory)?;
-        let address = instruction.virtual_address(operand, 0, |r, _, _| register_value(c, r))? as usize;
+        let address = instruction.virtual_address(operand, 0, |r, _, _| c.register(r))? as usize;
         let size = instruction.memory_size().size().max(1);
         if address <= watched && watched < address + size {
             Some(instruction)
@@ -140,17 +263,22 @@ struct Hit {
 
 /// A best guess at the call stack: values on the stack that point just after a call instruction in `code`.
 /// Without unwind info this can include stale return addresses, but the first few are usually right.
-fn stack_callers(handle: ProcessHandle, c: &CONTEXT, code: (usize, usize), base_addr: usize) -> Vec<usize> {
+fn stack_callers(handle: ProcessHandle, c: &Context, code: (usize, usize), base_addr: usize) -> Vec<usize> {
     // Near the top of the stack a long read runs off the end, so fall back to shorter ones
     let stack = match (0..4)
         .map(|shift| vec![0_u8; STACK_SCAN_SIZE >> shift])
-        .find_map(|mut stack| handle.copy_address(c.Rsp as usize, &mut stack).ok().map(|_| stack))
+        .find_map(|mut stack| handle.copy_address(c.sp(), &mut stack).ok().map(|_| stack))
     {
         Some(stack) => stack,
         None => return vec![],
     };
+    let slot = c.bitness() as usize / 8;
     let mut callers = vec![];
-    for value in stack.chunks_exact(8).map(|b| u64::from_le_bytes(b.try_into().unwrap()) as usize) {
+    for value in stack.chunks_exact(slot).map(|b| {
+        let mut bytes = [0_u8; 8];
+        bytes[..slot].copy_from_slice(b);
+        u64::from_le_bytes(bytes) as usize
+    }) {
         if value < code.0 + 8 || value >= code.1 {
             continue;
         }
@@ -158,7 +286,7 @@ fn stack_callers(handle: ProcessHandle, c: &CONTEXT, code: (usize, usize), base_
         if handle.copy_address(value - before.len(), &mut before).is_err() {
             continue;
         }
-        // call rel32 / call [rip+disp32] / call [reg+disp8] / call reg
+        // call rel32 / call [rip+disp32] (or [disp32] on x86) / call [reg+disp8] / call reg
         let is_call = before[2] == 0xE8
             || (before[1] == 0xFF && before[2] & 0x38 == 0x10)
             || (before[4] == 0xFF && before[5] & 0x38 == 0x10)
@@ -184,6 +312,7 @@ fn record(
     write_only: bool,
     code_range: Option<(usize, usize)>,
 ) -> Result<Vec<BTreeMap<usize, Hit>>, String> {
+    let wow64 = is_wow64(handle);
     if unsafe { DebugActiveProcess(pid) } == FALSE {
         return Err(format!("Could not attach as a debugger (error {})", unsafe { GetLastError() }));
     }
@@ -248,17 +377,20 @@ fn record(
             EXIT_PROCESS_DEBUG_EVENT => exited = true,
             EXCEPTION_DEBUG_EVENT => {
                 let code = unsafe { event.u.Exception() }.ExceptionRecord.ExceptionCode;
-                if code == STATUS_SINGLE_STEP {
+                let is_breakpoint = code == STATUS_BREAKPOINT || code == STATUS_WX86_BREAKPOINT;
+                if code == STATUS_SINGLE_STEP || code == STATUS_WX86_SINGLE_STEP {
                     traps += 1;
                     if let Some(thread) = threads.get(&event.dwThreadId) {
-                        if let Some(mut context) =
-                            thread_context(*thread, CONTEXT_FULL | CONTEXT_DEBUG_REGISTERS)
-                        {
+                        // Which breakpoint it was is in the native context, and the registers the game's code
+                        // sees in the WOW64 one for a 32-bit game
+                        let debug = Context::get(*thread, false, false);
+                        let context = Context::get(*thread, wow64, true);
+                        if let (Some(mut debug), Some(context)) = (debug, context) {
                             for (i, address) in addresses.iter().enumerate() {
-                                if context.0.Dr6 & (1 << i) == 0 {
+                                if debug.dr6() & (1 << i) == 0 {
                                     continue;
                                 }
-                                if let Some(instruction) = accessing_instruction(handle, &context.0, *address) {
+                                if let Some(instruction) = accessing_instruction(handle, &context, *address) {
                                     let rva = instruction.ip() as usize - base_addr;
                                     let hit = hits[i].entry(rva).or_insert_with(|| {
                                         let mut text = String::new();
@@ -266,27 +398,27 @@ fn record(
                                         Hit {
                                             count: 0,
                                             text,
-                                            displacement: instruction.memory_displacement64() as i64,
+                                            displacement: displacement(&instruction),
                                             callers: BTreeMap::new(),
                                         }
                                     });
                                     hit.count += 1;
                                     if let Some(code_range) = code_range {
-                                        *hit.callers.entry(stack_callers(handle, &context.0, code_range, base_addr)).or_insert(0) += 1;
+                                        *hit.callers.entry(stack_callers(handle, &context, code_range, base_addr)).or_insert(0) += 1;
                                     }
                                 }
                             }
-                            context.0.Dr6 = 0;
-                            unsafe { SetThreadContext(*thread, &context.0) };
+                            debug.clear_dr6();
+                            debug.set(*thread);
                         }
                     }
-                } else if code == STATUS_BREAKPOINT && !attached {
+                } else if is_breakpoint && !attached {
                     // The breakpoint Windows raises once attached; every thread is known by now
                     attached = true;
                     for thread in threads.values() {
                         armed += set_watches(*thread, &addresses, write_only) as usize;
                     }
-                } else if code != STATUS_BREAKPOINT {
+                } else if !is_breakpoint {
                     // The game's own exceptions are its business
                     status = DBG_EXCEPTION_NOT_HANDLED;
                 }
@@ -323,8 +455,8 @@ fn parse_address(text: &str, base_addr: usize) -> Result<usize, String> {
     }
 }
 
-/// `watch-raw <pid> <address>`: record what accesses (or with `write_only` writes) any address in a 64-bit
-/// process, and for the main module's code which functions it was called from. Addresses are printed
+/// `watch-raw <pid> <address>`: record what accesses (or with `write_only` writes) any address in a process, and
+/// for the main module's code which functions it was called from. Addresses are printed
 /// relative to the main module.
 pub fn watch_raw(pid: &str, address: &str, seconds: u64, delay: u64, write_only: bool) -> Result<(), String> {
     let pid: Pid = pid.parse().map_err(|_| "Bad PID")?;
@@ -364,7 +496,8 @@ pub fn disasm(pid: &str, address: &str, count: &str) -> Result<(), String> {
     let count: usize = count.parse().map_err(|_| "Bad instruction count")?;
     let mut bytes = vec![0_u8; count * MAX_INSTRUCTION_LENGTH];
     handle.copy_address(address, &mut bytes).map_err(|e| e.to_string())?;
-    let mut decoder = Decoder::with_ip(64, &bytes, address as u64, DecoderOptions::NONE);
+    let bitness = if is_wow64(handle) { 32 } else { 64 };
+    let mut decoder = Decoder::with_ip(bitness, &bytes, address as u64, DecoderOptions::NONE);
     let mut formatter = IntelFormatter::new();
     let mut text = String::new();
     for instruction in decoder.iter().take(count) {
@@ -382,9 +515,6 @@ pub fn watch(names: &[&str], version: Option<String>, seconds: u64, delay: u64, 
     }
     let (pid, handle, base_addr, details) = find_process::find_process(known_process_details(), version)
         .ok_or("No known game version is running (pass --version to force one from process_details.rs)")?;
-    if !matches!(details.arch, process_memory::Architecture::Arch64Bit) {
-        return Err("watch only supports 64-bit games so far".to_string());
-    }
     println!("Found {} {}", details.name, details.version.version);
 
     let all: BTreeMap<String, AddressType> = details
@@ -401,6 +531,7 @@ pub fn watch(names: &[&str], version: Option<String>, seconds: u64, delay: u64, 
         let mut with_base = offsets.clone();
         with_base[0] += base_addr;
         let address = DataMember::<u8>::new_offset(handle, with_base)
+            .set_arch(details.arch)
             .get_offset()
             .map_err(|e| format!("{:?} {} doesn't resolve: {}", address_type, format_offsets(offsets), e))?;
         watched.push((address_type, address));
