@@ -317,6 +317,46 @@ struct Hit {
     callers: BTreeMap<Vec<usize>, usize>,
     // For execute breakpoints, the registers each time, and how often each set was seen
     registers: BTreeMap<String, usize>,
+    // With `--dump`, the memory at the register the first few times (its value, the bytes)
+    dumps: Vec<(u64, Vec<u8>)>,
+}
+
+/// `watch-raw --exec --dump <register>:<length>`: copy the memory a register points at when the breakpoint is hit
+#[derive(Clone, Copy)]
+pub struct Dump {
+    register: Register,
+    length: usize,
+}
+
+// Dumps kept per instruction
+const MAX_DUMPS: usize = 3;
+
+impl Dump {
+    pub fn parse(text: &str) -> Result<Dump, String> {
+        let (name, length) = text.split_once(':').ok_or("--dump takes <register>:<length in hex>")?;
+        let register = match name.to_ascii_lowercase().as_str() {
+            "eax" => Register::EAX,
+            "ebx" => Register::EBX,
+            "ecx" => Register::ECX,
+            "edx" => Register::EDX,
+            "esi" => Register::ESI,
+            "edi" => Register::EDI,
+            "ebp" => Register::EBP,
+            "esp" => Register::ESP,
+            "rax" => Register::RAX,
+            "rbx" => Register::RBX,
+            "rcx" => Register::RCX,
+            "rdx" => Register::RDX,
+            "rsi" => Register::RSI,
+            "rdi" => Register::RDI,
+            "rbp" => Register::RBP,
+            "rsp" => Register::RSP,
+            "r8" => Register::R8,
+            "r9" => Register::R9,
+            _ => return Err(format!("Unknown register {}", name)),
+        };
+        Ok(Dump { register, length: parse_hex(length)? })
+    }
 }
 
 /// A best guess at the call stack: values on the stack that point just after a call instruction in `code`.
@@ -369,6 +409,7 @@ fn record(
     seconds: u64,
     kind: Breakpoint,
     code_range: Option<(usize, usize)>,
+    dump: Option<Dump>,
 ) -> Result<Vec<BTreeMap<usize, Hit>>, String> {
     let wow64 = is_wow64(handle);
     if unsafe { DebugActiveProcess(pid) } == FALSE {
@@ -465,11 +506,20 @@ fn record(
                                             displacement: displacement(&instruction),
                                             callers: BTreeMap::new(),
                                             registers: BTreeMap::new(),
+                                            dumps: vec![],
                                         }
                                     });
                                     hit.count += 1;
                                     if kind == Breakpoint::Execute {
                                         *hit.registers.entry(context.registers()).or_insert(0) += 1;
+                                    }
+                                    if let Some(dump) = dump.filter(|_| hit.dumps.len() < MAX_DUMPS) {
+                                        if let Some(at) = context.register(dump.register) {
+                                            let mut bytes = vec![0_u8; dump.length];
+                                            if handle.copy_address(at as usize, &mut bytes).is_ok() {
+                                                hit.dumps.push((at, bytes));
+                                            }
+                                        }
                                     }
                                     if let Some(code_range) = code_range {
                                         *hit.callers.entry(stack_callers(handle, &context, code_range, base_addr)).or_insert(0) += 1;
@@ -529,21 +579,25 @@ fn parse_address(text: &str, base_addr: usize) -> Result<usize, String> {
     }
 }
 
-/// `watch-raw <pid> <address>`: record what accesses (or writes, or with `Breakpoint::Execute` runs) any address in a
+/// `watch-raw <pid> <address>[,<address>...]`: record what accesses (or writes, or with `Breakpoint::Execute` runs) any address in a
 /// process, and for the main module's code which functions it was called from (and for an instruction run, the
 /// registers then). Addresses are printed relative to the main module.
-pub fn watch_raw(pid: &str, address: &str, seconds: u64, delay: u64, kind: Breakpoint) -> Result<(), String> {
+pub fn watch_raw(pid: &str, address: &str, seconds: u64, delay: u64, kind: Breakpoint, dump: Option<Dump>) -> Result<(), String> {
     let pid: Pid = pid.parse().map_err(|_| "Bad PID")?;
     let handle = pid.try_into_process_handle().map_err(|e| e.to_string())?;
     let base_addr = find_process::get_base_address(pid) as usize;
     let image_size = find_process::get_image_size(handle, base_addr).map_err(|e| e.to_string())?;
-    let address = parse_address(address, base_addr)?;
+    // Up to 4, separated by commas
+    let addresses: Vec<usize> = address.split(',').map(|a| parse_address(a, base_addr)).collect::<Result<_, _>>()?;
+    if addresses.is_empty() || addresses.len() > MAX_WATCHES {
+        return Err(format!("Give between 1 and {} addresses", MAX_WATCHES));
+    }
     if delay > 0 {
         println!("Starting in {} seconds...", delay);
         std::thread::sleep(Duration::from_secs(delay));
     }
-    let hits = record(pid, handle, base_addr, &[address], seconds, kind, Some((base_addr, base_addr + image_size)))?;
-    let mut by_count: Vec<(&usize, &Hit)> = hits[0].iter().collect();
+    let hits = record(pid, handle, base_addr, &addresses, seconds, kind, Some((base_addr, base_addr + image_size)), dump)?;
+    let mut by_count: Vec<(&usize, &Hit)> = hits.iter().flatten().collect();
     by_count.sort_by_key(|(rva, hit)| (std::cmp::Reverse(hit.count), **rva));
     for (rva, hit) in by_count {
         println!("    +{:#X} {:>6}x  {}", rva, hit.count, hit.text);
@@ -553,8 +607,22 @@ pub fn watch_raw(pid: &str, address: &str, seconds: u64, delay: u64, kind: Break
         for (registers, count) in sets.into_iter().take(MAX_REGISTER_SETS) {
             println!("        {:>6}x  {}", count, registers);
         }
+        for (at, bytes) in &hit.dumps {
+            print_dump(*at, bytes);
+        }
     }
     Ok(())
+}
+
+// 16 bytes a row: as u32s, then as floats
+fn print_dump(at: u64, bytes: &[u8]) {
+    println!("        memory at {:#X}:", at);
+    for (row, chunk) in bytes.chunks(16).enumerate() {
+        let words: Vec<u32> = chunk.chunks_exact(4).map(|w| u32::from_le_bytes([w[0], w[1], w[2], w[3]])).collect();
+        let hex: Vec<String> = words.iter().map(|w| format!("{:08X}", w)).collect();
+        let floats: Vec<String> = words.iter().map(|w| format!("{:>10.4}", f32::from_bits(*w))).collect();
+        println!("          +{:03X} {}   {}", row * 16, hex.join(" "), floats.join(" "));
+    }
 }
 
 fn print_callers(hit: &Hit) {
@@ -622,7 +690,7 @@ pub fn watch(names: &[&str], version: Option<String>, seconds: u64, delay: u64, 
     let addresses: Vec<usize> = watched.iter().map(|(_, a)| *a).collect();
 
     let image_size = find_process::get_image_size(handle, base_addr).map_err(|e| e.to_string())?;
-    let hits = record(pid, handle, base_addr, &addresses, seconds, kind, Some((base_addr, base_addr + image_size)))?;
+    let hits = record(pid, handle, base_addr, &addresses, seconds, kind, Some((base_addr, base_addr + image_size)), None)?;
 
     let mut witnesses: BTreeMap<AddressType, Vec<Hex>> = BTreeMap::new();
     for ((address_type, address), hits) in watched.iter().zip(&hits) {

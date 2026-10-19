@@ -93,13 +93,20 @@ impl CollisionMeshes {
             visited += 1;
             handle.copy_address(address, &mut bytes)?;
             let next = usize_at(&bytes, instance.next);
-            let filter = usize_at(&bytes, instance.filter);
-            if !filters.contains_key(&filter) {
-                let mut kind_bytes = [0u8; 4];
-                handle.copy_address(filter + instance.filter_kinds, &mut kind_bytes)?;
-                filters.insert(filter, u32::from_le_bytes(kind_bytes) as usize);
-            }
-            let kinds = filters[&filter];
+            // Without a filter, the kinds are in the instance, or every mesh counts as Lara's
+            let kinds = match (instance.filter, instance.kinds) {
+                (Some(offset), _) => {
+                    let filter = usize_at(&bytes, offset);
+                    if !filters.contains_key(&filter) {
+                        let mut kind_bytes = [0u8; 4];
+                        handle.copy_address(filter + instance.filter_kinds, &mut kind_bytes)?;
+                        filters.insert(filter, u32::from_le_bytes(kind_bytes) as usize);
+                    }
+                    filters[&filter]
+                }
+                (None, Some(offset)) => u16_at(&bytes, offset) as usize,
+                (None, None) => instance.player_kind,
+            };
             for (bit, count) in kind_counts.iter_mut().enumerate() {
                 *count += (kinds >> bit & 1) as u32;
             }
@@ -130,10 +137,10 @@ impl CollisionMeshes {
                 placements.push(Placement {
                     address,
                     mesh,
-                    flipped: u16_at(&bytes, instance.flags) & 1 != 0,
+                    flipped: instance.flags.map_or(false, |offset| u16_at(&bytes, offset) & 1 != 0),
                     detailed: is_detailed,
-                    min: vector_at(&bytes, instance.min),
-                    max: vector_at(&bytes, instance.max),
+                    min: vector_at(&bytes, instance.min) + origin(&bytes),
+                    max: vector_at(&bytes, instance.max) + origin(&bytes),
                     placed,
                 });
             }
@@ -179,7 +186,7 @@ impl CollisionMeshes {
             if handle.copy_address(placement.address, &mut bytes).is_err() {
                 continue;
             }
-            let (min, max) = (vector_at(&bytes, layout.min), vector_at(&bytes, layout.max));
+            let (min, max) = (vector_at(&bytes, layout.min) + origin(&bytes), vector_at(&bytes, layout.max) + origin(&bytes));
             if box_distance(&centre, &min, &max) > radius || !place(handle, placement, &mut self.meshes, &bytes) {
                 continue;
             }
@@ -234,12 +241,22 @@ fn place(handle: ProcessHandle, placement: &mut Placement, meshes: &mut HashMap<
         };
         placement.placed = None;
     }
-    let matrix = &bytes[layout.matrix..layout.matrix + 0x40];
-    if placement.placed.as_ref().map_or(true, |(m, _)| m.as_slice() != matrix) {
-        let triangles = place_triangles(&meshes[&placement.mesh], matrix, placement.flipped, placement.detailed);
-        placement.placed = Some((matrix.to_vec(), triangles));
+    let mut matrix = bytes[layout.matrix..layout.matrix + 0x40].to_vec();
+    // The origin goes on the translation (the last row)
+    let translation = vector_at(&matrix, 48) + origin(bytes);
+    for axis in 0..3 {
+        matrix[48 + axis * 4..52 + axis * 4].copy_from_slice(&translation[axis].to_le_bytes());
+    }
+    if placement.placed.as_ref().map_or(true, |(m, _)| *m != matrix) {
+        let triangles = place_triangles(&meshes[&placement.mesh], &matrix, placement.flipped, placement.detailed);
+        placement.placed = Some((matrix, triangles));
     }
     true
+}
+
+// What the instance's vertices are relative to, after its matrix (TR2013's level meshes), or none
+fn origin(bytes: &[u8]) -> Vector3<f32> {
+    layout::current().collision_instance.origin.map_or(Vector3::zeros(), |offset| vector_at(bytes, offset))
 }
 
 // Whether the ray reaches the box within `max`
@@ -365,8 +382,9 @@ fn box_distance(point: &Vector3<f32>, min: &Vector3<f32>, max: &Vector3<f32>) ->
     (min - point).sup(&(point - max)).sup(&Vector3::zeros()).norm()
 }
 
+// A pointer, at the game's pointer size
 fn usize_at(bytes: &[u8], offset: usize) -> usize {
-    u64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap()) as usize
+    layout::pointer_from(&bytes[offset..])
 }
 
 fn u32_at(bytes: &[u8], offset: usize) -> u32 {

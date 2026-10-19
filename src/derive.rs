@@ -94,6 +94,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
     let mut save = false;
     let mut from = None;
     let mut dry_run = false;
+    let mut dump_at = None;
     let mut rest = args.iter();
     while let Some(arg) = rest.next() {
         match arg.as_str() {
@@ -103,6 +104,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
             "--watch" => watch = true,
             "--write" => write_only = true,
             "--exec" => execute = true,
+            "--dump" => dump_at = Some(crate::watch::Dump::parse(rest.next().ok_or("--dump needs <register>:<length>")?)?),
             "--save" => save = true,
             "--dry-run" => dry_run = true,
             "--from" => from = Some(rest.next().ok_or("--from needs a path")?.clone()),
@@ -123,7 +125,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
                 (false, true) => crate::watch::Breakpoint::Write,
                 (false, false) => crate::watch::Breakpoint::Access,
             };
-            crate::watch::watch_raw(pid, address, seconds, delay, kind)
+            crate::watch::watch_raw(pid, address, seconds, delay, kind, dump_at)
         }
         ["disasm", pid, address] => crate::watch::disasm(pid, address, "40"),
         ["disasm", pid, address, count] => crate::watch::disasm(pid, address, count),
