@@ -335,7 +335,7 @@ group! {
 
 group! {
     /// ActionGraph scripts: a graph (one per instance with a script) lists its nodes and the links between them. Found
-    /// in SOTTR, unverified in ROTTR
+    /// in SOTTR, the same in ROTTR
     ScriptLayout {
         /// In a node, -> its graph
         node_graph = 0x8,
