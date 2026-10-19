@@ -6,7 +6,6 @@
 use crate::layout;
 use process_memory::{CopyAddress, ProcessHandle};
 use std::collections::{HashMap, HashSet};
-use std::convert::TryInto;
 
 pub const TRANSFORM: &str = ".?AVTransformComponent@cdc@@";
 pub const DRAWABLE: &str = ".?AVDrawableComponent@cdc@@";
@@ -118,7 +117,7 @@ impl Components {
 
     /// The instance's component of the class, if it has one
     pub fn get(&mut self, handle: ProcessHandle, instance: usize, class: &str) -> Option<usize> {
-        let table = read_usize(handle, instance.wrapping_add(layout::current().instance.components))?;
+        let table = read_usize(handle, instance.wrapping_add(layout::current().instance.components?))?;
         if !self.slots.contains_key(class) {
             if self.scans_left == 0 || !self.scanned.insert(table) {
                 return None;
@@ -127,7 +126,7 @@ impl Components {
             self.learn(handle, instance, table);
         }
         let slot = *self.slots.get(class)?;
-        let component = read_usize(handle, table.wrapping_add(slot * 8))?;
+        let component = read_usize(handle, table.wrapping_add(slot * layout::pointer_size()))?;
         let back = read_usize(handle, component.wrapping_add(layout::current().component.instance))?;
         if back != instance || self.classes.name(handle, component).as_deref() != Some(class) {
             return None;
@@ -138,13 +137,14 @@ impl Components {
     /// Learns the slot of every component in the table
     fn learn(&mut self, handle: ProcessHandle, instance: usize, table: usize) {
         let back_offset = layout::current().component.instance;
+        let size = layout::pointer_size();
         for first in (0..MAX_SLOTS).step_by(SLOTS_PER_READ) {
-            let mut bytes = [0u8; SLOTS_PER_READ * 8];
-            if handle.copy_address(table.wrapping_add(first * 8), &mut bytes).is_err() {
+            let mut bytes = vec![0u8; SLOTS_PER_READ * size];
+            if handle.copy_address(table.wrapping_add(first * size), &mut bytes).is_err() {
                 return;
             }
-            for (i, pointer) in bytes.chunks_exact(8).enumerate() {
-                let component = u64::from_le_bytes(pointer.try_into().unwrap()) as usize;
+            for (i, pointer) in bytes.chunks_exact(size).enumerate() {
+                let component = layout::pointer_from(pointer);
                 if component == 0 || read_usize(handle, component.wrapping_add(back_offset)) != Some(instance) {
                     continue;
                 }
@@ -156,10 +156,11 @@ impl Components {
     }
 }
 
+// A pointer, at the game's pointer size, None if it's null
 fn read_usize(handle: ProcessHandle, address: usize) -> Option<usize> {
-    let mut bytes = [0u8; 8];
+    let mut bytes = vec![0u8; layout::pointer_size()];
     handle.copy_address(address, &mut bytes).ok()?;
-    match u64::from_le_bytes(bytes) as usize {
+    match layout::pointer_from(&bytes) {
         0 => None,
         value => Some(value),
     }

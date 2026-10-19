@@ -43,7 +43,7 @@ pub fn read_capsule_shapes(
     handle.copy_address(shapes, &mut entries)?;
     let mut capsules = vec![];
     for entry in entries.chunks_exact(layout.entry_size) {
-        let id = usize_at(entry, layout.entry_id);
+        let id = u64::from_le_bytes(entry[layout.entry_id..layout.entry_id + 8].try_into().unwrap()) as usize;
         if ((id >> 16) as usize) & 0xFF & layout.capsule_type_mask != layout.capsule_type {
             continue;
         }
@@ -75,7 +75,10 @@ pub fn place_capsules(
     };
     let layout = layout::current();
     let bone_size = layout.transform.bone_size;
-    let transform = read_usize(handle, instance_address + layout.instance.transform)?;
+    let transform = match layout.instance.transform {
+        Some(offset) => read_usize(handle, instance_address + offset)?,
+        None => return Ok(vec![]),
+    };
     let bones_address = read_usize(handle, transform + layout.transform.bones)?;
     if bones_address == 0 {
         return Ok(vec![]);
@@ -378,14 +381,15 @@ fn to_world(matrix: &[u8], point: &Vector3<f32>) -> Position {
     Position { x: world.x, y: world.y, z: world.z }
 }
 
+// A pointer, at the game's pointer size
 fn read_usize(handle: ProcessHandle, address: usize) -> io::Result<usize> {
-    let mut bytes = [0u8; 8];
+    let mut bytes = vec![0u8; layout::pointer_size()];
     handle.copy_address(address, &mut bytes)?;
     Ok(usize_at(&bytes, 0))
 }
 
 fn usize_at(bytes: &[u8], offset: usize) -> usize {
-    u64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap()) as usize
+    layout::pointer_from(&bytes[offset..])
 }
 
 fn f32_at(bytes: &[u8], offset: usize) -> f32 {

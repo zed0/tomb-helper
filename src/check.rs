@@ -14,6 +14,7 @@ use crate::trigger_scripts::SetOffBy;
 use crate::ui_ipc_data::SurfaceKind;
 use nalgebra::{Matrix3, Vector3};
 use process_memory::{CopyAddress, Pid, ProcessHandle};
+use std::collections::BTreeSet;
 use std::convert::TryInto;
 
 // Things of Lara's should be this close to her
@@ -21,6 +22,8 @@ const NEAR_LARA: f32 = 300.0;
 // How many of the instances nearest Lara to look at
 const NEARBY: usize = 400;
 const SAMPLE: usize = 64;
+// Names shown of each kind of instance
+const KIND_EXAMPLES: usize = 8;
 
 #[derive(Default)]
 struct Report {
@@ -90,7 +93,7 @@ pub fn check(version: Option<String>) -> Result<(), String> {
 
 /// Checks the offsets and layout in `details` against the game
 pub fn run(pid: Pid, handle: ProcessHandle, base_address: usize, details: ProcessDetails) -> Result<(), String> {
-    crate::layout::set(details.layout.clone());
+    crate::layout::set_for(&details);
     let game = Game { handle, base_address, details };
     let mut report = Report::default();
     let mut components = Components::new(base_address);
@@ -178,7 +181,10 @@ fn check_instances(game: &Game, report: &mut Report) -> Option<Vec<Instance>> {
     let transforms = sample
         .iter()
         .filter(|i| {
-            read_usize(game.handle, i.address + layout.instance.transform)
+            layout
+                .instance
+                .transform
+                .and_then(|offset| read_usize(game.handle, i.address + offset))
                 .and_then(|t| classes.name(game.handle, t))
                 .as_deref()
                 == Some(components::TRANSFORM)
@@ -281,7 +287,10 @@ fn check_camera(game: &Game, report: &mut Report) {
     }
     match game.resolve(AddressType::CameraLens).and_then(|a| game.read_floats::<8>(a)) {
         Some(lens) => {
-            let (near, far, fov, aspect) = (lens[2], lens[3], lens[6], lens[7]);
+            let camera = &crate::layout::current().camera;
+            let field = |i: usize| lens[i.min(lens.len() - 1)];
+            let (near, far, fov, aspect) =
+                (field(camera.lens_near), field(camera.lens_far), field(camera.lens_fov), field(camera.lens_aspect));
             report.result(
                 "camera lens",
                 near > 0.0 && far > near && fov > 0.1 && fov < 3.0 && aspect > 0.3 && aspect < 5.0,
@@ -392,10 +401,18 @@ fn check_collision_meshes(game: &Game, report: &mut Report, lara: &Position) {
 
 fn check_kinds(game: &Game, report: &mut Report, components: &mut Components, nearby: &[Instance]) {
     let (mut interactables, mut npcs, mut triggers, mut shapes) = (0, 0, 0, 0);
+    // A few of each, to see they make sense
+    let (mut interactable_names, mut npc_names) = (BTreeSet::new(), BTreeSet::new());
     for instance in nearby {
         let kinds = trigger::read_kinds(game.handle, components, instance.address);
         interactables += kinds.interactable as usize;
         npcs += kinds.npc as usize;
+        if kinds.interactable && interactable_names.len() < KIND_EXAMPLES {
+            interactable_names.insert(instance.name.clone());
+        }
+        if kinds.npc && npc_names.len() < KIND_EXAMPLES {
+            npc_names.insert(instance.name.clone());
+        }
         if kinds.trigger {
             triggers += 1;
             if let Some(shape) = trigger::read_shape(game.handle, components, instance.address) {
@@ -416,6 +433,9 @@ fn check_kinds(game: &Game, report: &mut Report, components: &mut Components, ne
         npcs,
         triggers
     );
+    let examples = |names: &BTreeSet<String>| names.iter().cloned().collect::<Vec<_>>().join(", ");
+    println!("      interactable e.g. {}", examples(&interactable_names));
+    println!("      characters/animals e.g. {}", examples(&npc_names));
     if triggers == 0 {
         report.skip("trigger shapes", "no triggers near Lara".to_string());
     } else {
@@ -504,10 +524,11 @@ fn midpoint(a: &Position, b: &Position) -> Position {
     Position { x: (a.x + b.x) / 2.0, y: (a.y + b.y) / 2.0, z: (a.z + b.z) / 2.0 }
 }
 
+// A pointer, at the game's pointer size, None if it's null
 fn read_usize(handle: ProcessHandle, address: usize) -> Option<usize> {
-    let mut bytes = [0u8; 8];
+    let mut bytes = vec![0u8; crate::layout::pointer_size()];
     handle.copy_address(address, &mut bytes).ok()?;
-    match u64::from_le_bytes(bytes) as usize {
+    match crate::layout::pointer_from(&bytes) {
         0 => None,
         value => Some(value),
     }

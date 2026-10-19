@@ -157,9 +157,14 @@ fn has_transforms(
     slots: usize,
 ) -> bool {
     let layout = &layout::current().instance;
+    // Nothing to check against if instances don't point at their transforms
+    let transform = match layout.transform {
+        Some(offset) => offset,
+        None => return true,
+    };
     let mut transforms = 0;
     for slot in (0..slots).step_by((slots / INSTANCES_CHECKED).max(1)) {
-        match pointer_at(&image.data, rva + slot * layout.size + layout.transform) {
+        match pointer_at(&image.data, rva + slot * layout.size + transform) {
             Some(0) | None => continue,
             Some(pointer) if (base_address..base_address + image.data.len()).contains(&pointer) => return false,
             Some(pointer) => {

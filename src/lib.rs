@@ -1,6 +1,10 @@
 use imgui::*;
 use hudhook::*;
-use hudhook::hooks::dx12::ImguiDx12Hooks;
+// TR2013 is 32-bit and DirectX 11, the others 64-bit and DirectX 12
+#[cfg(target_arch = "x86")]
+use hudhook::hooks::dx11::ImguiDx11Hooks as GameHooks;
+#[cfg(not(target_arch = "x86"))]
+use hudhook::hooks::dx12::ImguiDx12Hooks as GameHooks;
 use crate::ui_ipc_data::{projection_from_lens, BoxKind, Capsule, ObjectBox, ObjectCategory, Probe, SharedMemoryManager, SurfaceKind, Triangle, TriggerCategory, UiData, UiSettings, REQUEST_RESTORE_POSITION, REQUEST_STORE_POSITION, REQUEST_TOGGLE_FLYING, TRIGGER_ACTIONS};
 use crate::tracing::{error, warn};
 
@@ -12,6 +16,11 @@ use std::mem::{size_of, MaybeUninit};
 use std::sync::atomic::{AtomicBool, AtomicU32};
 use winapi::um::memoryapi::ReadProcessMemory;
 use winapi::um::processthreadsapi::GetCurrentProcess;
+
+// How many of a list are in use, given the count the exe sent, which may be mid write
+fn count(count: u32, len: usize) -> usize {
+    (count as usize).min(len)
+}
 
 // Points closer to the camera plane than this (in clip space w) are clipped off
 const NEAR_CLIP_W: f32 = 1.0;
@@ -513,8 +522,8 @@ impl ImguiRenderLoop for TombHelperHud {
 
         let screen_width = ui.io().display_size[0];
         let screen_height = ui.io().display_size[1];
-        let object_count = ui_data.object_count.min(ui_data.objects.len());
-        let triangle_count = ui_data.triangle_count.min(ui_data.triangles.len());
+        let object_count = count(ui_data.object_count, ui_data.objects.len());
+        let triangle_count = count(ui_data.triangle_count, ui_data.triangles.len());
         let settings = &self.ui_memory_manager.get().settings;
 
         if UiSettings::get(&settings.show_window) {
@@ -534,9 +543,13 @@ impl ImguiRenderLoop for TombHelperHud {
         let cull_hidden = UiSettings::get(&settings.cull_hidden);
         let radii = [UiSettings::get_f32(&settings.coarse_radius), UiSettings::get_f32(&settings.detailed_radius)];
 
-        let view = game_matrix(&read_game(ui_data.camera_view_address).unwrap_or(ui_data.camera_view));
-        let projection = read_game(ui_data.camera_lens_address)
-            .map_or(ui_data.camera_projection, |lens| projection_from_lens(&lens));
+        if ui_data.camera_view_address == 0 {
+            self.draw_milliseconds = started.elapsed().as_secs_f32() * 1000.0;
+            return;
+        }
+        let view = game_matrix(&read_game(ui_data.camera_view_address as usize).unwrap_or(ui_data.camera_view));
+        let projection = read_game(ui_data.camera_lens_address as usize)
+            .map_or(ui_data.camera_projection, |lens| projection_from_lens(&lens, ui_data.lens_fields));
         let projector = Projector {
             view_projection: game_matrix(&projection) * view,
             camera_position: view.try_inverse().map_or(Vector3::zeros(), |m| m.column(3).xyz()),
@@ -602,7 +615,7 @@ impl ImguiRenderLoop for TombHelperHud {
             let trigger_opacity = UiSettings::get_f32(&settings.trigger_opacity);
             let by_action = UiSettings::get(&settings.triggers_by_action);
             if trigger_opacity > 0.0 {
-                let face_count = ui_data.trigger_face_count.min(ui_data.trigger_faces.len());
+                let face_count = count(ui_data.trigger_face_count, ui_data.trigger_faces.len());
                 for face in &ui_data.trigger_faces[..face_count] {
                     let world = face.corners.map(|c| Vector3::new(c.x, c.y, c.z));
                     if let Some(corners) = face_on_screen(&projector, world) {
@@ -614,14 +627,14 @@ impl ImguiRenderLoop for TombHelperHud {
                     }
                 }
             }
-            let line_count = ui_data.trigger_line_count.min(ui_data.trigger_lines.len());
+            let line_count = count(ui_data.trigger_line_count, ui_data.trigger_lines.len());
             for line in &ui_data.trigger_lines[..line_count] {
                 let vector = |p: &crate::position::Position| Vector3::new(p.x, p.y, p.z);
                 let colour =
                     if line.inside { INSIDE_TRIGGER_COLOUR } else { trigger_colour(by_action, line.category, line.action) };
                 draw_world_line(&draw_list, &projector, vector(&line.a), vector(&line.b), colour);
             }
-            for label in &ui_data.triggers[..ui_data.trigger_count.min(ui_data.triggers.len())] {
+            for label in &ui_data.triggers[..count(ui_data.trigger_count, ui_data.triggers.len())] {
                 if let Some(point) = projector.project(Vector3::new(label.position.x, label.position.y, label.position.z)) {
                     // Above the top of the volume, centred
                     let size = ui.calc_text_size(label.name());
@@ -641,20 +654,20 @@ impl ImguiRenderLoop for TombHelperHud {
         }
         if lara_collision {
             let opacity = |colour| with_opacity(colour, mesh_opacity);
-            for capsule in &ui_data.capsules[..ui_data.capsule_count.min(ui_data.capsules.len())] {
+            for capsule in &ui_data.capsules[..count(ui_data.capsule_count, ui_data.capsules.len())] {
                 draw_capsule(&draw_list, &projector, capsule, opacity(LARA_COLOUR));
             }
-            for probe in &ui_data.probes[..ui_data.probe_count.min(ui_data.probes.len())] {
+            for probe in &ui_data.probes[..count(ui_data.probe_count, ui_data.probes.len())] {
                 draw_probe(&draw_list, &projector, probe, opacity(PROBE_COLOUR));
             }
-            let proxy_count = ui_data.proxy_count.min(ui_data.proxies.len());
+            let proxy_count = count(ui_data.proxy_count, ui_data.proxies.len());
             for (i, (proxy, colour)) in ui_data.proxies[..proxy_count].iter().zip(PROXY_COLOURS).enumerate() {
                 let colour = if i == 0 && ui_data.proxy_touching { PUSHING_COLOUR } else { colour };
                 draw_capsule(&draw_list, &projector, proxy, opacity(colour));
             }
             // The camera and weapon only collide while she aims
             if ui_data.attached_active {
-                let attached_count = ui_data.attached_count.min(ui_data.attached.len());
+                let attached_count = count(ui_data.attached_count, ui_data.attached.len());
                 for (capsule, touching) in ui_data.attached[..attached_count].iter().zip(ui_data.attached_touching) {
                     let colour = if touching { PUSHING_COLOUR } else { COLLISION_COLOUR };
                     draw_capsule(&draw_list, &projector, capsule, opacity(colour));
@@ -669,7 +682,7 @@ impl ImguiRenderLoop for TombHelperHud {
     }
 }
 
-hudhook::hudhook!(ImguiDx12Hooks, TombHelperHud::new());
+hudhook::hudhook!(GameHooks, TombHelperHud::new());
 
 #[cfg(test)]
 mod tests {

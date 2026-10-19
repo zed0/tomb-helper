@@ -52,11 +52,11 @@ impl ObjectList {
                 if read_u32(slot, instance.header) == 0 {
                     return Ok(instances);
                 }
-                if read_usize(slot, instance.transform) == 0 {
+                if read_usize(slot, instance.in_use) == 0 {
                     continue;
                 }
                 let address = self.array_address + (first_slot + index) * instance.size;
-                let placement = read_usize(slot, instance.placement);
+                let placement = instance.placement.map_or(0, |offset| read_usize(slot, offset));
                 let (name, full_name) = match placement {
                     0 => (String::new(), String::new()),
                     _ => {
@@ -106,12 +106,22 @@ pub fn read_transform(handle: ProcessHandle, instance_address: usize) -> io::Res
     let layout = layout::current();
     let mut instance = vec![0u8; layout.instance.size];
     handle.copy_address(instance_address, &mut instance)?;
-    let transform = read_usize(&instance, layout.instance.transform);
-    if transform == 0 {
-        return Err(io::Error::new(io::ErrorKind::NotFound, "instance has no transform"));
-    }
+    // Unscaled if instances don't point at their transform
     let mut axes = [0u8; 48];
-    handle.copy_address(transform + layout.transform.matrix, &mut axes)?;
+    match layout.instance.transform {
+        Some(offset) => {
+            let transform = read_usize(&instance, offset);
+            if transform == 0 {
+                return Err(io::Error::new(io::ErrorKind::NotFound, "instance has no transform"));
+            }
+            handle.copy_address(transform + layout.transform.matrix, &mut axes)?;
+        }
+        None => {
+            for axis in 0..3 {
+                axes[axis * 16 + axis * 4..axis * 16 + axis * 4 + 4].copy_from_slice(&1f32.to_le_bytes());
+            }
+        }
+    }
 
     let position = read_position_from(&instance, layout.instance.position);
     let rotation = read_position_from(&instance, layout.instance.rotation);
@@ -164,7 +174,7 @@ fn read_chain(handle: ProcessHandle, address: usize, offsets: &[usize]) -> Optio
 }
 
 fn read_pointer(handle: ProcessHandle, address: usize) -> Option<usize> {
-    let mut bytes = [0u8; 8];
+    let mut bytes = vec![0u8; layout::pointer_size()];
     handle.copy_address(address, &mut bytes).ok()?;
     match read_usize(&bytes, 0) {
         0 => None,
@@ -200,6 +210,7 @@ fn read_f32(bytes: &[u8], offset: usize) -> f32 {
     f32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap())
 }
 
+// A pointer, at the game's pointer size
 fn read_usize(bytes: &[u8], offset: usize) -> usize {
-    u64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap()) as usize
+    layout::pointer_from(&bytes[offset..])
 }

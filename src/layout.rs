@@ -3,7 +3,11 @@
 //! `"layout": {"instance": {"position": "0x20"}}`. Run `tomb-helper check` to test them against the running game.
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock, RwLock};
+
+use crate::process_details::ProcessDetails;
+use process_memory::Architecture;
 
 use crate::offsets_file::Hex;
 
@@ -13,6 +17,14 @@ fn serialize_hex<S: Serializer>(value: &usize, serializer: S) -> Result<S::Ok, S
 
 fn deserialize_hex<'de, D: Deserializer<'de>>(deserializer: D) -> Result<usize, D::Error> {
     Hex::deserialize(deserializer).map(|h| h.0)
+}
+
+fn serialize_hex_option<S: Serializer>(value: &Option<usize>, serializer: S) -> Result<S::Ok, S::Error> {
+    value.map(Hex).serialize(serializer)
+}
+
+fn deserialize_hex_option<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<usize>, D::Error> {
+    Option::<Hex>::deserialize(deserializer).map(|h| h.map(|h| h.0))
 }
 
 fn serialize_hex_list<S: Serializer>(values: &[usize], serializer: S) -> Result<S::Ok, S::Error> {
@@ -59,9 +71,13 @@ pub struct InstanceLayout {
     /// Euler angles in radians, applied as Rx * Ry * Rz
     #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
     pub rotation: usize,
-    /// -> placement record, null for spawned instances
+    /// A pointer that's set while the slot is in use
     #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
-    pub placement: usize,
+    pub in_use: usize,
+    /// -> placement record, null for spawned instances. None (`null`) if the game has none (TR2013), when every instance
+    /// goes by its object type's name.
+    #[serde(serialize_with = "serialize_hex_option", deserialize_with = "deserialize_hex_option")]
+    pub placement: Option<usize>,
     /// u64 unique to the instance, which scripts refer to it by
     #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
     pub id: usize,
@@ -69,12 +85,18 @@ pub struct InstanceLayout {
     /// spawned instances have
     #[serde(serialize_with = "serialize_hex_list", deserialize_with = "deserialize_hex_list")]
     pub object_name: Vec<usize>,
-    /// -> component table, with a slot per component type (found by their RTTI class names, see `components`)
-    #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
-    pub components: usize,
-    /// -> cdc::TransformComponent, null for unused slots
-    #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
-    pub transform: usize,
+    /// -> component table, with a slot per component type (found by their RTTI class names, see `components`). None if
+    /// there's no table (TR2013, whose instances hold their components themselves)
+    #[serde(serialize_with = "serialize_hex_option", deserialize_with = "deserialize_hex_option")]
+    pub components: Option<usize>,
+    /// -> cdc::TransformComponent, null for unused slots. None if instances don't point at theirs (TR2013), when objects
+    /// are drawn unscaled.
+    #[serde(serialize_with = "serialize_hex_option", deserialize_with = "deserialize_hex_option")]
+    pub transform: Option<usize>,
+    /// -> the data the instance's components were made from, which names them (see `component_data`). What kind of
+    /// thing an instance is goes by these names in a game with no component table (TR2013).
+    #[serde(serialize_with = "serialize_hex_option", deserialize_with = "deserialize_hex_option")]
+    pub component_data: Option<usize>,
 }
 
 impl Default for InstanceLayout {
@@ -84,11 +106,13 @@ impl Default for InstanceLayout {
             header: 0x0,
             position: 0x10,
             rotation: 0x30,
-            placement: 0x78,
+            in_use: 0xE0,
+            placement: Some(0x78),
             id: 0x60,
             object_name: vec![0x80, 0x8, 0x58, 0x8],
-            components: 0xD8,
-            transform: 0xE0,
+            components: Some(0xD8),
+            transform: Some(0xE0),
+            component_data: None,
         }
     }
 }
@@ -108,6 +132,18 @@ group! {
     ComponentLayout {
         /// -> its instance
         instance = 0x8,
+    }
+}
+
+group! {
+    /// An instance's component data (`instance.component_data`), only used if that's set. TR2013's are the defaults.
+    ComponentDataLayout {
+        /// u32
+        count = 0x8,
+        /// Entries: a hash, -> the component's name (e.g. "InteractComponent"), -> its data
+        entries = 0x14,
+        entry_size = 0xC,
+        name = 0x4,
     }
 }
 
@@ -235,12 +271,17 @@ group! {
 }
 
 group! {
-    /// GameRender (only used by `discover` to write the camera's offsets)
+    /// GameRender (used by `discover` to write the camera's offsets, and for which floats of the lens are which)
     CameraLayout {
         /// World-to-view matrix (`CameraView`)
         view = 0x520,
-        /// Near, far, near, far, fov, aspect, fov, aspect (`CameraLens`)
+        /// Near, far, near, far, fov, aspect, fov, aspect (`CameraLens`); TR2013 has just near, far, fov, aspect
         lens = 0x30,
+        /// Which of the 8 floats read from `lens` are the near and far planes, the vertical fov and the aspect ratio
+        lens_near = 2,
+        lens_far = 3,
+        lens_fov = 6,
+        lens_aspect = 7,
         /// The first row of camera-to-world (`CameraSin`, `CameraCos`)
         sin = 0x70,
         cos = 0x74,
@@ -363,6 +404,7 @@ pub struct Layout {
     pub instance: InstanceLayout,
     pub placement: PlacementLayout,
     pub component: ComponentLayout,
+    pub component_data: ComponentDataLayout,
     pub transform: TransformLayout,
     pub drawable: DrawableLayout,
     pub collide: CollideLayout,
@@ -399,6 +441,28 @@ pub fn set(layout: Layout) {
     *CURRENT.write().unwrap() = Some(Arc::new(layout));
 }
 
+static POINTER_SIZE: AtomicUsize = AtomicUsize::new(8);
+
+/// Uses the layout of a game version, and its pointer size
+pub fn set_for(details: &ProcessDetails) {
+    set(details.layout.clone());
+    let size = if matches!(details.arch, Architecture::Arch64Bit) { 8 } else { 4 };
+    POINTER_SIZE.store(size, Ordering::Relaxed);
+}
+
+/// How big the game's pointers are: 8 bytes, or 4 for a 32-bit game (TR2013)
+pub fn pointer_size() -> usize {
+    POINTER_SIZE.load(Ordering::Relaxed)
+}
+
+/// The pointer at the start of `bytes`, at the game's pointer size
+pub fn pointer_from(bytes: &[u8]) -> usize {
+    let mut value = [0u8; 8];
+    let size = pointer_size().min(bytes.len());
+    value[..size].copy_from_slice(&bytes[..size]);
+    u64::from_le_bytes(value) as usize
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -410,6 +474,16 @@ mod tests {
         assert_eq!(layout.instance.rotation, 0x30);
         assert_eq!(layout.probes.end, 0x40);
         assert_eq!(layout.collide, CollideLayout::default());
+    }
+
+    #[test]
+    fn optional_offsets_can_be_turned_off() {
+        let layout: Layout = serde_json::from_str(r#"{"instance": {"transform": null, "in_use": "0x40"}}"#).unwrap();
+        assert_eq!(layout.instance.transform, None);
+        assert_eq!(layout.instance.placement, Some(0x78));
+        assert_eq!(layout.instance.in_use, 0x40);
+        let json = serde_json::to_string(&layout).unwrap();
+        assert!(json.contains(r#""transform":null"#), "{}", json);
     }
 
     #[test]

@@ -9,10 +9,11 @@ User docs (hotkeys, config, cutscene timing generation) live in `README.md`.
 | Target | Entry | Output | Purpose |
 |---|---|---|---|
 | bin `tomb-helper` | `src/main.rs` | `tomb-helper.exe` | Main external process: finds game, runs handlers, listens to hotkeys |
-| lib `tomb_helper_ui` (cdylib) | `src/lib.rs` | `tomb_helper_ui.dll` | ImGui overlay injected *into* the game (DX12 via `hudhook`) |
+| lib `tomb_helper_ui` (cdylib) | `src/lib.rs` | `tomb_helper_ui.dll` | ImGui overlay injected *into* the game (DX12 via `hudhook`; built for `i686-pc-windows-msvc` it's DX11 for TR2013, copied next to the exe as `tomb_helper_ui32.dll`) |
 
 - The bin and lib share `src/ui_ipc_data.rs` and `src/position.rs` by each declaring them with `mod` —
-  they're compiled into both, so `UiData` must stay `#[repr(C)]` with identical layout on both sides.
+  they're compiled into both, so `UiData` must stay `#[repr(C)]` with identical layout on both sides, including in the
+  32-bit overlay for TR2013: nothing in the shared memory may be pointer sized (`u64` addresses, `u32` counts).
 - `hudhook` (0.9.x) is patched to a local checkout at `../hudhook` (`[patch.'crates-io']`), which is
   upstream `main` plus a local `Process::by_pid()` in `src/inject.rs` (not upstream; used by
   `OverlayHandler`). Builds need that sibling directory. The patch's version must match the
@@ -65,12 +66,13 @@ User docs (hotkeys, config, cutscene timing generation) live in `README.md`.
 | `src/cutscene_timing_info.rs` | `TimingInfo` / `TimingEntry` JSON format (cutscene ids → durations, skippable-at times) |
 | `src/cutscene_timing_generator_handler.rs` | Records cutscene timings by watching memory + querying LiveSplit Server over TCP (`getcurrenttime`); writes the timing file after each cutscene |
 | `src/readable_from_path.rs` | `ReadableFromPath` trait: load JSON from a local path or URL (blocking reqwest), default on failure |
-| `src/overlay_handler.rs` | On `ToggleUI` injects `tomb_helper_ui.dll` into the game (`hudhook::inject`); each tick streams into shared memory: position, `CameraView`, a projection built from `CameraLens`, object boxes (objects matching `config.overlay` filters, rescanned every second), and Lara's collision from `collision.rs` (hit capsules, ground probes, proxy capsules, with a 150ms hold on "pushing"); sets `should_exit` to eject on toggle-off/drop. `TrackedCameraMatrix` reads a 4x4 matrix in one copy |
+| `src/inject32.rs` | Injects the 32-bit overlay into a 32-bit game: `LoadLibraryW` from the game's own 32-bit kernel32 (export table read from the game), as hudhook's injector uses this process's 64-bit one |
+| `src/overlay_handler.rs` | On `ToggleUI` injects `tomb_helper_ui.dll` into the game (`hudhook::inject`), or `tomb_helper_ui32.dll` into a 32-bit one (`inject32`); the camera and instance array are optional (without them the overlay gets camera address 0 and only shows its window); each tick streams into shared memory: position, `CameraView`, a projection built from `CameraLens`, object boxes (objects matching `config.overlay` filters, rescanned every second), and Lara's collision from `collision.rs` (hit capsules, ground probes, proxy capsules, with a 150ms hold on "pushing"); sets `should_exit` to eject on toggle-off/drop. `TrackedCameraMatrix` reads a 4x4 matrix in one copy |
 | `src/object_list.rs` | Reads the game's static instance array (`InstanceArray`, 0x120 byte records until a zero header): position, placement names, world matrix (built from the instance's position + Rx*Ry*Rz Euler rotation, with only the scale from `cdc::TransformComponent`, which goes stale for Lara), and model bounds (`read_bounds`: component table -> DrawableComponent -> InstanceDrawable -> CommonRenderModelInstance -> CommonRenderModel -> `Mesh` header min/max). Layout offsets are constants found in ROTTR Steam |
 | `src/collision.rs` | Lara's collision, see "Lara's collision" below: hit capsules (`read_capsule_shapes`/`place_capsules`), ground probes (`read_probes`), and her movement proxy with the camera/weapon proxies attached to it (`read_proxy`), including which of them is pushing her (contacts on their surface). Has unit tests for the capsule geometry |
 | `src/collision_mesh.rs` | The level's collision meshes (see "Level collision" below): `CollisionMeshes::refresh` walks the scene's instance list (dropping duplicates), `triangles_near` caches each mesh's vertices/triangles and returns the world space triangles near Lara, closest first, tagged floor/wall/ceiling by their normal |
 | `src/trigger.rs` | What an instance is from its component table (`read_kinds`: interactable via Interactable/Loot/Collectible components, trigger via TriggerComponent, character/animal via Npc or Health + Corpse components; RTTI checked), resources by name (`is_resource`), trigger categories by name (`categorise`), trigger shapes (`read_shape`: box, plane, sphere, polygon volume), their world space outlines and faces (`faces`, which the overlay fills in at `trigger_opacity`; polygon caps are ear clipped as they can be concave) |
-| `src/layout.rs` | `Layout`: where everything the overlay reads is in the game's structures (instance, drawable, collide, proxy, body, physics shape, probes, camera, collision scene/instance/mesh, trigger shape), ROTTR Steam's by default, overridable per version in the offsets file's `layout` section. `layout::current()` is set on connecting |
+| `src/layout.rs` | `Layout`: where everything the overlay reads is in the game's structures (instance, drawable, collide, proxy, body, physics shape, probes, camera, collision scene/instance/mesh, trigger shape), ROTTR Steam's by default, overridable per version in the offsets file's `layout` section (optional offsets, e.g. TR2013's missing instance `transform`, are `null`). `layout::set_for(details)` on connecting sets it and the game's pointer size (`pointer_size()`/`pointer_from()`, which everything reading game pointers uses) |
 | `src/components.rs` | Components by RTTI class name: `Classes` (vtable -> class name via the CompleteObjectLocator), `Components::get` learns each class's slot from a table (budgeted per `start_refresh`) and checks class + back pointer. Class name constants |
 | `src/discover.rs` | `discover [--save]`: finds GameRender (camera), TR9MultibodyClient (-> CollisionSceneClient) and the instance array statics through what they point to, optionally writing them to the offsets file |
 | `src/update_offsets.rs` | `update-offsets [--from <exe or dump>] [--dry-run]`: the one command for a new build. Attaches to any known exe (new builds start from the last known entry for it; an entry without a layout borrows the last one of the same game that has one), finds statics (`discover::find_statics`), Lara (PlayerComponent) -> position chain (kept if the previous chain still lands there, else `chains::best_code_chains`; Y/Z = X + 4/8), ground probes by contents, version string; `--from` adds `derive::derive_lines`; the rest goes to `unverified` for a new build. Saves (`discover::save_entry`) and runs `check::run`. For a 32-bit game only the version string and `--from`, then `chains::print_values` |
@@ -261,7 +263,26 @@ again (`derive` plus live checks).
 - The exe is relocated (ASLR; base was 0x380000), so absolute addresses read live need the real module base.
 - Position: a record in an array of instance-like records (748: `idx * 0x180 + mod+0xF39DF0`, pointer at +0x28; Steam:
   `idx * 0xB0 + mod+0xA786D0`, record 3 +0x10), so it can't be derived, only found live. Steam `chains` found
-  `[0x20C96D8, 0x8, 0x0, 0x230C, 0x0]` (25 code sites; not yet checked after a game restart).
+  `[0x20C96D8, 0x8, 0x0, 0x230C, 0x0]` (25 code sites), still right after a restart, so it's in the offsets file.
+- Overlay structures in Steam TR2013 (found live, game base 0x380000):
+  - Camera: `GameRender` (RTTI, same class as ROTTR) at [mod+0x20CCDC0]: +0x30 near, far, fov, aspect (just 4 floats, so
+    `layout.camera.lens_*` = 0..3), +0x50 camera-to-world (det -1, +0x90 a copy; CameraSin/Cos are its first row), +0x4A0
+    world-to-view (camera-to-world x it = diag(1, -1, 1, 1), view y down like ROTTR), +0x600 the game's projection.
+    mod+0x10C5360 is a static copy of the camera rows.
+  - Instances: a static array of 0xD0 byte records (mod+0x1D24910.., ~1263 in use), found as every
+    `cdc::TransformComponent`'s +0x10 points into it. +0x0 position (+0x10 last frame's), +0x20 Euler rotation (+0x30
+    last frame's), +0x70 -> the game object (Lara's is an `NsPlayerBase`; others `NsInstance`/`NsUberObjectBase`), +0x88
+    -> `cdc::SceneEntity`, +0xA4..+0xB8 component pointers in the record itself (no component table). Lara was record 2
+    (mod+0x1D24AB0), which the position chains reach. In the offsets file (`InstanceArray` [0x1D24910], layout: header
+    +0xC0 (link indices, set up to the end), in_use +0x40 (-> object type, whose +0x4C -> name, e.g. "laracroft"), id
+    +0x48 (not quite unique), no placement/components/transform). +0x64 -> component data: +0x8 count, 0xC byte
+    entries from +0x14 (hash, -> name, -> data), e.g. InteractComponent, LootComponent, RagdollComponent,
+    InventoryMemberComponent (Lara's gear), which `trigger::read_kinds` goes by when there's no component table.
+  - Lara's movement capsule is a static block at mod+0x1113850: +0x0 centre, +0x20 radius/length (25, 60), +0x30 offset
+    (0, -5, 85), +0x60 rotation quaternion, +0x80/+0x90 the shape it's changing to, +0xA0 her feet, +0xD8 -> her instance;
+    0x50 byte contact records (normal + distance, then point) from mod+0x1113960.
+  - Not found: ground probes, and the collision scene (`CollisionSceneClient` doesn't exist; `TR9MultibodyClient` at
+    [mod+0x1DDBAEC] has no scene at +0x10).
 - Live tools all work on Steam TR2013: `probe`, `chains`, `update-offsets` (32-bit path), `watch`/`watch-raw` (debug
   registers set in the native context, registers read from the WOW64 one; 800 traps in 2s on the QueryPerformanceCounter
   import slot). Lara's position and the camera weren't read at all while the game was unfocused (paused).

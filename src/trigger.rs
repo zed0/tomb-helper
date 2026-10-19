@@ -72,13 +72,59 @@ pub enum Shape {
     Poly(Vec<(Vector3<f32>, Vector3<f32>)>),
 }
 
+// What a TR2013 instance is, from the names in its component data (lower case, as some are). Lara's own gear (e.g.
+// g_ascender) is interactable too, but is in her inventory, and has spatial awareness, which animals have too, so
+// characters and animals are told by their ragdolls.
+const INTERACTABLE_DATA: [&str; 2] = ["interactcomponent", "lootcomponent"];
+const INVENTORY_DATA: [&str; 1] = ["inventorymembercomponent"];
+const NPC_DATA: [&str; 1] = ["ragdollcomponent"];
+// Components listed at most
+const MAX_COMPONENT_DATA: usize = 64;
+
 pub fn read_kinds(handle: ProcessHandle, components: &mut Components, instance_address: usize) -> Kinds {
+    let layout = layout::current();
+    if let (None, Some(offset)) = (layout.instance.components, layout.instance.component_data) {
+        let names = read_component_names(handle, instance_address + offset);
+        let any = |wanted: &[&str]| names.iter().any(|n| wanted.contains(&n.as_str()));
+        return Kinds {
+            interactable: any(&INTERACTABLE_DATA) && !any(&INVENTORY_DATA),
+            trigger: false,
+            npc: any(&NPC_DATA),
+        };
+    }
     let mut has = |class: &str| components.get(handle, instance_address, class).is_some();
     Kinds {
         interactable: has(components::INTERACTABLE) || has(components::LOOT) || has(components::COLLECTIBLE),
         trigger: has(components::TRIGGER),
         npc: has(components::NPC) || (has(components::HEALTH) && has(components::CORPSE)),
     }
+}
+
+// The names of the components in an instance's component data, in lower case
+fn read_component_names(handle: ProcessHandle, pointer_address: usize) -> Vec<String> {
+    let layout = &layout::current().component_data;
+    let data = match read_usize_at(handle, pointer_address) {
+        Some(data) => data,
+        None => return vec![],
+    };
+    let mut count = [0u8; 4];
+    if handle.copy_address(data + layout.count, &mut count).is_err() {
+        return vec![];
+    }
+    let count = (u32::from_le_bytes(count) as usize).min(MAX_COMPONENT_DATA);
+    let mut entries = vec![0u8; count * layout.entry_size];
+    if handle.copy_address(data + layout.entries, &mut entries).is_err() {
+        return vec![];
+    }
+    entries
+        .chunks_exact(layout.entry_size)
+        .filter_map(|entry| {
+            let mut name = [0u8; 48];
+            handle.copy_address(usize_at(entry, layout.name), &mut name).ok()?;
+            let end = name.iter().position(|&c| c == 0)?;
+            Some(String::from_utf8_lossy(&name[..end]).to_lowercase())
+        })
+        .collect()
 }
 
 // The trigger's shape, in its instance's space
@@ -340,8 +386,9 @@ fn triangulate(polygon: &[Vector3<f32>]) -> Vec<[usize; 3]> {
     triangles
 }
 
+// A pointer, at the game's pointer size, None if it's null
 fn read_usize_at(handle: ProcessHandle, address: usize) -> Option<usize> {
-    let mut bytes = [0u8; 8];
+    let mut bytes = vec![0u8; layout::pointer_size()];
     handle.copy_address(address, &mut bytes).ok()?;
     match usize_at(&bytes, 0) {
         0 => None,
@@ -350,7 +397,7 @@ fn read_usize_at(handle: ProcessHandle, address: usize) -> Option<usize> {
 }
 
 fn usize_at(bytes: &[u8], offset: usize) -> usize {
-    u64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap()) as usize
+    layout::pointer_from(&bytes[offset..])
 }
 
 fn u32_at(bytes: &[u8], offset: usize) -> u32 {

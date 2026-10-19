@@ -32,7 +32,7 @@ const VERSION_LENGTH: usize = 64;
 pub fn update_offsets(from: Option<String>, from_version: Option<String>, dry_run: bool) -> Result<(), String> {
     let known = known_process_details();
     let (pid, handle, base_address, existing, template) = attach(&known)?;
-    layout::set(template.layout.clone());
+    layout::set_for(&template);
     match &existing {
         Some(details) => println!("Found {} {}, updating its offsets", details.name, details.version.version),
         None => println!(
