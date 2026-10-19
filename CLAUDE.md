@@ -53,7 +53,7 @@ User docs (hotkeys, config, cutscene timing generation) live in `README.md`.
 | `src/derive.rs` | CLI dispatch (`dump`/`derive`/`chains`/`probe`/`trace`/`watch`, hidden `watch-raw`/`disasm`/`check-matching`; flags `--version`/`--seconds`/`--delay`/`--write`/`--watch`). `derive`: fuzzy-matches code references between builds to find static addresses (`Deriver`: byte windows, or when that isn't confident `normalised`, sure only if deriving back lands within 0x400), then aligns `code_trace` accesses at matched sites to map each chain level (`code`/`witness`/`shifted`/`copied`; between compilers only an unchanged offset or a strong vote counts). On x86 a code position only counts as a reference if an instruction uses it. `check-matching <a> <b> [n]` round-trips n statics to measure matching |
 | `src/normalised.rs` | Matching references between builds from different compilers: the code around each (12 instructions either side, within the function) as tokens without registers, stack offsets or addresses (strings/imports/constants by content), plus one for the referencing instruction; weighted cosine (idf), candidates from an inverted index of rare tokens, runner-up only among references to other statics elsewhere |
 | `src/code_trace.rs` | `Tracer`: data-flow trace from an instruction using a static address, following pointer loads, branches, direct calls (args + returned `rax`) and, with a live `CallResolver`, virtual calls; on x86 also into the callers of a getter returning the static's pointer (direct `call rel32` index); produces `Access` chains in table form |
-| `src/watch.rs` | `watch <AddressType>...`: attaches as a debugger (`DebugActiveProcess`), sets DR0-3 data breakpoints on up to 4 values (resolved after `--delay`), records accessing instructions ("witnesses") and the caller chain of each (return addresses scanned off the stack), clears and detaches. `--write` breaks on writes only. 32-bit games: debug registers in the native context, the registers the code sees from the WOW64 one (`Context`); an access by a `call [mem]` is found at the return address. Hidden `watch-raw <pid> <addr or +rva>` for any address (`--exec` breaks on running the instruction there and records the registers, resuming with the resume flag), and `disasm <pid> <addr or +rva> [count]` (prints RVAs; call targets are absolute) |
+| `src/watch.rs` | `watch <AddressType>...`: attaches as a debugger (`DebugActiveProcess`), sets DR0-3 data breakpoints on up to 4 values (resolved after `--delay`), records accessing instructions ("witnesses") and the caller chain of each (return addresses scanned off the stack), clears and detaches. `--write` breaks on writes only. 32-bit games: debug registers in the native context, the registers the code sees from the WOW64 one (`Context`); an access by a `call [mem]` is found at the return address. Hidden `watch-raw <pid> <addr or +rva>[,...]` for up to 4 addresses (`--exec` breaks on running the instruction there and records the registers, resuming with the resume flag; `--dump <register>:<hex length>` also copies the memory a register points at, the first 3 times per instruction, e.g. `esp:40` for a function's arguments), and `disasm <pid> <addr or +rva> [count]` (prints RVAs; call targets are absolute) |
 | `src/aim_sweep.rs` | TR2013's aim sweep (the rod that holds Lara off walls in front of her while she aims): finds the equipped weapon's tuning through Lara's handle, inventory record, its item map, the weapon's instance and type record (`InventoryPool`/`TypePool`, layout `aim_sweep`), and places the swept capsule with her transform; drawn as an attached proxy |
 | `src/witness.rs` | Matches witness instructions into a new build by byte-window similarity around the displacement; the displacement change gives the new last offset |
 | `src/chains.rs` | Live: `chains` traces every static reference, evaluates the chains in the running game and lists code chains landing on each current value; `probe` prints current values |
@@ -315,8 +315,27 @@ again (`derive` plus live checks).
     drawn (no offsets). The push is added (+0x559B50) to the player's movement by kind, the third at player+0x540
     (x/y nonzero only while pushed), which the overlay shows as pushing. The static byte mod+0x20CBF31 is set while
     the sweep hits something (the next one is made longer), but isn't updated when the first sweep misses, so sticks.
-  - Not found: ground probes, and the collision scene (`CollisionSceneClient` doesn't exist; `TR9MultibodyClient` at
-    [mod+0x1DDBAEC] has no scene at +0x10).
+  - Level collision: [`TR9MultibodyClient` (mod+0x1DDBAEC)]+0x10 is the collision world (no RTTI; `CollisionScene`
+    [0x1DDBAEC, 0x10, 0]): +0x10 -> first instance, +0x14 count (2109), +0x18 -> broadphase (+0x10 leaves of 0x30: world
+    min, max, +0x24 -> instance; +0x20 tree of 0x40 nodes: min, max, 4 children). Instances are 0xB0: +0x0 row-major
+    matrix, +0x50/+0x60 world bounds, +0x70 -> a per area record (65 for the level, not a filter), +0x74 -> broadphase
+    leaf, +0x78 -> mesh, +0x7C previous, +0x80 next, +0x84 u16 (2 for 2044 object meshes, 3 for 5, 0 for the 60 level
+    meshes; not a collision filter: Lara stands on the 0 ones). The level meshes' vertices are relative to an origin at
+    +0x40 (`collision_instance.origin`; zeros for the rest, and the same as their area record's +0x0), added after the
+    matrix, which is the identity for them; their bounds at +0x50 don't include it either. Without it the ground (e.g. a
+    105824 triangle mesh, 30000 x 30000) was missing and drawn somewhere else, looking like structures from elsewhere.
+    No collision filter was found, so every mesh is drawn as Lara's. Meshes: +0x0/+0x10 object space bounds,
+    +0x20 -> vertices (inline after the 0x44 byte header), +0x24 -> 0x14 byte triangles (3 u32 indices, +0xC flags e.g.
+    0x00A0033F, +0x10 another u32), +0x28 -> 0x1C byte BVH nodes (+0x2C count), +0x30 triangle count, +0x34 vertex
+    count, +0x40 u16 format (1 = floats). Wound with floors up (no flip flag found; `collision_instance.flags` null).
+    Every mesh's vertices through its matrix give exactly its world bounds. Found from the aim sweep's query (+0x1EC6E0 ->
+    +0x131900 -> the broadphase's +0x1EB5C0).
+  - Dead ends while looking for the ground: the terrain classes (`JobHarness_JobTerrainNodeIntersections` +0x2BC770 is
+    visibility, marking scene cells against planes; `TerrainCallback`/`GameTerrainCallback` are drawing and lights).
+    Every triangle test (`GeomTriangle` users +0x128300, +0x12F600) reads these meshes' 0x14 byte triangles (+0xC bit
+    0x40 skipped, +0xD a mask against the query), all queries go to this one world, and the world's +0x8 list (369
+    0x80 byte entries) is dynamic bodies (Lara's ragdoll parts).
+  - Not found: ground probes.
 - Live tools all work on Steam TR2013: `probe`, `chains`, `update-offsets` (32-bit path), `watch`/`watch-raw` (debug
   registers set in the native context, registers read from the WOW64 one; 800 traps in 2s on the QueryPerformanceCounter
   import slot). Lara's position and the camera weren't read at all while the game was unfocused (paused).

@@ -127,7 +127,8 @@ pub fn run(pid: Pid, handle: ProcessHandle, base_address: usize, details: Proces
             check_proxy(&game, &mut report, &mut components, None, position);
             check_combat_proxy(&game, &mut report, position);
             check_aim_sweep(&game, &mut report, position);
-            report.skip("the rest of Lara's collision and the level's", "Lara wasn't found".to_string());
+            check_collision_meshes(&game, &mut report, position);
+            report.skip("the rest of Lara's collision", "Lara wasn't found".to_string());
         }
         _ => report.skip("Lara's collision and the level's", "Lara wasn't found".to_string()),
     }
@@ -445,8 +446,9 @@ fn check_collision_meshes(game: &Game, report: &mut Report, lara: &Position) {
         None => return report.skip("collision meshes", "no CollisionScene offsets".to_string()),
     };
     let mut classes = components::Classes::new(game.base_address);
+    // TR2013's scene has no RTTI, so it can only be checked by what's in it
     let class = classes.name(game.handle, scene);
-    if class.as_deref() != Some(".?AVCollisionSceneClient@cdc@@") {
+    if class.is_some() && class.as_deref() != Some(".?AVCollisionSceneClient@cdc@@") {
         return report.fail("collision meshes", format!("CollisionScene is a {:?}, not a CollisionSceneClient", class));
     }
     let mut meshes = CollisionMeshes::default();

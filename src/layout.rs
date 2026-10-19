@@ -391,28 +391,67 @@ group! {
     }
 }
 
-group! {
-    /// A collision mesh instance
-    CollisionInstanceLayout {
-        /// How much to read
-        size = 0x98,
-        /// Row-major object-to-world matrix (row vectors)
-        matrix = 0x0,
-        /// World space bounds
-        min = 0x40,
-        max = 0x50,
-        /// The matrix and bounds, which are reread each tick
-        placement_size = 0x60,
-        /// -> filter, shared by many
-        filter = 0x60,
-        mesh = 0x70,
-        next = 0x88,
-        /// u16, bit 0 swaps the first two corners of each triangle
-        flags = 0x90,
-        /// In the filter, a u32 of bits for which kinds of collision use the mesh
-        filter_kinds = 0x4,
-        /// The kind Lara's movement collides with
-        player_kind = 0x2,
+/// A collision mesh instance
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct CollisionInstanceLayout {
+    /// How much to read
+    #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
+    pub size: usize,
+    /// Row-major object-to-world matrix (row vectors)
+    #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
+    pub matrix: usize,
+    /// World space bounds
+    #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
+    pub min: usize,
+    #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
+    pub max: usize,
+    /// What the vertices are relative to: 3 floats added after the matrix (and to the bounds). None if there's no such
+    /// origin (TR2013's level meshes have one, its object meshes zeros)
+    #[serde(default, serialize_with = "serialize_hex_option", deserialize_with = "deserialize_hex_option")]
+    pub origin: Option<usize>,
+    /// The matrix, origin and bounds, which are reread each tick
+    #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
+    pub placement_size: usize,
+    /// -> filter, shared by many. None if the kinds are in the instance itself (`kinds`, TR2013)
+    #[serde(serialize_with = "serialize_hex_option", deserialize_with = "deserialize_hex_option")]
+    pub filter: Option<usize>,
+    /// u16 of the kinds of collision that use the mesh, in the instance itself, where there's no filter. If there's
+    /// neither, every mesh counts as Lara's
+    #[serde(serialize_with = "serialize_hex_option", deserialize_with = "deserialize_hex_option")]
+    pub kinds: Option<usize>,
+    #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
+    pub mesh: usize,
+    #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
+    pub next: usize,
+    /// u16, bit 0 swaps the first two corners of each triangle. None if there's no such flag (TR2013)
+    #[serde(serialize_with = "serialize_hex_option", deserialize_with = "deserialize_hex_option")]
+    pub flags: Option<usize>,
+    /// In the filter, a u32 of bits for which kinds of collision use the mesh
+    #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
+    pub filter_kinds: usize,
+    /// The kind Lara's movement collides with
+    #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
+    pub player_kind: usize,
+}
+
+impl Default for CollisionInstanceLayout {
+    fn default() -> Self {
+        CollisionInstanceLayout {
+            size: 0x98,
+            matrix: 0x0,
+            min: 0x40,
+            max: 0x50,
+            placement_size: 0x60,
+            origin: None,
+            filter: Some(0x60),
+            kinds: None,
+            mesh: 0x70,
+            next: 0x88,
+            flags: Some(0x90),
+            filter_kinds: 0x4,
+            player_kind: 0x2,
+        }
     }
 }
 
