@@ -9,7 +9,7 @@ use crate::process_details::ProcessDetails;
 
 use crate::offsets_file::Hex;
 
-// An offset as hex, or an optional one (`null` where a game doesn't have it)
+// An offset as hex, an optional one (`null` where a game doesn't have it), or a list of them
 trait HexField: Sized {
     fn serialize_hex<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error>;
     fn deserialize_hex<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error>;
@@ -35,6 +35,16 @@ impl HexField for Option<usize> {
     }
 }
 
+impl HexField for Vec<usize> {
+    fn serialize_hex<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.iter().map(|v| Hex(*v)).collect::<Vec<_>>().serialize(serializer)
+    }
+
+    fn deserialize_hex<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Vec::<Hex>::deserialize(deserializer).map(|l| l.into_iter().map(|h| h.0).collect())
+    }
+}
+
 fn serialize_hex<T: HexField, S: Serializer>(value: &T, serializer: S) -> Result<S::Ok, S::Error> {
     value.serialize_hex(serializer)
 }
@@ -43,23 +53,7 @@ fn deserialize_hex<'de, T: HexField, D: Deserializer<'de>>(deserializer: D) -> R
     T::deserialize_hex(deserializer)
 }
 
-fn serialize_hex_option<S: Serializer>(value: &Option<usize>, serializer: S) -> Result<S::Ok, S::Error> {
-    value.map(Hex).serialize(serializer)
-}
-
-fn deserialize_hex_option<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<usize>, D::Error> {
-    Option::<Hex>::deserialize(deserializer).map(|h| h.map(|h| h.0))
-}
-
-fn serialize_hex_list<S: Serializer>(values: &[usize], serializer: S) -> Result<S::Ok, S::Error> {
-    values.iter().map(|v| Hex(*v)).collect::<Vec<_>>().serialize(serializer)
-}
-
-fn deserialize_hex_list<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<usize>, D::Error> {
-    Vec::<Hex>::deserialize(deserializer).map(|l| l.into_iter().map(|h| h.0).collect())
-}
-
-// A field's type in a `group!`: an offset unless it says (`field: Option<usize> = None`)
+// A field's type in a `group!`: an offset unless it says (`field: Option<usize> = None`, or a `Vec<usize>`)
 macro_rules! field_type {
     () => {
         usize
@@ -91,68 +85,37 @@ macro_rules! group {
     };
 }
 
-/// Instances (game objects) are 0x120 byte records in a static array (`InstanceArray`); Lara is one of them
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct InstanceLayout {
-    #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
-    pub size: usize,
-    /// u32, the same for every slot in the array (2), 0 after the end
-    #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
-    pub header: usize,
-    #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
-    pub position: usize,
-    /// Euler angles in radians, applied as Rx * Ry * Rz
-    #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
-    pub rotation: usize,
-    /// A pointer that's set while the slot is in use
-    #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
-    pub in_use: usize,
-    /// -> placement record, null for spawned instances. None (`null`) if the game has none (TR2013), when every instance
-    /// goes by its object type's name.
-    #[serde(serialize_with = "serialize_hex_option", deserialize_with = "deserialize_hex_option")]
-    pub placement: Option<usize>,
-    /// u64 unique to the instance, which scripts refer to it by
-    #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
-    pub id: usize,
-    /// Pointers to follow from the instance to the name of its object type (e.g. "trx_mountain_hare"), which is all
-    /// spawned instances have
-    #[serde(serialize_with = "serialize_hex_list", deserialize_with = "deserialize_hex_list")]
-    pub object_name: Vec<usize>,
-    /// -> component table, with a slot per component type (found by their RTTI class names, see `components`). None if
-    /// there's no table (TR2013, whose instances hold their components themselves)
-    #[serde(serialize_with = "serialize_hex_option", deserialize_with = "deserialize_hex_option")]
-    pub components: Option<usize>,
-    /// -> cdc::TransformComponent, null for unused slots. None if instances don't point at theirs (TR2013), when objects
-    /// are drawn unscaled.
-    #[serde(serialize_with = "serialize_hex_option", deserialize_with = "deserialize_hex_option")]
-    pub transform: Option<usize>,
-    /// -> the data the instance's components were made from, which names them (see `component_data`). What kind of
-    /// thing an instance is goes by these names in a game with no component table (TR2013).
-    #[serde(serialize_with = "serialize_hex_option", deserialize_with = "deserialize_hex_option")]
-    pub component_data: Option<usize>,
-    /// -> the game object, whose RTTI class says whether it's a trigger and holds its shape (see `trigger_object`).
-    /// None where triggers are components (ROTTR, SOTTR); TR2013 has it.
-    #[serde(default, serialize_with = "serialize_hex_option", deserialize_with = "deserialize_hex_option")]
-    pub game_object: Option<usize>,
-}
-
-impl Default for InstanceLayout {
-    fn default() -> Self {
-        InstanceLayout {
-            size: 0x120,
-            header: 0x0,
-            position: 0x10,
-            rotation: 0x30,
-            in_use: 0xE0,
-            placement: Some(0x78),
-            id: 0x60,
-            object_name: vec![0x80, 0x8, 0x58, 0x8],
-            components: Some(0xD8),
-            transform: Some(0xE0),
-            component_data: None,
-            game_object: None,
-        }
+group! {
+    /// Instances (game objects) are 0x120 byte records in a static array (`InstanceArray`); Lara is one of them
+    InstanceLayout {
+        size = 0x120,
+        /// u32, the same for every slot in the array (2), 0 after the end
+        header = 0x0,
+        position = 0x10,
+        /// Euler angles in radians, applied as Rx * Ry * Rz
+        rotation = 0x30,
+        /// A pointer that's set while the slot is in use
+        in_use = 0xE0,
+        /// -> placement record, null for spawned instances. None (`null`) if the game has none (TR2013), when every
+        /// instance goes by its object type's name.
+        placement: Option<usize> = Some(0x78),
+        /// u64 unique to the instance, which scripts refer to it by
+        id = 0x60,
+        /// Pointers to follow from the instance to the name of its object type (e.g. "trx_mountain_hare"), which is all
+        /// spawned instances have
+        object_name: Vec<usize> = vec![0x80, 0x8, 0x58, 0x8],
+        /// -> component table, with a slot per component type (found by their RTTI class names, see `components`). None
+        /// if there's no table (TR2013, whose instances hold their components themselves)
+        components: Option<usize> = Some(0xD8),
+        /// -> cdc::TransformComponent, null for unused slots. None if instances don't point at theirs (TR2013), when
+        /// objects are drawn unscaled.
+        transform: Option<usize> = Some(0xE0),
+        /// -> the data the instance's components were made from, which names them (see `component_data`). What kind of
+        /// thing an instance is goes by these names in a game with no component table (TR2013).
+        component_data: Option<usize> = None,
+        /// -> the game object, whose RTTI class says whether it's a trigger and holds its shape (see `trigger_object`).
+        /// None where triggers are components (ROTTR, SOTTR); TR2013 has it.
+        game_object: Option<usize> = None,
     }
 }
 
@@ -283,88 +246,43 @@ group! {
     }
 }
 
-/// Lara's movement collision, her cdc::ProxyComponent. It holds the shape in use, and the one it's changing to
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct ProxyLayout {
-    /// Of the shape in use, in world space
-    #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
-    pub centre: usize,
-    /// Radius, then the length of the cylinder part
-    #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
-    pub in_use_size: usize,
-    /// Of the centre from Lara's feet, in her space
-    #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
-    pub in_use_offset: usize,
-    /// Tilt of the capsule (e.g. lying down when rolling), quaternion x, y, z, w
-    #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
-    pub in_use_local_rotation: usize,
-    /// Lara's facing
-    #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
-    pub in_use_rotation: usize,
-    #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
-    pub next_size: usize,
-    #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
-    pub next_offset: usize,
-    #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
-    pub next_local_rotation: usize,
-    #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
-    pub next_rotation: usize,
-    /// -> physics body the proxy is swept as, which the camera's and Lara's weapon's are attached to. None if there
-    /// isn't one (TR2013)
-    #[serde(serialize_with = "serialize_hex_option", deserialize_with = "deserialize_hex_option")]
-    pub body: Option<usize>,
-    #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
-    pub size: usize,
-    /// What it hit this frame (including through the proxies attached to it): two u32 counts (next to each other in
-    /// ROTTR, not in SOTTR; one in TR2013), and records with the world space point of contact (at their start, but
-    /// after a normal in TR2013, so there this is where the first point is)
-    #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
-    pub contact_count: usize,
-    /// None if there's just the one (TR2013)
-    #[serde(serialize_with = "serialize_hex_option", deserialize_with = "deserialize_hex_option")]
-    pub second_contact_count: Option<usize>,
-    #[serde(serialize_with = "serialize_hex_option", deserialize_with = "deserialize_hex_option")]
-    pub contacts: Option<usize>,
-    #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
-    pub contact_size: usize,
-    /// u32 flags, with `collides` set while an attached proxy (e.g. the combat proxy) collides, for a game where that isn't
-    /// known from physics bodies (TR2013)
-    #[serde(serialize_with = "serialize_hex_option", deserialize_with = "deserialize_hex_option")]
-    pub flags: Option<usize>,
-    #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
-    pub collides: usize,
-    /// -> the instance it belongs to, where `discover` finds Lara's proxy as a static (TR2013)
-    #[serde(serialize_with = "serialize_hex_option", deserialize_with = "deserialize_hex_option")]
-    pub instance: Option<usize>,
-    /// -> the first proxy attached to it that's found on its own, not through its body (`CombatProxy`, TR2013)
-    #[serde(serialize_with = "serialize_hex_option", deserialize_with = "deserialize_hex_option")]
-    pub attached: Option<usize>,
-}
-
-impl Default for ProxyLayout {
-    fn default() -> Self {
-        ProxyLayout {
-            centre: 0x30,
-            in_use_size: 0x58,
-            in_use_offset: 0x60,
-            in_use_local_rotation: 0x80,
-            in_use_rotation: 0x90,
-            next_size: 0xC0,
-            next_offset: 0xD0,
-            next_local_rotation: 0xF0,
-            next_rotation: 0x100,
-            body: Some(0x148),
-            size: 0x150,
-            contact_count: 0x164,
-            second_contact_count: Some(0x168),
-            contacts: Some(0x190),
-            contact_size: 0x60,
-            flags: None,
-            collides: 0x2,
-            instance: None,
-            attached: None,
-        }
+group! {
+    /// Lara's movement collision, her cdc::ProxyComponent. It holds the shape in use, and the one it's changing to
+    ProxyLayout {
+        /// Of the shape in use, in world space
+        centre = 0x30,
+        /// Radius, then the length of the cylinder part
+        in_use_size = 0x58,
+        /// Of the centre from Lara's feet, in her space
+        in_use_offset = 0x60,
+        /// Tilt of the capsule (e.g. lying down when rolling), quaternion x, y, z, w
+        in_use_local_rotation = 0x80,
+        /// Lara's facing
+        in_use_rotation = 0x90,
+        next_size = 0xC0,
+        next_offset = 0xD0,
+        next_local_rotation = 0xF0,
+        next_rotation = 0x100,
+        /// -> physics body the proxy is swept as, which the camera's and Lara's weapon's are attached to. None if there
+        /// isn't one (TR2013)
+        body: Option<usize> = Some(0x148),
+        size = 0x150,
+        /// What it hit this frame (including through the proxies attached to it): two u32 counts (next to each other in
+        /// ROTTR, not in SOTTR; one in TR2013), and records with the world space point of contact (at their start, but
+        /// after a normal in TR2013, so there this is where the first point is)
+        contact_count = 0x164,
+        /// None if there's just the one (TR2013)
+        second_contact_count: Option<usize> = Some(0x168),
+        contacts: Option<usize> = Some(0x190),
+        contact_size = 0x60,
+        /// u32 flags, with `collides` set while an attached proxy (e.g. the combat proxy) collides, for a game where that
+        /// isn't known from physics bodies (TR2013)
+        flags: Option<usize> = None,
+        collides = 0x2,
+        /// -> the instance it belongs to, where `discover` finds Lara's proxy as a static (TR2013)
+        instance: Option<usize> = None,
+        /// -> the first proxy attached to it that's found on its own, not through its body (`CombatProxy`, TR2013)
+        attached: Option<usize> = None,
     }
 }
 
@@ -438,62 +356,31 @@ group! {
     }
 }
 
-/// A collision mesh instance
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct CollisionInstanceLayout {
-    /// How much to read
-    #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
-    pub size: usize,
-    /// Row-major object-to-world matrix (row vectors)
-    #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
-    pub matrix: usize,
-    /// World space bounds
-    #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
-    pub min: usize,
-    #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
-    pub max: usize,
-    /// What the vertices are relative to: 3 floats added after the matrix (and to the bounds). None if there's no such
-    /// origin (TR2013's level meshes have one, its object meshes zeros)
-    #[serde(default, serialize_with = "serialize_hex_option", deserialize_with = "deserialize_hex_option")]
-    pub origin: Option<usize>,
-    /// The matrix, origin and bounds, which are reread each tick
-    #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
-    pub placement_size: usize,
-    /// -> filter, shared by many. None if there's none (TR2013), when every mesh counts as Lara's
-    #[serde(serialize_with = "serialize_hex_option", deserialize_with = "deserialize_hex_option")]
-    pub filter: Option<usize>,
-    #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
-    pub mesh: usize,
-    #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
-    pub next: usize,
-    /// u16, bit 0 swaps the first two corners of each triangle. None if there's no such flag (TR2013)
-    #[serde(serialize_with = "serialize_hex_option", deserialize_with = "deserialize_hex_option")]
-    pub flags: Option<usize>,
-    /// In the filter, a u32 of bits for which kinds of collision use the mesh
-    #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
-    pub filter_kinds: usize,
-    /// The kind Lara's movement collides with
-    #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
-    pub player_kind: usize,
-}
-
-impl Default for CollisionInstanceLayout {
-    fn default() -> Self {
-        CollisionInstanceLayout {
-            size: 0x98,
-            matrix: 0x0,
-            min: 0x40,
-            max: 0x50,
-            placement_size: 0x60,
-            origin: None,
-            filter: Some(0x60),
-            mesh: 0x70,
-            next: 0x88,
-            flags: Some(0x90),
-            filter_kinds: 0x4,
-            player_kind: 0x2,
-        }
+group! {
+    /// A collision mesh instance
+    CollisionInstanceLayout {
+        /// How much to read
+        size = 0x98,
+        /// Row-major object-to-world matrix (row vectors)
+        matrix = 0x0,
+        /// World space bounds
+        min = 0x40,
+        max = 0x50,
+        /// What the vertices are relative to: 3 floats added after the matrix (and to the bounds). None if there's no
+        /// such origin (TR2013's level meshes have one, its object meshes zeros)
+        origin: Option<usize> = None,
+        /// The matrix, origin and bounds, which are reread each tick
+        placement_size = 0x60,
+        /// -> filter, shared by many. None if there's none (TR2013), when every mesh counts as Lara's
+        filter: Option<usize> = Some(0x60),
+        mesh = 0x70,
+        next = 0x88,
+        /// u16, bit 0 swaps the first two corners of each triangle. None if there's no such flag (TR2013)
+        flags: Option<usize> = Some(0x90),
+        /// In the filter, a u32 of bits for which kinds of collision use the mesh
+        filter_kinds = 0x4,
+        /// The kind Lara's movement collides with
+        player_kind = 0x2,
     }
 }
 
@@ -564,56 +451,29 @@ group! {
     }
 }
 
-/// ActionGraph scripts: a graph (one per instance with a script) lists its nodes and the links between them. Found
-/// in SOTTR, the same in ROTTR
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct ScriptLayout {
-    /// In a node, -> its graph
-    #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
-    pub node_graph: usize,
-    /// In a graph, -> its nodes (pointers, with gaps)
-    #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
-    pub graph_nodes: usize,
-    /// In a graph, -> its links' header
-    #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
-    pub graph_links: usize,
-    /// In the links' header, u32: how many nodes the links can refer to
-    #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
-    pub node_count: usize,
-    /// u32
-    #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
-    pub link_count: usize,
-    /// -> links: u16 from node, u16 to node (indices in the graph's nodes), u16 output, u16 input
-    #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
-    pub links: usize,
-    #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
-    pub link_size: usize,
-    /// In an AGObjectNode (and TR2013's AGInstanceNode), the id of the instance it acts on
-    #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
-    pub object_instance: usize,
-    /// In an AGMessageSendNode, the id of the instance it sends a message to. None if it doesn't hold one (TR2013)
-    #[serde(serialize_with = "serialize_hex_option", deserialize_with = "deserialize_hex_option")]
-    pub message_instance: Option<usize>,
-    /// How much of a trigger node to look through for ids
-    #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
-    pub node_size: usize,
-}
-
-impl Default for ScriptLayout {
-    fn default() -> Self {
-        ScriptLayout {
-            node_graph: 0x8,
-            graph_nodes: 0x78,
-            graph_links: 0x90,
-            node_count: 0x0,
-            link_count: 0x4,
-            links: 0x10,
-            link_size: 0x8,
-            object_instance: 0x50,
-            message_instance: Some(0x28),
-            node_size: 0x180,
-        }
+group! {
+    /// ActionGraph scripts: a graph (one per instance with a script) lists its nodes and the links between them. Found
+    /// in SOTTR, the same in ROTTR
+    ScriptLayout {
+        /// In a node, -> its graph
+        node_graph = 0x8,
+        /// In a graph, -> its nodes (pointers, with gaps)
+        graph_nodes = 0x78,
+        /// In a graph, -> its links' header
+        graph_links = 0x90,
+        /// In the links' header, u32: how many nodes the links can refer to
+        node_count = 0x0,
+        /// u32
+        link_count = 0x4,
+        /// -> links: u16 from node, u16 to node (indices in the graph's nodes), u16 output, u16 input
+        links = 0x10,
+        link_size = 0x8,
+        /// In an AGObjectNode (and TR2013's AGInstanceNode), the id of the instance it acts on
+        object_instance = 0x50,
+        /// In an AGMessageSendNode, the id of the instance it sends a message to. None if it doesn't hold one (TR2013)
+        message_instance: Option<usize> = Some(0x28),
+        /// How much of a trigger node to look through for ids
+        node_size = 0x180,
     }
 }
 
