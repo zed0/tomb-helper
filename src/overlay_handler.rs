@@ -1,23 +1,21 @@
 use crate::game::Game;
-use crate::game_memory::{Handle, floats_at};
+use crate::game_memory::Handle;
 use crate::collision::{self, AttachedProxy, CapsuleShape, ProxyCapsules};
 use crate::collision_mesh::CollisionMeshes;
 use crate::components::Components;
 use crate::config::OverlayConfig;
 use crate::object_list::{self, Instance, ObjectList};
 use crate::position::Position;
-use crate::tracked_memory::TrackedMemory;
-use crate::tracked_position::TrackedPosition;
 use crate::action::Action;
 use crate::handler::Handler;
 use crate::inject32;
 use crate::process_details::{AddressOffsets, AddressType};
 use nalgebra::{Matrix3, Vector3};
 use std::collections::HashMap;
-use std::{env, fmt, io, time};
+use std::{env, io, time};
 use std::error::Error;
 use hudhook::inject::Process;
-use process_memory::{Architecture, CopyAddress, DataMember, Memory, Pid, ProcessHandle};
+use process_memory::{Architecture, Pid, ProcessHandle};
 use crate::trigger::{self, Shape};
 use crate::trigger_scripts::{SetOffBy, TriggerScript, TriggerScripts};
 use crate::handler::HelperState;
@@ -137,18 +135,18 @@ struct TriggerGeometry {
 
 pub struct OverlayHandler {
     active: bool,
-    handle: ProcessHandle,
     // For reading the game's structures, and where things are in it
     game: Game,
+    // For injecting the overlay
     pid: Pid,
     arch: Architecture,
     config: OverlayConfig,
-    position: TrackedPosition,
-    // The camera, for drawing in the world, if this game has the offsets, else only the window is shown
-    camera_view: Option<TrackedCameraMatrix>,
-    camera_lens: Option<TrackedMemory<[f32; 8]>>,
-    // Camera to world, which starts at `CameraSin`
-    camera_to_world: Option<TrackedCameraMatrix>,
+    // As of this tick
+    position: Position,
+    // The camera, for drawing in the world, if this game has the offsets, else only the window is shown. As of this
+    // tick; zeros, or None, without them.
+    camera_view: [f32; 16],
+    camera_lens: Option<[f32; 8]>,
     collision_meshes: CollisionMeshes,
     // What the other handlers have to show, and actions the window's buttons asked for
     helper_state: HelperState,
@@ -185,6 +183,10 @@ impl OverlayHandler {
         config: &OverlayConfig,
     ) -> Option<OverlayHandler> {
         println!("Loading overlay handler...");
+        let game = Game::new(Handle::Live(*pid, *handle), *base_addr, address_offsets);
+        if ![AddressType::XPosition, AddressType::YPosition, AddressType::ZPosition].iter().all(|&a| game.has(a)) {
+            return None;
+        }
 
         let mut ui_memory_manager = SharedMemoryManager::new(true);
         // Kept when the handler is recreated (e.g. when the offsets change)
@@ -201,27 +203,13 @@ impl OverlayHandler {
 
         Some(OverlayHandler {
             active: false,
-            handle: *handle,
-            game: Game::new(Handle::Live(*pid, *handle), *base_addr, address_offsets),
+            game,
             pid: *pid,
             arch: *arch,
             config: config.clone(),
-            position: TrackedPosition::new(
-                address_offsets.get(&AddressType::XPosition)?.clone(),
-                address_offsets.get(&AddressType::YPosition)?.clone(),
-                address_offsets.get(&AddressType::ZPosition)?.clone(),
-                *arch,
-                *base_addr,
-            ),
-            camera_view: address_offsets
-                .get(&AddressType::CameraView)
-                .map(|offsets| TrackedCameraMatrix::new(offsets.clone(), *arch, *base_addr)),
-            camera_lens: address_offsets
-                .get(&AddressType::CameraLens)
-                .map(|offsets| TrackedMemory::new([0.0; 8], offsets.clone(), *arch, *base_addr)),
-            camera_to_world: address_offsets
-                .get(&AddressType::CameraSin)
-                .map(|offsets| TrackedCameraMatrix::new(offsets.clone(), *arch, *base_addr)),
+            position: Position::default(),
+            camera_view: [0.0; 16],
+            camera_lens: None,
             collision_meshes: CollisionMeshes::default(),
             mesh_settings: MeshSettings::default(),
             helper_state: HelperState::default(),
@@ -251,7 +239,7 @@ impl OverlayHandler {
             self.object_list = Some(ObjectList::new(self.game.require(AddressType::InstanceArray)?));
         }
 
-        let lara = self.position.to_position();
+        let lara = self.position;
         let all = self.object_list.as_mut().unwrap().instances(self.game.handle)?;
         let names: HashMap<u64, String> = all.iter().map(|i| (i.id, i.name.clone())).collect();
         let mut nearby: Vec<Instance> =
@@ -478,7 +466,7 @@ impl OverlayHandler {
 
     // The triggers' outlines, faces and labels where they are now
     fn trigger_geometry(&self) -> TriggerGeometry {
-        let lara = self.position.to_position();
+        let lara = self.position;
         let mut geometry = TriggerGeometry::default();
         for ShownTrigger { instance: trigger, shape, category, label, action } in &self.triggers {
             let transform = match object_list::read_transform(self.game.handle, trigger.address) {
@@ -506,9 +494,8 @@ impl OverlayHandler {
 
     // Where the camera's looking (the reticle's in the middle of the screen): the first collision triangle along it
     fn aim_point(&mut self) -> Option<Position> {
-        let camera = self.camera_to_world.as_mut()?;
-        camera.fetch_from_game(self.handle).ok()?;
-        let m = camera.matrix;
+        // Camera to world, which starts at `CameraSin`
+        let m: [f32; 16] = self.game.read_floats(AddressType::CameraSin).ok()?;
         // Its last row is where it is, the one before which way it faces
         let origin = Vector3::new(m[12], m[13], m[14]);
         let forward = Vector3::new(m[8], m[9], m[10]).try_normalize(1e-6)?;
@@ -617,18 +604,18 @@ impl Handler for OverlayHandler {
             return Ok(());
         }
 
-        self.position.fetch_from_game(self.handle)?;
-        if let Some(camera_view) = &mut self.camera_view {
-            camera_view.fetch_from_game(self.handle)?;
+        self.position = self.game.lara_position()?;
+        if self.game.has(AddressType::CameraView) {
+            self.camera_view = self.game.read_floats(AddressType::CameraView)?;
         }
-        if let Some(camera_lens) = &mut self.camera_lens {
-            camera_lens.fetch_from_game(self.handle)?;
+        if self.game.has(AddressType::CameraLens) {
+            self.camera_lens = Some(self.game.read_floats(AddressType::CameraLens)?);
         }
         self.take_requests();
         let settings = TickSettings::read(&self.ui_memory_manager.get().settings);
         self.refresh(&settings)?;
 
-        let position = self.position.to_position();
+        let position = self.position;
         let probes = match (settings.lara_collision && self.config.lara_probes, self.game.probes()) {
             (true, Some(probes)) => collision::probes_near(&probes?, &position),
             _ => vec![],
@@ -652,10 +639,10 @@ impl Handler for OverlayHandler {
         };
         let triangle_milliseconds = started.elapsed().as_secs_f32() * 1000.0;
 
-        let camera_view = self.camera_view.as_ref().map_or([0.0; 16], |c| c.to_array());
+        let camera_view = self.camera_view;
         let camera = &crate::layout::current().camera;
         let lens_fields = [camera.lens_near, camera.lens_far, camera.lens_fov, camera.lens_aspect].map(|f| f as u32);
-        let camera_projection = self.camera_lens.as_ref().map_or([0.0; 16], |l| projection_from_lens(&l.data, lens_fields));
+        let camera_projection = self.camera_lens.map_or([0.0; 16], |lens| projection_from_lens(&lens, lens_fields));
         // 0 tells the overlay there's no camera
         let address = |address_type: AddressType| -> io::Result<u64> {
             if self.game.has(address_type) {
@@ -805,55 +792,6 @@ impl Drop for OverlayHandler {
         println!("Ejecting injected overlay dll");
         self.ui_memory_manager.get_mut().update(|val| val.should_exit = true);
         println!("done");
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct TrackedCameraMatrix {
-    pub matrix: [f32; 16],
-    offsets: Vec<usize>,
-    arch: Architecture,
-    base_addr: usize,
-}
-
-impl TrackedCameraMatrix {
-    // Reads the whole matrix at once, so it isn't a mix of two game frames
-    pub fn fetch_from_game(&mut self, handle: ProcessHandle) -> io::Result<()> {
-        let mut offsets = self.offsets.clone();
-        offsets[0] += self.base_addr;
-        let address = DataMember::<u8>::new_offset(handle, offsets)
-            .set_arch(self.arch)
-            .get_offset()?;
-        let mut bytes = [0u8; 64];
-        handle.copy_address(address, &mut bytes)?;
-        self.matrix = floats_at(&bytes, 0);
-        Ok(())
-    }
-
-    pub fn new(
-        matrix_offsets: Vec<usize>,
-        arch: Architecture,
-        base_addr: usize,
-    ) -> TrackedCameraMatrix {
-        TrackedCameraMatrix {
-            matrix: [0.0; 16],
-            offsets: matrix_offsets,
-            arch,
-            base_addr,
-        }
-    }
-
-    pub fn to_array(&self) -> [f32; 16] {
-        self.matrix
-    }
-}
-
-impl fmt::Display for TrackedCameraMatrix {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for row in self.matrix.chunks(4) {
-            writeln!(f, "({}, {}, {}, {})", row[0], row[1], row[2], row[3])?;
-        }
-        Ok(())
     }
 }
 
