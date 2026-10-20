@@ -181,7 +181,7 @@ pub fn outline(shape: &Shape, matrix: &[f32; 16]) -> Vec<(Position, Position)> {
     let row = |r: usize| Vector3::new(matrix[r * 4], matrix[r * 4 + 1], matrix[r * 4 + 2]);
     let world = |p: Vector3<f32>| {
         let w = row(0) * p.x + row(1) * p.y + row(2) * p.z + row(3);
-        Position { x: w.x, y: w.y, z: w.z }
+        Position::from(w)
     };
     let mut lines = vec![];
     let mut line = |a: Vector3<f32>, b: Vector3<f32>| lines.push((world(a), world(b)));
@@ -290,7 +290,7 @@ pub fn faces(shape: &Shape, matrix: &[f32; 16]) -> Vec<[Position; 3]> {
     let row = |r: usize| Vector3::new(matrix[r * 4], matrix[r * 4 + 1], matrix[r * 4 + 2]);
     let world = |p: Vector3<f32>| {
         let w = row(0) * p.x + row(1) * p.y + row(2) * p.z + row(3);
-        Position { x: w.x, y: w.y, z: w.z }
+        Position::from(w)
     };
     let mut faces = vec![];
     let quad = |a: Vector3<f32>, b: Vector3<f32>, c: Vector3<f32>, d: Vector3<f32>| {
@@ -405,8 +405,7 @@ mod tests {
     use super::*;
 
     fn area(faces: &[[Position; 3]]) -> f32 {
-        let v = |p: &Position| Vector3::new(p.x, p.y, p.z);
-        faces.iter().map(|[a, b, c]| (v(b) - v(a)).cross(&(v(c) - v(a))).norm() / 2.0).sum()
+        faces.iter().map(|[a, b, c]| (b.vector() - a.vector()).cross(&(c.vector() - a.vector())).norm() / 2.0).sum()
     }
 
     #[test]

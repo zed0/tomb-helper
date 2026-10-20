@@ -8,9 +8,10 @@ use hudhook::hooks::dx12::ImguiDx12Hooks as GameHooks;
 use crate::ui_ipc_data::{projection_from_lens, BoxKind, Capsule, ObjectBox, ObjectCategory, Probe, SharedMemoryManager, SurfaceKind, Triangle, TriggerCategory, UiData, UiSettings, REQUEST_RESTORE_POSITION, REQUEST_STORE_POSITION, REQUEST_TOGGLE_FLYING, TRIGGER_ACTIONS};
 use crate::tracing::{error, warn};
 
-// Shared with the exe, which uses the other half of it
+// Shared with the exe, which uses the other half of them
 #[allow(dead_code)]
 mod ui_ipc_data;
+#[allow(dead_code)]
 mod position;
 
 use nalgebra::{Matrix4, Vector3, Vector4};
@@ -342,8 +343,8 @@ fn draw_world_line(draw_list: &DrawListMut, projector: &Projector, a: Vector3<f3
 }
 
 fn draw_capsule(draw_list: &DrawListMut, projector: &Projector, capsule: &Capsule, colour: [f32; 4]) {
-    let a = Vector3::new(capsule.a.x, capsule.a.y, capsule.a.z);
-    let b = Vector3::new(capsule.b.x, capsule.b.y, capsule.b.z);
+    let a = capsule.a.vector();
+    let b = capsule.b.vector();
     let radius = capsule.radius;
     let axis = (b - a).try_normalize(1e-4).unwrap_or_else(Vector3::z);
     let u = axis.cross(&if axis.x.abs() < 0.9 { Vector3::x() } else { Vector3::y() }).normalize();
@@ -373,10 +374,9 @@ fn draw_capsule(draw_list: &DrawListMut, projector: &Projector, capsule: &Capsul
 }
 
 fn draw_probe(draw_list: &DrawListMut, projector: &Projector, probe: &Probe, colour: [f32; 4]) {
-    let vector = |p: &crate::position::Position| Vector3::new(p.x, p.y, p.z);
-    draw_world_line(draw_list, projector, vector(&probe.start), vector(&probe.end), colour);
+    draw_world_line(draw_list, projector, probe.start.vector(), probe.end.vector(), colour);
     if probe.has_hit {
-        let hit = vector(&probe.hit);
+        let hit = probe.hit.vector();
         for axis in [Vector3::x(), Vector3::y(), Vector3::z()] {
             let offset = axis * PROBE_HIT_SIZE;
             draw_world_line(draw_list, projector, hit - offset, hit + offset, colour);
@@ -390,7 +390,7 @@ fn with_opacity(colour: [f32; 4], opacity: f32) -> [f32; 4] {
 
 // How far the point is from the nearest part of the box round the triangle, like the exe's choice of triangles
 fn triangle_distance(point: &Vector3<f32>, triangle: &Triangle) -> f32 {
-    let corners = triangle.corners.map(|c| Vector3::new(c.x, c.y, c.z));
+    let corners = triangle.corners.map(|c| c.vector());
     let min = corners[0].inf(&corners[1]).inf(&corners[2]);
     let max = corners[0].sup(&corners[1]).sup(&corners[2]);
     (min - point).sup(&(point - max)).sup(&Vector3::zeros()).norm()
@@ -398,7 +398,7 @@ fn triangle_distance(point: &Vector3<f32>, triangle: &Triangle) -> f32 {
 
 // The triangle's corners in clip space, unless it's seen from behind or can't be on screen
 fn triangle_on_screen(projector: &Projector, triangle: &Triangle) -> Option<[Vector4<f32>; 3]> {
-    let world = triangle.corners.map(|c| Vector3::new(c.x, c.y, c.z));
+    let world = triangle.corners.map(|c| c.vector());
     // Triangles are wound anticlockwise seen from the side they face
     let normal = (world[1] - world[0]).cross(&(world[2] - world[0]));
     if normal.dot(&(projector.camera_position - world[0])) <= 0.0 {
@@ -587,7 +587,7 @@ impl ImguiRenderLoop for TombHelperHud {
             | imgui::sys::ImDrawListFlags_AntiAliasedFill) as i32);
         // Faded by distance from where they're drawn round, Lara or where she's aiming
         let centre = ui_data.mesh_centre;
-        let lara = Vector3::new(centre.x, centre.y, centre.z);
+        let lara = centre.vector();
         let mut shown = vec![];
         for triangle in ui_data.triangles[..triangle_count].iter().rev() {
             if !((triangle.detailed && detailed_meshes) || (!triangle.detailed && coarse_meshes)) {
@@ -638,7 +638,7 @@ impl ImguiRenderLoop for TombHelperHud {
             if trigger_opacity > 0.0 {
                 let face_count = count(ui_data.trigger_face_count, ui_data.trigger_faces.len());
                 for face in &ui_data.trigger_faces[..face_count] {
-                    let world = face.corners.map(|c| Vector3::new(c.x, c.y, c.z));
+                    let world = face.corners.map(|c| c.vector());
                     if let Some(corners) = face_on_screen(&projector, world) {
                         let fill = with_opacity(trigger_colour(by_action, face.category, face.action), trigger_opacity);
                         let polygon = projector.project_polygon(&corners);
@@ -650,13 +650,12 @@ impl ImguiRenderLoop for TombHelperHud {
             }
             let line_count = count(ui_data.trigger_line_count, ui_data.trigger_lines.len());
             for line in &ui_data.trigger_lines[..line_count] {
-                let vector = |p: &crate::position::Position| Vector3::new(p.x, p.y, p.z);
                 let colour =
                     if line.inside { INSIDE_TRIGGER_COLOUR } else { trigger_colour(by_action, line.category, line.action) };
-                draw_world_line(&draw_list, &projector, vector(&line.a), vector(&line.b), colour);
+                draw_world_line(&draw_list, &projector, line.a.vector(), line.b.vector(), colour);
             }
             for label in &ui_data.triggers[..count(ui_data.trigger_count, ui_data.triggers.len())] {
-                if let Some(point) = projector.project(Vector3::new(label.position.x, label.position.y, label.position.z)) {
+                if let Some(point) = projector.project(label.position.vector()) {
                     // Above the top of the volume, centred
                     let size = ui.calc_text_size(label.name());
                     let point = [point[0] - size[0] / 2.0, point[1] - size[1]];
@@ -667,7 +666,7 @@ impl ImguiRenderLoop for TombHelperHud {
         // Where she's aiming, which the meshes are drawn round
         if ui_data.aiming {
             let centre = ui_data.mesh_centre;
-            let centre = Vector3::new(centre.x, centre.y, centre.z);
+            let centre = centre.vector();
             for axis in [Vector3::x(), Vector3::y(), Vector3::z()] {
                 let arm = axis * AIM_MARKER_SIZE;
                 draw_world_line(&draw_list, &projector, centre - arm, centre + arm, AIM_MARKER_COLOUR);

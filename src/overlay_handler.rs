@@ -180,15 +180,12 @@ impl OverlayHandler {
 
         let filters: Vec<String> = self.config.object_filters.iter().map(|f| f.to_lowercase()).collect();
         let lara = self.position.to_position();
-        let distance = |p: &Position| {
-            ((p.x - lara.x).powi(2) + (p.y - lara.y).powi(2) + (p.z - lara.z).powi(2)).sqrt()
-        };
 
         let all = self.object_list.as_mut().unwrap().instances(self.game.handle)?;
         let names: HashMap<u64, String> = all.iter().map(|i| (i.id, i.name.clone())).collect();
         let mut nearby: Vec<Instance> =
-            all.into_iter().filter(|i| distance(&i.position) <= self.config.object_radius).collect();
-        nearby.sort_by(|a, b| distance(&a.position).total_cmp(&distance(&b.position)));
+            all.into_iter().filter(|i| lara.distance(&i.position) <= self.config.object_radius).collect();
+        nearby.sort_by(|a, b| lara.distance(&a.position).total_cmp(&lara.distance(&b.position)));
 
         // She has her own collision drawn, and counts as interactable herself (she has an InteractableComponent)
         self.components.start_refresh();
@@ -336,7 +333,7 @@ fn capsule_bounds(capsules: &[Capsule], transform: &[f32; 16]) -> Option<(Positi
     for capsule in capsules {
         let radius = Vector3::repeat(capsule.radius).component_div(&scale);
         for end in [capsule.a, capsule.b] {
-            let point = to_object * (Vector3::new(end.x, end.y, end.z) - origin);
+            let point = to_object * (end.vector() - origin);
             let (low, high) = (point - radius, point + radius);
             bounds = Some(match bounds {
                 Some((min, max)) => (min.inf(&low), max.sup(&high)),
@@ -345,8 +342,7 @@ fn capsule_bounds(capsules: &[Capsule], transform: &[f32; 16]) -> Option<(Positi
         }
     }
     let (min, max) = bounds?;
-    let position = |v: Vector3<f32>| Position { x: v.x, y: v.y, z: v.z };
-    Some((position(min), position(max)))
+    Some((Position::from(min), Position::from(max)))
 }
 
 // Copies as many items as fit, returns how many that was
@@ -524,7 +520,7 @@ impl Handler for OverlayHandler {
             let forward = Vector3::new(m[8], m[9], m[10]).try_normalize(1e-6)?;
             let hit = self.collision_meshes.raycast(self.game.handle, origin, forward, MAX_AIM_DISTANCE)?;
             let point = origin + forward * hit;
-            Some(Position { x: point.x, y: point.y, z: point.z })
+            Some(Position::from(point))
         });
         let mesh_centre = aim_point.unwrap_or(position);
         let triangles = if show_meshes {

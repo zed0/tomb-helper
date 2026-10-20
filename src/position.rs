@@ -1,3 +1,4 @@
+use nalgebra::Vector3;
 use std::fmt;
 
 #[repr(C)]
@@ -6,6 +7,22 @@ pub struct Position {
     pub x: f32,
     pub y: f32,
     pub z: f32,
+}
+
+impl Position {
+    pub fn vector(&self) -> Vector3<f32> {
+        Vector3::new(self.x, self.y, self.z)
+    }
+
+    pub fn distance(&self, other: &Position) -> f32 {
+        (self.vector() - other.vector()).norm()
+    }
+}
+
+impl From<Vector3<f32>> for Position {
+    fn from(v: Vector3<f32>) -> Self {
+        Position { x: v.x, y: v.y, z: v.z }
+    }
 }
 
 impl fmt::Display for Position {

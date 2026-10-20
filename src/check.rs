@@ -478,10 +478,10 @@ fn check_collision_meshes(game: &Game, report: &mut Report, lara: &Position) {
         return report.fail("collision meshes", format!("the instance list couldn't be read: {}", e));
     }
     let triangles = meshes.triangles_near(game.handle, lara, NEAR_LARA, NEAR_LARA, usize::MAX);
-    let lara_vector = Vector3::new(lara.x, lara.y, lara.z);
+    let lara_vector = lara.vector();
     // A floor that Lara's standing on (or near, if she's mid jump)
     let under = triangles.iter().filter(|t| t.kind == SurfaceKind::Floor).map(|t| {
-        let corners = t.corners.map(|c| Vector3::new(c.x, c.y, c.z));
+        let corners = t.corners.map(|c| c.vector());
         let min = corners[0].inf(&corners[1]).inf(&corners[2]);
         let max = corners[0].sup(&corners[1]).sup(&corners[2]);
         (min - lara_vector).sup(&(lara_vector - max)).sup(&Vector3::zeros()).norm()
