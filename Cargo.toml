@@ -11,6 +11,7 @@ publish = false
 dev-version = false
 
 [dependencies]
+anyhow = "1.0"
 livesplit-hotkey = "0.5.0"
 process-memory = { git = "https://github.com/Tommoa/rs-process-memory.git", rev = "7b9b263932f16fc5864c294efbf338edb0010f39" }
 libc = "0.2"

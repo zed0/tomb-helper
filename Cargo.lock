@@ -27,6 +27,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "anyhow"
+version = "1.0.104"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
+
+[[package]]
 name = "approx"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2049,6 +2055,7 @@ dependencies = [
 name = "tomb-helper"
 version = "1.14.1-alpha.0"
 dependencies = [
+ "anyhow",
  "hudhook",
  "iced-x86",
  "itertools",

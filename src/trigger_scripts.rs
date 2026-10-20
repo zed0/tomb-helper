@@ -13,6 +13,7 @@
 //! A game without those trigger nodes (TR2013) uses a trigger through an AGInstanceNode (or AGObjectNode) with its id,
 //! like any other instance, whose outputs are its events. Which of them means Lara isn't known, so they're all "script".
 
+use anyhow::{bail, Context, Result};
 use crate::game_memory::{Handle, pointer_from, pointer_size, read_pointer, read_u32, read_u64, u16_at};
 use crate::layout::{self, ScriptLayout};
 use crate::ui_ipc_data::trigger_action_bit;
@@ -100,7 +101,7 @@ pub struct TriggerScripts {
     handle: Handle,
     base_address: usize,
     classes: Option<Arc<Classes>>,
-    running: Option<JoinHandle<Result<(Arc<Classes>, Vec<Node>), String>>>,
+    running: Option<JoinHandle<Result<(Arc<Classes>, Vec<Node>)>>>,
     last_scan: Option<Instant>,
     known: HashMap<u64, TriggerScript>,
 }
@@ -125,7 +126,7 @@ impl TriggerScripts {
                     let ids: HashSet<u64> = triggers.iter().copied().chain(self.known.keys().copied()).collect();
                     self.known.extend(categorise(&nodes, &ids, names));
                 }
-                Ok(Err(e)) => eprintln!("Couldn't find the trigger scripts: {}", e),
+                Ok(Err(e)) => eprintln!("Couldn't find the trigger scripts: {:#}", e),
                 Err(_) => eprintln!("Finding the trigger scripts failed"),
             }
         }
@@ -157,7 +158,7 @@ pub fn scripts_now(
     base_address: usize,
     triggers: &[u64],
     names: &HashMap<u64, String>,
-) -> Result<HashMap<u64, TriggerScript>, String> {
+) -> Result<HashMap<u64, TriggerScript>> {
     let (_, nodes) = scan(handle, base_address, None, &layout::current().script)?;
     Ok(categorise(&nodes, &triggers.iter().copied().collect(), names))
 }
@@ -226,16 +227,16 @@ fn scan(
     base_address: usize,
     classes: Option<Arc<Classes>>,
     layout: &ScriptLayout,
-) -> Result<(Arc<Classes>, Vec<Node>), String> {
+) -> Result<(Arc<Classes>, Vec<Node>)> {
     let classes = match classes {
         Some(c) => c,
         None => {
-            let image = handle.image().map_err(|e| format!("couldn't read the game: {}", e))?;
+            let image = handle.image().context("couldn't read the game")?;
             Arc::new(find_classes(&image.data, base_address, layout))
         }
     };
     if classes.triggers.is_empty() {
-        return Err("no trigger node classes in the game".to_string());
+        bail!("no trigger node classes in the game");
     }
 
     let image_end = base_address + crate::find_process::get_image_size(handle, base_address).unwrap_or(0);

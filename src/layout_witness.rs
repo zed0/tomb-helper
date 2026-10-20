@@ -3,6 +3,7 @@
 //! see where the field went, the way `witnesses` do for the offsets file's last offsets. Fields are named
 //! `group.field` as in the offsets file's layout section, e.g. `proxy.in_use_size`.
 
+use anyhow::{anyhow, bail, Context, Result};
 use crate::components::Components;
 use crate::discover;
 use crate::find_process;
@@ -31,42 +32,42 @@ pub fn field_offset(layout: &Layout, name: &str) -> Option<usize> {
 }
 
 /// The layout with one field changed
-pub fn with_field(layout: &Layout, name: &str, offset: usize) -> Result<Layout, String> {
-    let (group, field) = name.split_once('.').ok_or_else(|| format!("{} isn't group.field", name))?;
-    let mut value = serde_json::to_value(layout).map_err(|e| e.to_string())?;
+pub fn with_field(layout: &Layout, name: &str, offset: usize) -> Result<Layout> {
+    let (group, field) = name.split_once('.').with_context(|| format!("{} isn't group.field", name))?;
+    let mut value = serde_json::to_value(layout)?;
     let slot = value
         .get_mut(group)
         .and_then(|g| g.get_mut(field))
-        .ok_or_else(|| format!("the layout has no {}", name))?;
+        .with_context(|| format!("the layout has no {}", name))?;
     *slot = serde_json::Value::String(format!("{:#X}", offset));
-    serde_json::from_value(value).map_err(|e| e.to_string())
+    Ok(serde_json::from_value(value)?)
 }
 
 // Where a group's structure is in the running game, for the ones there's a way to find
-fn group_address(game: &Game, components: &mut Components, group: &str) -> Result<usize, String> {
+fn group_address(game: &Game, components: &mut Components, group: &str) -> Result<usize> {
     let layout = crate::layout::current();
     let missing = |what: &str| format!("{} wasn't found", what);
     match group {
         // GameRender: what the camera's chains go through
         "camera" => {
-            let chain = game.offsets.get(&AddressType::CameraView).ok_or_else(|| missing("CameraView"))?;
-            crate::game_memory::resolve(game.handle, game.base_address, &[chain[0], 0]).ok_or_else(|| missing("GameRender"))
+            let chain = game.offsets.get(&AddressType::CameraView).with_context(|| missing("CameraView"))?;
+            crate::game_memory::resolve(game.handle, game.base_address, &[chain[0], 0]).with_context(|| missing("GameRender"))
         }
         "proxy" => {
             let lara = lara_instance(game, components);
-            game.lara_proxy(components, lara).ok_or_else(|| missing("Lara's proxy"))
+            game.lara_proxy(components, lara).with_context(|| missing("Lara's proxy"))
         }
-        "instance" => lara_instance(game, components).ok_or_else(|| missing("Lara's instance")),
-        "collision_scene" => game.resolve(AddressType::CollisionScene).ok_or_else(|| missing("CollisionScene")),
+        "instance" => lara_instance(game, components).with_context(|| missing("Lara's instance")),
+        "collision_scene" => game.resolve(AddressType::CollisionScene).with_context(|| missing("CollisionScene")),
         "collision_instance" => {
-            let scene = game.resolve(AddressType::CollisionScene).ok_or_else(|| missing("CollisionScene"))?;
-            read_pointer(game.handle, scene + layout.collision_scene.first).ok_or_else(|| missing("a collision instance"))
+            let scene = game.resolve(AddressType::CollisionScene).with_context(|| missing("CollisionScene"))?;
+            read_pointer(game.handle, scene + layout.collision_scene.first).with_context(|| missing("a collision instance"))
         }
         "collision_mesh" => {
             let instance = group_address(game, components, "collision_instance")?;
-            read_pointer(game.handle, instance + layout.collision_instance.mesh).ok_or_else(|| missing("a collision mesh"))
+            read_pointer(game.handle, instance + layout.collision_instance.mesh).with_context(|| missing("a collision mesh"))
         }
-        other => Err(format!("there's no way to find a {} structure in the game yet (see group_address)", other)),
+        other => Err(anyhow!("there's no way to find a {} structure in the game yet (see group_address)", other)),
     }
 }
 
@@ -94,9 +95,9 @@ fn lara_instance(game: &Game, components: &mut Components) -> Option<usize> {
 
 /// `watch-layout <group.field>... [--seconds <n>] [--delay <n>] [--save]`: records the instructions that access up to 4
 /// layout fields in the running game, and with `save` keeps them as the version's layout witnesses
-pub fn watch_layout(names: &[&str], version: Option<String>, seconds: u64, delay: u64, save: bool) -> Result<(), String> {
+pub fn watch_layout(names: &[&str], version: Option<String>, seconds: u64, delay: u64, save: bool) -> Result<()> {
     if names.is_empty() || names.len() > watch::MAX_WATCHES {
-        return Err(format!("Give between 1 and {} layout fields (group.field)", watch::MAX_WATCHES));
+        bail!("Give between 1 and {} layout fields (group.field)", watch::MAX_WATCHES);
     }
     let (pid, handle, base_address, details) = crate::chains::connect(version)?;
     println!("Found {} {}", details.name, details.version.version);
@@ -104,10 +105,10 @@ pub fn watch_layout(names: &[&str], version: Option<String>, seconds: u64, delay
     let mut components = Components::new(base_address);
     let mut fields = vec![];
     for name in names {
-        let offset = field_offset(&details.layout, name).ok_or_else(|| format!("The layout has no {} set", name))?;
+        let offset = field_offset(&details.layout, name).with_context(|| format!("The layout has no {} set", name))?;
         // The instructions using it have no displacement to match in another build
         if offset == 0 {
-            return Err(format!("{} is at the start of its structure, so instructions can't show where it went", name));
+            bail!("{} is at the start of its structure, so instructions can't show where it went", name);
         }
         let group = name.split_once('.').map_or("", |(g, _)| g);
         let address = group_address(&game, &mut components, group)? + offset;
@@ -119,7 +120,7 @@ pub fn watch_layout(names: &[&str], version: Option<String>, seconds: u64, delay
         std::thread::sleep(Duration::from_secs(delay));
     }
     let addresses: Vec<usize> = fields.iter().map(|(_, _, a)| *a).collect();
-    let image_size = find_process::get_image_size(handle, base_address).map_err(|e| e.to_string())?;
+    let image_size = find_process::get_image_size(handle, base_address)?;
     let code = Some((base_address, base_address + image_size));
     let hits = watch::record(pid, handle, base_address, &addresses, seconds, Breakpoint::Access, code, None)?;
 

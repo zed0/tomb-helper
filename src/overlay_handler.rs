@@ -1,3 +1,4 @@
+use anyhow::{anyhow, Context, Result};
 use crate::game::Game;
 use crate::game_memory::Handle;
 use crate::collision::{self, AttachedProxy, CapsuleShape, ProxyCapsules};
@@ -737,7 +738,7 @@ impl Handler for OverlayHandler {
 }
 
 /// `overlay-data`: what the overlay would be sent now, from one update with collision on, without injecting it
-pub fn print_overlay_data(version: Option<String>, delay: u64) -> Result<(), String> {
+pub fn print_overlay_data(version: Option<String>, delay: u64) -> Result<()> {
     if delay > 0 {
         println!("Starting in {} seconds...", delay);
         std::thread::sleep(time::Duration::from_secs(delay));
@@ -747,10 +748,10 @@ pub fn print_overlay_data(version: Option<String>, delay: u64) -> Result<(), Str
     let config = crate::config::get_config();
     let mut handler =
         OverlayHandler::new_overlay_handler(&details.address_offsets, &details.arch, &base_addr, &handle, &pid, &config.overlay)
-            .ok_or("This version has no overlay")?;
+            .context("This version has no overlay")?;
     handler.ui_memory_manager.get().settings.collision.set(true);
     handler.active = true;
-    handler.handle_tick().map_err(|e| format!("The update failed: {}", e))?;
+    handler.handle_tick().map_err(|e| anyhow!("The update failed: {}", e))?;
     handler.active = false;
     let mut data = crate::ui_ipc_data::UiData::zeroed();
     handler.ui_memory_manager.get().read(&mut data);

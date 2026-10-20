@@ -5,6 +5,7 @@
 //! try by that group's checks, and keeps the best. It runs `check` quietly and without the trigger script scan, on the
 //! running game or a snapshot.
 
+use anyhow::{Context, Result};
 use crate::check::{self, Options};
 use crate::discover;
 use crate::game_memory::Handle;
@@ -194,10 +195,10 @@ fn fit_group(target: &Target, layout: &Layout, group: &str, current: (i64, i64))
 }
 
 /// `fit-layout`: finds what to change in the version's layout for its checks to pass
-pub fn fit_layout(groups: &[&str], snapshot: Option<&str>, version: Option<String>, save: bool) -> Result<(), String> {
+pub fn fit_layout(groups: &[&str], snapshot: Option<&str>, version: Option<String>, save: bool) -> Result<()> {
     let target = match snapshot {
         Some(path) => {
-            let snapshot = Snapshot::load(Path::new(path)).map_err(|e| format!("couldn't load {}: {}", path, e))?;
+            let snapshot = Snapshot::load(Path::new(path)).with_context(|| format!("couldn't load {}", path))?;
             let snapshot: &'static Snapshot = Box::leak(Box::new(snapshot));
             Target { handle: Handle::Snapshot(snapshot), base_address: snapshot.header.base_address, details: snapshot.details()? }
         }

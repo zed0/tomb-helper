@@ -69,7 +69,7 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if !args.is_empty() {
         if let Err(e) = derive::run(&args) {
-            eprintln!("{}", e);
+            eprintln!("{:#}", e);
             std::process::exit(1);
         }
         return;
@@ -113,7 +113,7 @@ fn load_offsets(offsets: &mut OffsetsSource, current: Vec<ProcessDetails>) -> Ve
             known
         }
         Err(e) => {
-            eprintln!("Error: {}", e);
+            eprintln!("Error: {:#}", e);
             eprintln!("Keeping the previous offsets until the file is fixed");
             current
         }
