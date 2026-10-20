@@ -136,6 +136,7 @@ fn proxy_shapes(layout: &layout::ProxyLayout) -> [ProxyShape; 2] {
     ]
 }
 
+#[derive(Default)]
 pub struct ProxyCapsules {
     // The one in use, then the one it's changing to if that's different
     pub shapes: Vec<Capsule>,
