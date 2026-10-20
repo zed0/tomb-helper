@@ -13,10 +13,9 @@
 //! shifted by the same amount as its nearest neighbouring field.
 
 use anyhow::{anyhow, bail, Context, Result};
-use crate::chains;
 use crate::code_trace::{Access, Tracer};
 use crate::find_process;
-use crate::offsets_file::{to_json, Hex, OffsetsFile, OffsetsSource, VersionEntry};
+use crate::offsets_file::{to_json, Hex, VersionEntry};
 use crate::pe_image::PeImage;
 use crate::normalised;
 use crate::witness;
@@ -47,151 +46,7 @@ const NORMALISED_SPANS: [usize; 3] = [0, 0x40, 0x400];
 const RECOMPILED_SAME_OFFSET: f64 = 4.0;
 const RECOMPILED_MIN_VOTES: f64 = 3.0;
 
-const USAGE: &str = "\
-Usage:
-  tomb-helper                         Run normally
-  tomb-helper update-offsets [--from <exe or dump> [--from-version <version>]] [--dry-run]
-      Get the offsets for the running game, e.g. after a patch, and save them to the offsets file next
-      to the exe. Load into a level first. It finds the overlay's offsets, Lara's position, the ground
-      probes and the version string on its own; for the rest (e.g. cutscenes) pass the previous build's
-      exe or a dump of it with --from. Then it checks them. --dry-run doesn't save.
-  tomb-helper export-offsets [<out.json>]
-      Write the offsets tomb-helper is using to a file to edit. By default this is
-      tomb-helper-offsets.json next to the exe, which tomb-helper then uses instead of its built in
-      offsets, and reloads whenever it changes.
-  tomb-helper dump [<out.bin>]        Save the running game's unpacked image for later use
-  tomb-helper derive <from> <to> [--from-version <version>]
-      Derive the offsets for <to> using the known offsets for <from>.
-      <from>/<to> are paths to an exe or a dump, or `running` for the running game.
-      --from-version picks the known version for <from>; otherwise it's matched by image size.
-  tomb-helper chains [--version <version>]
-      With the game running and loaded into a level, find pointer chains that the game's own code
-      uses to reach each known value. These can be derived for new versions much more reliably
-      than pointer scanned chains.
-  tomb-helper probe [--version <version>] [--watch]
-      Print the current value of each known offset for the running game.
-  tomb-helper discover [--version <version>] [--save]
-      With the game running and loaded into a level, find the overlay's static addresses (the camera,
-      instance array and collision scene) through the RTTI class names of what they point to, which
-      don't change between versions. --save writes them to the offsets file next to the exe.
-  tomb-helper check [--version <version>]
-      With the game running and Lara somewhere ordinary in a level, test the overlay's offsets and
-      layout against it, e.g. after `discover` or editing the layout for a new version.
-  tomb-helper watch-layout <group.field>... [--seconds <n>] [--delay <n>] [--save]
-      Like `watch`, for up to 4 layout fields (e.g. proxy.in_use_size): record the instructions that access
-      them, so `update-offsets --from` can find where the fields went in a new build. --save keeps them as the
-      version's layout_witnesses in the offsets file next to the exe.
-  tomb-helper fit-layout [<group>...] [--snapshot <file>] [--save]
-      Search for layout offsets that make `check` pass: for each group of a failing check (or each group
-      named, e.g. proxy), try moving its fields from each one on by up to 0x40 either way, and keep what
-      passes the most. On the running game, or a snapshot. --save writes the result to the offsets file.
-  tomb-helper snapshot [<file>] [--version <version>]
-      Run `check` on the running game and save what it read as a snapshot (to
-      H:/tomb-helper-dumps/snapshots by default), so it can be checked again without the game.
-  tomb-helper check-snapshots [<dir>]
-      Check every snapshot again, and show any whose results have changed since it was taken.
-  tomb-helper accept-snapshots [<dir>]
-      The same, saving what each reports now as what it should report (after a change meant to change it).
-  tomb-helper trace <image> <static address in hex>
-      Print the pointer chains the code accesses from each reference to a static address.
-  tomb-helper watch <address type>... [--version <version>] [--seconds <n>] [--delay <n>] [--write]
-      Attach as a debugger and record which instructions access up to 4 values (e.g. CutscenePrompt)
-      for a few seconds (default 5), optionally after a delay so the game can be focused.
-      These let `derive` find where a field moved to.";
-
-pub fn run(args: &[String]) -> Result<()> {
-    let mut positional = vec![];
-    let mut version = None;
-    let mut watch = false;
-    let mut seconds = 5;
-    let mut delay = 0;
-    let mut write_only = false;
-    let mut execute = false;
-    let mut save = false;
-    let mut from = None;
-    let mut dry_run = false;
-    let mut dump_at = None;
-    let mut snapshot = None;
-    let mut rest = args.iter();
-    while let Some(arg) = rest.next() {
-        match arg.as_str() {
-            "--from-version" | "--version" => {
-                version = Some(rest.next().with_context(|| format!("{} needs a value", arg))?.clone())
-            }
-            "--watch" => watch = true,
-            "--write" => write_only = true,
-            "--exec" => execute = true,
-            "--dump" => dump_at = Some(crate::watch::Dump::parse(rest.next().context("--dump needs <register>:<length>")?)?),
-            "--save" => save = true,
-            "--snapshot" => snapshot = Some(rest.next().context("--snapshot needs a file")?.clone()),
-            "--dry-run" => dry_run = true,
-            "--from" => from = Some(rest.next().context("--from needs a path")?.clone()),
-            "--delay" => delay = rest.next().and_then(|s| s.parse().ok()).context("--delay needs a number")?,
-            "--seconds" => {
-                seconds = rest
-                    .next()
-                    .and_then(|s| s.parse().ok())
-                    .context("--seconds needs a number")?
-            }
-            _ => positional.push(arg.as_str()),
-        }
-    }
-    match positional.as_slice() {
-        ["watch-raw", pid, address] => {
-            let kind = match (execute, write_only) {
-                (true, _) => crate::watch::Breakpoint::Execute,
-                (false, true) => crate::watch::Breakpoint::Write,
-                (false, false) => crate::watch::Breakpoint::Access,
-            };
-            crate::watch::watch_raw(pid, address, seconds, delay, kind, dump_at)
-        }
-        ["disasm", pid, address] => crate::watch::disasm(pid, address, "40"),
-        ["disasm", pid, address, count] => crate::watch::disasm(pid, address, count),
-        ["watch", names @ ..] => crate::watch::watch(names, version, seconds, delay, write_only),
-        ["export-offsets"] => export_offsets(None),
-        ["export-offsets", out] => export_offsets(Some(out)),
-        ["dump"] => dump(None),
-        ["dump", out] => dump(Some(out)),
-        ["derive", from, to] => derive(from, to, version.as_deref()),
-        ["chains"] => chains::find_code_chains(version),
-        ["probe"] => chains::probe(version, watch),
-        ["discover"] => crate::discover::discover(version, save),
-        ["check"] => crate::check::check(version),
-        ["fit-layout", groups @ ..] => crate::fit_layout::fit_layout(groups, snapshot.as_deref(), version, save),
-        ["watch-layout", names @ ..] => crate::layout_witness::watch_layout(names, version, seconds, delay, save),
-        ["snapshot"] => crate::snapshot::take(None, version),
-        ["snapshot", out] => crate::snapshot::take(Some(out), version),
-        ["check-snapshots"] => crate::snapshot::check_all(None, false),
-        ["check-snapshots", dir] => crate::snapshot::check_all(Some(dir), false),
-        ["accept-snapshots"] => crate::snapshot::check_all(None, true),
-        ["accept-snapshots", dir] => crate::snapshot::check_all(Some(dir), true),
-        ["update-offsets"] => crate::update_offsets::update_offsets(from, version, dry_run),
-        ["trace", image, address] => trace(image, address),
-        ["overlay-data"] => crate::overlay_handler::print_overlay_data(version, delay),
-        ["check-matching", a, b] => check_matching(a, b, 200),
-        ["check-matching", a, b, count] => check_matching(a, b, count.parse().context("Bad count")?),
-        _ => bail!("{}", USAGE),
-    }
-}
-
-fn export_offsets(out: Option<&str>) -> Result<()> {
-    let path = match out {
-        Some(out) => Path::new(out).to_path_buf(),
-        None => OffsetsSource::new().path,
-    };
-    if path.exists() {
-        bail!("{:?} already exists, not overwriting it", path);
-    }
-    let file = OffsetsFile {
-        versions: known_process_details().iter().map(VersionEntry::from_details).collect(),
-        words: crate::words::current().as_ref().clone(),
-    };
-    std::fs::write(&path, to_json(&file) + "\n").with_context(|| format!("Could not write {:?}", path))?;
-    println!("Wrote {} versions to {:?}", file.versions.len(), path);
-    Ok(())
-}
-
-fn running_game() -> Result<(PeImage, String)> {
+pub fn running_game() -> Result<(PeImage, String)> {
     let mut executables: Vec<String> = known_process_details()
         .into_iter()
         .map(|d| d.executable_name)
@@ -215,17 +70,7 @@ pub fn load(source: &str) -> Result<PeImage> {
     PeImage::load(Path::new(source)).with_context(|| format!("Could not load {}", source))
 }
 
-fn dump(out: Option<&str>) -> Result<()> {
-    let (image, exe) = running_game()?;
-    let out = out.map(String::from).unwrap_or_else(|| {
-        format!("{}-{}.bin", exe.trim_end_matches(".exe"), image.size_of_image())
-    });
-    std::fs::write(&out, &image.data).with_context(|| format!("Could not write {}", out))?;
-    println!("Wrote {} bytes to {}", image.data.len(), out);
-    Ok(())
-}
-
-fn trace(image: &str, address: &str) -> Result<()> {
+pub fn trace(image: &str, address: &str) -> Result<()> {
     let image = load(image)?;
     let address = usize::from_str_radix(address.trim_start_matches("0x"), 16)?;
     let references = References::new(&image);
@@ -589,7 +434,7 @@ impl<'a, 'r> Deriver<'a, 'r> {
 /// `check-matching <a> <b> [count]`: how well statics can be matched between two builds, without knowing any of
 /// them: up to `count` statics of `a` (globals with a few references) are derived in `b` and back again, and a static
 /// that comes back where it started was very likely matched right
-fn check_matching(a: &str, b: &str, count: usize) -> Result<()> {
+pub fn check_matching(a: &str, b: &str, count: usize) -> Result<()> {
     let (a, b) = (load(a)?, load(b)?);
     let (a_refs, b_refs) = (References::new(&a), References::new(&b));
     let writable: Vec<_> = a.sections().into_iter().filter(|s| s.writable && !s.executable).collect();
@@ -1007,7 +852,7 @@ pub fn derive_lines(
         .collect()
 }
 
-fn derive(from: &str, to: &str, from_version: Option<&str>) -> Result<()> {
+pub fn derive(from: &str, to: &str, from_version: Option<&str>) -> Result<()> {
     let old = load(from)?;
     // A running game can be identified the same way the main tool does, including by version string
     let running = match (from, from_version) {
