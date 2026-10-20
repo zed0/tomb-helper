@@ -2,7 +2,8 @@
 //! the overlay does and checking the results make sense (RTTI classes, magic numbers, sizes, things being where Lara
 //! is). Run it with Lara standing somewhere ordinary in a level.
 
-use crate::game_memory::{Handle, read_floats, read_pointer, resolve};
+use crate::game::Game;
+use crate::game_memory::{Handle, read_floats, read_pointer};
 use crate::chains;
 use crate::collision;
 use crate::collision_mesh::CollisionMeshes;
@@ -63,19 +64,6 @@ impl Report {
     }
 }
 
-struct Game {
-    handle: Handle,
-    base_address: usize,
-    details: ProcessDetails,
-}
-
-impl Game {
-    // Like `TrackedMemory`: the first offset is from the module, each later one is added to the pointer read
-    fn resolve(&self, address_type: AddressType) -> Option<usize> {
-        resolve(self.handle, self.base_address, self.details.address_offsets.get(&address_type)?)
-    }
-
-}
 
 pub fn check(version: Option<String>) -> Result<(), String> {
     let (pid, handle, base_address, details) = chains::connect(version)?;
@@ -98,7 +86,7 @@ pub fn run_lines(handle: Handle, base_address: usize, details: ProcessDetails) -
 
 fn run_report(handle: Handle, base_address: usize, details: ProcessDetails, report: &mut Report) -> Result<(), String> {
     crate::layout::set_for(&details);
-    let game = Game { handle, base_address, details };
+    let game = Game::new(handle, base_address, &details.address_offsets);
     let mut components = Components::new(base_address);
     // So that every component type near Lara has its slot learnt
     components.allow_scans(NEARBY * 4);
@@ -124,7 +112,7 @@ fn run_report(handle: Handle, base_address: usize, details: ProcessDetails, repo
             check_probes(&game, report, position);
             check_proxy(&game, report, &mut components, lara, position);
             check_combat_proxy(&game, report, position);
-            check_aim_sweep(&game, report, position);
+            check_aim_sweep(&game, report, &mut components, lara, position);
             match lara {
                 Some(lara) => check_capsules(&game, report, &mut components, lara, position),
                 None => report.skip("hit capsules", "Lara wasn't found".to_string()),
@@ -261,7 +249,8 @@ fn check_lara(
         report.skip("Lara", "instances have no component table to find her PlayerComponent in".to_string());
         return None;
     }
-    let lara = nearby.iter().take(16).find(|i| components.get(game.handle, i.address, components::PLAYER).is_some());
+    let nearest: Vec<usize> = nearby.iter().map(|i| i.address).collect();
+    let lara = game.find_lara(components, &nearest).and_then(|address| nearby.iter().find(|i| i.address == address));
     match lara {
         Some(lara) => {
             let d = distance(&lara.position, position);
@@ -326,11 +315,11 @@ fn check_camera(game: &Game, report: &mut Report) {
 }
 
 fn check_probes(game: &Game, report: &mut Report, lara: &Position) {
-    let address = match game.resolve(AddressType::PlayerProbes) {
-        Some(a) => a,
+    let probes = match game.probes() {
+        Some(probes) => probes,
         None => return report.skip("ground probes", "no PlayerProbes offsets".to_string()),
     };
-    match collision::read_probes(game.handle, address) {
+    match probes {
         Ok(probes) => {
             // Other characters' are in the same list
             let near = collision::probes_near(&probes, lara).len();
@@ -346,8 +335,8 @@ fn check_probes(game: &Game, report: &mut Report, lara: &Position) {
 
 // The combat proxy, where it's found on its own (TR2013): it should be near Lara, in front of her while she aims
 fn check_combat_proxy(game: &Game, report: &mut Report, position: &Position) {
-    let proxy = match game.resolve(AddressType::CombatProxy) {
-        Some(p) => p,
+    let proxy = match game.standalone_proxies().first() {
+        Some(&p) => p,
         None => return,
     };
     match collision::read_attached_proxy(game.handle, proxy) {
@@ -369,22 +358,15 @@ fn check_combat_proxy(game: &Game, report: &mut Report, position: &Position) {
 }
 
 // TR2013's aim sweep, while Lara has a weapon out: a thin rod from her head forward
-fn check_aim_sweep(game: &Game, report: &mut Report, position: &Position) {
-    let resolved = (
-        game.resolve(AddressType::PlayerProxy),
-        game.resolve(AddressType::InstanceArray),
-        game.resolve(AddressType::InventoryPool),
-        game.resolve(AddressType::TypePool),
-    );
-    let (proxy, instances, inventories, types) = match resolved {
-        (Some(p), Some(i), Some(v), Some(t)) => (p, i, v, t),
-        _ => return,
+fn check_aim_sweep(game: &Game, report: &mut Report, components: &mut Components, lara: Option<usize>, position: &Position) {
+    if !(game.has(AddressType::InventoryPool) && game.has(AddressType::TypePool)) {
+        return;
+    }
+    let proxy = match game.lara_proxy(components, lara) {
+        Some(proxy) => proxy,
+        None => return report.fail("aim sweep", "Lara's proxy wasn't found".to_string()),
     };
-    let lara = match read_pointer(game.handle, proxy + crate::layout::current().aim_sweep.proxy_instance) {
-        Some(lara) => lara,
-        None => return report.fail("aim sweep", "Lara's proxy doesn't point at her".to_string()),
-    };
-    match crate::aim_sweep::read(game.handle, instances, inventories, types, lara) {
+    match game.aim_sweep(proxy) {
         Some((rod, pushing)) => {
             let length = distance(&rod.a, &rod.b);
             report.result(
@@ -405,15 +387,14 @@ fn check_aim_sweep(game: &Game, report: &mut Report, position: &Position) {
 
 // Lara's movement capsule, from `PlayerProxy` if the game has it, otherwise her ProxyComponent
 fn check_proxy(game: &Game, report: &mut Report, components: &mut Components, lara: Option<usize>, position: &Position) {
-    let proxy = match (game.resolve(AddressType::PlayerProxy), lara) {
-        (Some(proxy), _) => proxy,
-        (None, Some(lara)) => match components.get(game.handle, lara, components::PROXY) {
-            Some(p) => p,
-            None => return report.fail("movement capsule", "Lara has no ProxyComponent".to_string()),
-        },
-        (None, None) => return report.skip("movement capsule", "Lara wasn't found".to_string()),
+    let proxy = match game.lara_proxy(components, lara) {
+        Some(proxy) => proxy,
+        None if lara.is_none() && !game.has(AddressType::PlayerProxy) => {
+            return report.skip("movement capsule", "Lara wasn't found".to_string())
+        }
+        None => return report.fail("movement capsule", "Lara's proxy wasn't found".to_string()),
     };
-    match collision::read_proxy(game.handle, proxy, &[]) {
+    match game.lara_proxies(proxy) {
         Ok(capsules) => match capsules.shapes.first() {
             Some(shape) => {
                 let centre = midpoint(&shape.a, &shape.b);
