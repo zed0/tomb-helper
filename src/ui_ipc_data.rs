@@ -371,71 +371,85 @@ pub fn projection_from_lens(lens: &[f32; 8], fields: [u32; 4]) -> [f32; 16] {
 #[repr(C)]
 pub struct UiSettings {
     // Whether the exe has set the starting values from its config
-    pub initialised: AtomicBool,
+    pub initialised: BoolSetting,
     // The settings window (what's drawn in the world stays either way)
-    pub show_window: AtomicBool,
+    pub show_window: BoolSetting,
     // `REQUEST_*` bits for actions the window's buttons ask for, which the exe takes
     pub requests: AtomicU32,
     // Everything to do with collision (Lara's and the meshes), whatever the settings below
-    pub collision: AtomicBool,
+    pub collision: BoolSetting,
     // Lara's capsules and probes
-    pub lara_collision: AtomicBool,
+    pub lara_collision: BoolSetting,
     // The level's collision meshes Lara collides with, and the rest
-    pub coarse_meshes: AtomicBool,
-    pub detailed_meshes: AtomicBool,
+    pub coarse_meshes: BoolSetting,
+    pub detailed_meshes: BoolSetting,
     // Which kind bits the other ("detailed") collision is drawn for
-    pub other_kinds: AtomicU32,
-    // How far from Lara to draw each of them (f32 bits)
-    pub coarse_radius: AtomicU32,
-    pub detailed_radius: AtomicU32,
-    // Scales how opaque the meshes and Lara's collision are drawn (f32 bits, 0 to 1)
-    pub mesh_opacity: AtomicU32,
-    // Draw the meshes fainter further from Lara, by (1 - distance / radius) to the power of the strength (f32 bits)
-    pub fade_with_distance: AtomicBool,
-    pub fade_strength: AtomicU32,
+    pub other_kinds: U32Setting,
+    // How far from Lara to draw each of them
+    pub coarse_radius: F32Setting,
+    pub detailed_radius: F32Setting,
+    // Scales how opaque the meshes and Lara's collision are drawn (0 to 1)
+    pub mesh_opacity: F32Setting,
+    // Draw the meshes fainter further from Lara, by (1 - distance / radius) to the power of the strength
+    pub fade_with_distance: BoolSetting,
+    pub fade_strength: F32Setting,
     // Only draw the triangles not hidden behind others
-    pub cull_hidden: AtomicBool,
+    pub cull_hidden: BoolSetting,
     // Draw the collision meshes round where Lara's aiming while she aims
-    pub follow_aim: AtomicBool,
+    pub follow_aim: BoolSetting,
     // How opaque trigger volumes are filled, 0 to 1
-    pub trigger_opacity: AtomicU32,
+    pub trigger_opacity: F32Setting,
     // Boxes round things Lara can interact with, and trigger volumes
-    pub interactables: AtomicBool,
-    pub triggers: AtomicBool,
-    pub npcs: AtomicBool,
+    pub interactables: BoolSetting,
+    pub triggers: BoolSetting,
+    pub npcs: BoolSetting,
     // Show triggers by `TRIGGER_ACTIONS` rather than `TriggerCategory`s, and which of each to show, as bits
-    pub triggers_by_action: AtomicBool,
-    pub trigger_categories: AtomicU32,
-    pub trigger_actions: AtomicU32,
+    pub triggers_by_action: BoolSetting,
+    pub trigger_categories: U32Setting,
+    pub trigger_actions: U32Setting,
 }
 
-impl UiSettings {
-    pub fn get(setting: &AtomicBool) -> bool {
-        setting.load(Ordering::Relaxed)
+// Settings either side can change at any time, so they're atomics (in shared memory, so the same size as their values)
+#[repr(transparent)]
+pub struct BoolSetting(AtomicBool);
+
+impl BoolSetting {
+    pub fn get(&self) -> bool {
+        self.0.load(Ordering::Relaxed)
     }
 
-    pub fn set(setting: &AtomicBool, value: bool) {
-        setting.store(value, Ordering::Relaxed);
+    pub fn set(&self, value: bool) {
+        self.0.store(value, Ordering::Relaxed);
     }
 
-    pub fn toggle(setting: &AtomicBool) {
-        setting.fetch_xor(true, Ordering::Relaxed);
+    pub fn toggle(&self) {
+        self.0.fetch_xor(true, Ordering::Relaxed);
+    }
+}
+
+#[repr(transparent)]
+pub struct U32Setting(AtomicU32);
+
+impl U32Setting {
+    pub fn get(&self) -> u32 {
+        self.0.load(Ordering::Relaxed)
     }
 
-    pub fn get_u32(setting: &AtomicU32) -> u32 {
-        setting.load(Ordering::Relaxed)
+    pub fn set(&self, value: u32) {
+        self.0.store(value, Ordering::Relaxed);
+    }
+}
+
+#[repr(transparent)]
+pub struct F32Setting(AtomicU32);
+
+impl F32Setting {
+    pub fn get(&self) -> f32 {
+        f32::from_bits(self.0.load(Ordering::Relaxed))
     }
 
-    pub fn set_u32(setting: &AtomicU32, value: u32) {
-        setting.store(value, Ordering::Relaxed);
-    }
-
-    pub fn get_f32(setting: &AtomicU32) -> f32 {
-        f32::from_bits(setting.load(Ordering::Relaxed))
-    }
-
-    pub fn set_f32(setting: &AtomicU32, value: f32) {
-        setting.store(value.to_bits(), Ordering::Relaxed);
+    pub fn set(&self, value: f32) {
+        self.0.store(value.to_bits(), Ordering::Relaxed);
     }
 }
 

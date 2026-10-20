@@ -5,7 +5,7 @@ use hudhook::*;
 use hudhook::hooks::dx11::ImguiDx11Hooks as GameHooks;
 #[cfg(not(target_arch = "x86"))]
 use hudhook::hooks::dx12::ImguiDx12Hooks as GameHooks;
-use crate::ui_ipc_data::{projection_from_lens, BoxKind, Capsule, ObjectBox, ObjectCategory, Probe, SharedMemoryManager, SurfaceKind, Triangle, TriggerCategory, UiData, UiSettings, REQUEST_RESTORE_POSITION, REQUEST_STORE_POSITION, REQUEST_TOGGLE_FLYING, TRIGGER_ACTIONS};
+use crate::ui_ipc_data::{projection_from_lens, BoolSetting, BoxKind, Capsule, F32Setting, ObjectBox, ObjectCategory, Probe, SharedMemoryManager, SurfaceKind, Triangle, TriggerCategory, UiData, UiSettings, REQUEST_RESTORE_POSITION, REQUEST_STORE_POSITION, REQUEST_TOGGLE_FLYING, TRIGGER_ACTIONS};
 use crate::tracing::{error, warn};
 
 // Shared with the exe, which uses the other half of them
@@ -16,7 +16,6 @@ mod position;
 
 use nalgebra::{Matrix4, Vector3, Vector4};
 use std::mem::{size_of, MaybeUninit};
-use std::sync::atomic::{AtomicBool, AtomicU32};
 use winapi::um::memoryapi::ReadProcessMemory;
 use winapi::um::processthreadsapi::GetCurrentProcess;
 
@@ -451,18 +450,18 @@ fn draw_triangle(
     }
 }
 
-fn checkbox(ui: &Ui, label: &str, setting: &AtomicBool) {
-    let mut value = UiSettings::get(setting);
+fn checkbox(ui: &Ui, label: &str, setting: &BoolSetting) {
+    let mut value = setting.get();
     if ui.checkbox(label, &mut value) {
-        UiSettings::set(setting, value);
+        setting.set(value);
     }
 }
 
 // For an f32 setting
-fn slider(ui: &Ui, label: &str, min: f32, max: f32, format: &str, setting: &AtomicU32) {
-    let mut value = UiSettings::get_f32(setting);
+fn slider(ui: &Ui, label: &str, min: f32, max: f32, format: &str, setting: &F32Setting) {
+    let mut value = setting.get();
     if ui.slider_config(label, min, max).display_format(format).build(&mut value) {
-        UiSettings::set_f32(setting, value);
+        setting.set(value);
     }
 }
 
@@ -547,22 +546,22 @@ impl ImguiRenderLoop for TombHelperHud {
         let triangle_count = count(ui_data.triangle_count, ui_data.triangles.len());
         let settings = &self.ui_memory_manager.get().settings;
 
-        if UiSettings::get(&settings.show_window) {
+        if settings.show_window.get() {
             self.settings_window(ui, ui_data, settings, screen_width, object_count, triangle_count);
         }
         // Read again so changes show straight away, rather than once the exe has caught up
-        let collision = UiSettings::get(&settings.collision);
-        let lara_collision = collision && UiSettings::get(&settings.lara_collision);
-        let interactables = UiSettings::get(&settings.interactables);
-        let npcs = UiSettings::get(&settings.npcs);
-        let triggers = UiSettings::get(&settings.triggers);
-        let coarse_meshes = collision && UiSettings::get(&settings.coarse_meshes);
-        let detailed_meshes = collision && UiSettings::get(&settings.detailed_meshes);
-        let mesh_opacity = UiSettings::get_f32(&settings.mesh_opacity);
-        let fade_with_distance = UiSettings::get(&settings.fade_with_distance);
-        let fade_strength = UiSettings::get_f32(&settings.fade_strength);
-        let cull_hidden = UiSettings::get(&settings.cull_hidden);
-        let radii = [UiSettings::get_f32(&settings.coarse_radius), UiSettings::get_f32(&settings.detailed_radius)];
+        let collision = settings.collision.get();
+        let lara_collision = collision && settings.lara_collision.get();
+        let interactables = settings.interactables.get();
+        let npcs = settings.npcs.get();
+        let triggers = settings.triggers.get();
+        let coarse_meshes = collision && settings.coarse_meshes.get();
+        let detailed_meshes = collision && settings.detailed_meshes.get();
+        let mesh_opacity = settings.mesh_opacity.get();
+        let fade_with_distance = settings.fade_with_distance.get();
+        let fade_strength = settings.fade_strength.get();
+        let cull_hidden = settings.cull_hidden.get();
+        let radii = [settings.coarse_radius.get(), settings.detailed_radius.get()];
 
         if ui_data.camera_view_address == 0 {
             self.draw_milliseconds = started.elapsed().as_secs_f32() * 1000.0;
@@ -633,8 +632,8 @@ impl ImguiRenderLoop for TombHelperHud {
             }
         }
         if triggers {
-            let trigger_opacity = UiSettings::get_f32(&settings.trigger_opacity);
-            let by_action = UiSettings::get(&settings.triggers_by_action);
+            let trigger_opacity = settings.trigger_opacity.get();
+            let by_action = settings.triggers_by_action.get();
             if trigger_opacity > 0.0 {
                 let face_count = count(ui_data.trigger_face_count, ui_data.trigger_faces.len());
                 for face in &ui_data.trigger_faces[..face_count] {
@@ -779,26 +778,26 @@ impl TombHelperHud {
                     ] {
                         checkbox(ui, label, setting);
                     }
-                    if UiSettings::get(&settings.triggers) {
+                    if settings.triggers.get() {
                         ui.indent();
-                        let by_action = UiSettings::get(&settings.triggers_by_action);
+                        let by_action = settings.triggers_by_action.get();
                         ui.text("Show by:");
                         ui.same_line();
                         if ui.radio_button_bool("What they do", by_action) {
-                            UiSettings::set(&settings.triggers_by_action, true);
+                            settings.triggers_by_action.set(true);
                         }
                         ui.same_line();
                         if ui.radio_button_bool("Name", !by_action) {
-                            UiSettings::set(&settings.triggers_by_action, false);
+                            settings.triggers_by_action.set(false);
                         }
                         if by_action {
-                            let mut actions = UiSettings::get_u32(&settings.trigger_actions);
+                            let mut actions = settings.trigger_actions.get();
                             if ui.small_button("All") {
-                                UiSettings::set_u32(&settings.trigger_actions, u32::MAX);
+                                settings.trigger_actions.set(u32::MAX);
                             }
                             ui.same_line();
                             if ui.small_button("None") {
-                                UiSettings::set_u32(&settings.trigger_actions, 0);
+                                settings.trigger_actions.set(0);
                             }
                             // Two columns, they're short
                             for (i, action) in TRIGGER_ACTIONS.iter().enumerate() {
@@ -809,19 +808,19 @@ impl TombHelperHud {
                                 let style = ui.push_style_color(StyleColor::Text, TRIGGER_ACTION_COLOURS[i]);
                                 if ui.checkbox(action, &mut value) {
                                     actions ^= 1 << i;
-                                    UiSettings::set_u32(&settings.trigger_actions, actions);
+                                    settings.trigger_actions.set(actions);
                                 }
                                 style.pop();
                             }
                         } else {
-                            let mut categories = UiSettings::get_u32(&settings.trigger_categories);
+                            let mut categories = settings.trigger_categories.get();
                             for category in TriggerCategory::ALL {
                                 let (colour, label) = trigger_style(category);
                                 let mut value = categories & category.bit() != 0;
                                 let style = ui.push_style_color(StyleColor::Text, colour);
                                 if ui.checkbox(label, &mut value) {
                                     categories ^= category.bit();
-                                    UiSettings::set_u32(&settings.trigger_categories, categories);
+                                    settings.trigger_categories.set(categories);
                                 }
                                 style.pop();
                             }
@@ -830,7 +829,7 @@ impl TombHelperHud {
                         ui.unindent();
                     }
                     checkbox(ui, "Collision meshes (F10)", &settings.collision);
-                    if UiSettings::get(&settings.collision) {
+                    if settings.collision.get() {
                         ui.indent();
                         ui.text(format!(
                             "{} triangles ({:.1}ms to find, {:.1}ms to draw)",
@@ -841,11 +840,11 @@ impl TombHelperHud {
                         slider(ui, "Radius##coarse", 0.0, MAX_MESH_RADIUS, "%.0f", &settings.coarse_radius);
                         checkbox(ui, "Other collision", &settings.detailed_meshes);
                         slider(ui, "Radius##detailed", 0.0, MAX_MESH_RADIUS, "%.0f", &settings.detailed_radius);
-                        if UiSettings::get(&settings.detailed_meshes) {
+                        if settings.detailed_meshes.get() {
                             // Which kinds of collision (bits of the meshes' filters), and how many meshes in the level have
                             // each; what they're for isn't known, besides 0x2 (Lara's movement)
                             ui.indent();
-                            let mut kinds = UiSettings::get_u32(&settings.other_kinds);
+                            let mut kinds = settings.other_kinds.get();
                             let mut shown = 0;
                             for bit in 0..16 {
                                 let count = ui_data.mesh_kind_counts[bit];
@@ -859,7 +858,7 @@ impl TombHelperHud {
                                 let mut value = kinds & 1 << bit != 0;
                                 if ui.checkbox(format!("{:X} ({})##kind", 1 << bit, count), &mut value) {
                                     kinds ^= 1 << bit;
-                                    UiSettings::set_u32(&settings.other_kinds, kinds);
+                                    settings.other_kinds.set(kinds);
                                 }
                             }
                             ui.unindent();
