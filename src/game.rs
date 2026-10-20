@@ -71,7 +71,7 @@ impl Game {
         let instances = self.resolve(AddressType::InstanceArray)?;
         let inventories = self.resolve(AddressType::InventoryPool)?;
         let types = self.resolve(AddressType::TypePool)?;
-        let lara = read_pointer(self.handle, proxy + crate::layout::current().aim_sweep.proxy_instance)?;
+        let lara = read_pointer(self.handle, proxy + crate::layout::current().proxy.instance?)?;
         crate::aim_sweep::read(self.handle, instances, inventories, types, lara)
     }
 

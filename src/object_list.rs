@@ -169,6 +169,12 @@ pub fn read_bounds(
 }
 
 // Follows the pointers at each offset in turn
+/// What an instance is (its object type's name, e.g. "laracroft")
+pub fn object_name(handle: Handle, instance_address: usize) -> Option<String> {
+    let address = read_chain(handle, instance_address, &layout::current().instance.object_name)?;
+    Some(read_c_string(handle, address))
+}
+
 fn read_chain(handle: Handle, address: usize, offsets: &[usize]) -> Option<usize> {
     offsets.iter().try_fold(address, |address, offset| read_pointer(handle, address + offset))
 }
