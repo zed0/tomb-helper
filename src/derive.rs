@@ -183,6 +183,7 @@ fn export_offsets(out: Option<&str>) -> Result<(), String> {
     }
     let file = OffsetsFile {
         versions: known_process_details().iter().map(VersionEntry::from_details).collect(),
+        words: crate::words::current().as_ref().clone(),
     };
     std::fs::write(&path, to_json(&file) + "
 ").map_err(|e| format!("Could not write {:?}: {}", path, e))?;

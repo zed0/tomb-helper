@@ -253,7 +253,7 @@ pub fn save_entry(entry: VersionEntry) -> Result<(), String> {
         Some(index) => versions[index] = entry,
         None => versions.push(entry),
     }
-    let file = OffsetsFile { versions };
+    let file = OffsetsFile { versions, words: crate::words::current().as_ref().clone() };
     std::fs::write(&source.path, to_json(&file) + "\n").map_err(|e| format!("Could not write {:?}: {}", source.path, e))?;
     println!("Saved to {:?}", source.path);
     Ok(())

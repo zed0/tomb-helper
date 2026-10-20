@@ -3,6 +3,7 @@
 //! rebuilding (and are reloaded while tomb-helper is running).
 
 use crate::layout::Layout;
+use crate::words::Words;
 use crate::process_details::{AddressType, ProcessDetails, VersionIdentifier};
 use process_memory::Architecture;
 use serde::de::{self, Visitor};
@@ -67,6 +68,9 @@ fn from_hex(values: &[Hex]) -> Vec<usize> {
 #[serde(deny_unknown_fields)]
 pub struct OffsetsFile {
     pub versions: Vec<VersionEntry>,
+    // What the tools go by to tell what things are, see `words`
+    #[serde(default, skip_serializing_if = "Words::is_default")]
+    pub words: Words,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -169,6 +173,8 @@ impl VersionEntry {
 
 pub fn parse(json: &str) -> Result<Vec<ProcessDetails>, String> {
     let file: OffsetsFile = serde_json::from_str(json).map_err(|e| e.to_string())?;
+    file.words.validate()?;
+    crate::words::set(file.words.clone());
     file.versions.iter().map(VersionEntry::to_details).collect()
 }
 

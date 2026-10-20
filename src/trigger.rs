@@ -8,45 +8,20 @@ use process_memory::CopyAddress;
 
 // Instances (game objects) are sorted by what they can do through their components, see `components`
 
-// What triggers are for, by words in their name or the name of what they're part of, checked in this order. Most
-// of the game's own names are like "triggerplane_DelayDeath-imill8" or "bendy_bv_young_pine.triggersphere".
-const CATEGORY_WORDS: [(TriggerCategory, &[&str]); 8] = [
-    (TriggerCategory::Objects, &[
-        "bendy", "concealment", "foliage", "bush", "tree", "sapling", "grass", "plant", "collectible", "throwable",
-        "campsite", "survivalcache", "looter", "breakable", "balcony", "corpse", "lantern",
-    ]),
-    (TriggerCategory::Checkpoint, &["checkpoint", "ckpt"]),
-    (TriggerCategory::Death, &["death", "kill", "drown"]),
-    (TriggerCategory::Streaming, &["streaming", "airlock"]),
-    (TriggerCategory::Combat, &[
-        "combat", "spawn", "npc", "enemy", "ai_", "wolf", "bear", "deer", "animal", "heli", "stealth", "alert",
-    ]),
-    (TriggerCategory::Camera, &["camera", "cam_", "customcam", "lookat", "look_at", "headtrack", "interior", "indoor"]),
-    (TriggerCategory::Effects, &[
-        "sound", "music", "audio", "glow", "dust", "wind", "contrast", "fx", "storm", "weather", "light", "vo_", "bark",
-        "tp_",
-    ]),
-    (TriggerCategory::Hints, &[
-        "tutorial", "notification", "hint", "prompt", "radio", "objective", "missing_gear", "discovery", "journal",
-    ]),
-];
+// The words that say what things are are in `words`
 
-// Places NPCs and animals play animations at ("animhost_npc_human_eatcandybar", "animhost_npc_deer_bedding", ...)
-// have an InteractableComponent, but it's for them rather than Lara
-const NOT_INTERACTABLE: [&str; 1] = ["animhost"];
 
 // Whether an instance with an interaction component is one Lara can use, going by its name
 pub fn for_lara(name: &str) -> bool {
     let name = name.to_lowercase();
-    !NOT_INTERACTABLE.iter().any(|w| name.contains(w))
+    !crate::words::current().not_interactable.iter().any(|w| name.contains(w.as_str()))
 }
 
 pub fn categorise(name: &str, full_name: &str) -> TriggerCategory {
     let names = format!("{} {}", name, full_name).to_lowercase();
-    CATEGORY_WORDS
-        .iter()
-        .find(|(_, words)| words.iter().any(|w| names.contains(w)))
-        .map_or(TriggerCategory::Unknown, |(category, _)| *category)
+    let words = crate::words::current();
+    let found = words.categories().find(|(_, words)| words.iter().any(|w| names.contains(w.as_str())));
+    found.map_or(TriggerCategory::Unknown, |(category, _)| category)
 }
 
 // Where things are in a trigger's shape is in `layout`
@@ -72,12 +47,6 @@ pub enum Shape {
     Poly(Vec<(Vector3<f32>, Vector3<f32>)>),
 }
 
-// What a TR2013 instance is, from the names in its component data (lower case, as some are). Lara's own gear (e.g.
-// g_ascender) is interactable too, but is in her inventory, and has spatial awareness, which animals have too, so
-// characters and animals are told by their ragdolls.
-const INTERACTABLE_DATA: [&str; 2] = ["interactcomponent", "lootcomponent"];
-const INVENTORY_DATA: [&str; 1] = ["inventorymembercomponent"];
-const NPC_DATA: [&str; 1] = ["ragdollcomponent"];
 // Components listed at most
 const MAX_COMPONENT_DATA: usize = 64;
 
@@ -85,11 +54,12 @@ pub fn read_kinds(handle: Handle, components: &mut Components, instance_address:
     let layout = layout::current();
     if let (None, Some(offset)) = (layout.instance.components, layout.instance.component_data) {
         let names = read_component_names(handle, instance_address + offset);
-        let any = |wanted: &[&str]| names.iter().any(|n| wanted.contains(&n.as_str()));
+        let words = crate::words::current();
+        let any = |wanted: &[String]| names.iter().any(|n| wanted.contains(n));
         return Kinds {
-            interactable: any(&INTERACTABLE_DATA) && !any(&INVENTORY_DATA),
+            interactable: any(&words.interactable_components) && !any(&words.inventory_components),
             trigger: trigger_object(handle, components, instance_address).is_some(),
-            npc: any(&NPC_DATA),
+            npc: any(&words.npc_components),
         };
     }
     let mut has = |class: &str| components.get(handle, instance_address, class).is_some();
