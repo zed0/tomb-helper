@@ -20,10 +20,8 @@
         "PlayerProxy": ["0x117D200"],
         "CombatProxy": ["0x117D988", "0x0"],
         "InventoryPool": ["0x1FC5BA0"],
+        "TypePool": ["0x1F54FE0"],
         "CollisionScene": ["0x1E33278", "0x10", "0x0"]
-      },
-      "unverified": {
-        "TypePool": ["0x1F60BF0"]
       },
       "layout": {
         "instance": {"size": "0xD0", "header": "0xC0", "position": "0x0", "rotation": "0x20", "in_use": "0x40", "placement": null, "id": "0x50", "object_name": ["0x40", "0x4C"], "components": null, "transform": null, "component_data": "0x64", "game_object": "0x74"},
@@ -32,7 +30,8 @@
         "collision_instance": {"size": "0xB0", "matrix": "0x0", "min": "0x50", "max": "0x60", "placement_size": "0x70", "origin": "0x40", "filter": null, "mesh": "0x78", "next": "0x80", "flags": null},
         "script": {"node_graph": "0xC", "graph_nodes": "0x30", "graph_links": "0x40", "links": "0xC", "object_instance": "0x40", "message_instance": null, "node_size": "0x48"},
         "collision_mesh": {"header_size": "0x44", "vertices": "0x20", "triangles": "0x24", "triangle_count": "0x30", "vertex_count": "0x34", "vertex_format": "0x40", "triangle_size": "0x14", "triangle_flags": "0xC", "triangle_ignored": "0x0"},
-        "proxy": {"centre": "0x20", "in_use_size": "0x48", "in_use_offset": "0x50", "in_use_local_rotation": "0x70", "in_use_rotation": "0x80", "next_size": "0xA0", "next_offset": "0xB0", "next_local_rotation": "0xD0", "next_rotation": "0xE0", "body": null, "size": "0x100", "contact_count": "0x120", "second_contact_count": null, "contacts": "0x140", "contact_size": "0x50", "flags": null, "collides": "0x2", "instance": "0x10", "attached": "0x788"}
+        "proxy": {"centre": "0x20", "in_use_size": "0x48", "in_use_offset": "0x50", "in_use_local_rotation": "0x70", "in_use_rotation": "0x80", "next_size": "0xA0", "next_offset": "0xB0", "next_local_rotation": "0xD0", "next_rotation": "0xE0", "body": null, "size": "0x100", "contact_count": "0x120", "second_contact_count": null, "contacts": "0x140", "contact_size": "0x50", "flags": "0x8", "collides": "0x2", "instance": "0x10", "attached": "0x788"},
+        "aim_sweep": {"inventory_index": "0xB0", "map_buckets": "0x18", "map_bucket_count": "0x24", "current_item": "0x5C", "type_data": "0x8", "instance_player": "0xA4", "player": "0xC"}
       }
     },
     {
