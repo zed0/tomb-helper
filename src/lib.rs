@@ -5,7 +5,7 @@ use hudhook::*;
 use hudhook::hooks::dx11::ImguiDx11Hooks as GameHooks;
 #[cfg(not(target_arch = "x86"))]
 use hudhook::hooks::dx12::ImguiDx12Hooks as GameHooks;
-use crate::ui_ipc_data::{projection_from_lens, BoolSetting, BoxKind, Capsule, F32Setting, ObjectBox, ObjectCategory, Probe, SharedMemoryManager, SurfaceKind, Triangle, TriggerCategory, UiData, UiSettings, REQUEST_RESTORE_POSITION, REQUEST_STORE_POSITION, REQUEST_TOGGLE_FLYING, TRIGGER_ACTIONS};
+use crate::ui_ipc_data::{projection_from_lens, BoolSetting, BoxKind, Capsule, F32Setting, ObjectBox, ObjectCategory, Probe, SharedMemoryManager, SurfaceKind, Triangle, TriggerCategory, U32Setting, UiData, UiSettings, REQUEST_RESTORE_POSITION, REQUEST_STORE_POSITION, REQUEST_TOGGLE_FLYING, TRIGGER_ACTIONS};
 use crate::tracing::{error, warn};
 
 // Shared with the exe, which uses the other half of them
@@ -457,6 +457,27 @@ fn checkbox(ui: &Ui, label: &str, setting: &BoolSetting) {
     }
 }
 
+// A checkbox for each (bit, label, colour) of a setting that's a set of bits, filling the columns starting at
+// `columns` (window x positions) after the first, a row at a time
+fn bit_checkboxes(ui: &Ui, setting: &U32Setting, items: Vec<(u32, String, Option<[f32; 4]>)>, columns: &[f32]) {
+    let mut bits = setting.get();
+    for (i, (bit, label, colour)) in items.into_iter().enumerate() {
+        let column = i % (columns.len() + 1);
+        if column > 0 {
+            ui.same_line_with_pos(columns[column - 1]);
+        }
+        let style = colour.map(|colour| ui.push_style_color(StyleColor::Text, colour));
+        let mut value = bits & bit != 0;
+        if ui.checkbox(label, &mut value) {
+            bits ^= bit;
+            setting.set(bits);
+        }
+        if let Some(style) = style {
+            style.pop();
+        }
+    }
+}
+
 // For an f32 setting
 fn slider(ui: &Ui, label: &str, min: f32, max: f32, format: &str, setting: &F32Setting) {
     let mut value = setting.get();
@@ -791,7 +812,6 @@ impl TombHelperHud {
                             settings.triggers_by_action.set(false);
                         }
                         if by_action {
-                            let mut actions = settings.trigger_actions.get();
                             if ui.small_button("All") {
                                 settings.trigger_actions.set(u32::MAX);
                             }
@@ -800,30 +820,21 @@ impl TombHelperHud {
                                 settings.trigger_actions.set(0);
                             }
                             // Two columns, they're short
-                            for (i, action) in TRIGGER_ACTIONS.iter().enumerate() {
-                                if i % 2 == 1 {
-                                    ui.same_line_with_pos(190.);
-                                }
-                                let mut value = actions & 1 << i != 0;
-                                let style = ui.push_style_color(StyleColor::Text, TRIGGER_ACTION_COLOURS[i]);
-                                if ui.checkbox(action, &mut value) {
-                                    actions ^= 1 << i;
-                                    settings.trigger_actions.set(actions);
-                                }
-                                style.pop();
-                            }
+                            let actions = TRIGGER_ACTIONS
+                                .iter()
+                                .enumerate()
+                                .map(|(i, action)| (1 << i, action.to_string(), Some(TRIGGER_ACTION_COLOURS[i])))
+                                .collect();
+                            bit_checkboxes(ui, &settings.trigger_actions, actions, &[190.0]);
                         } else {
-                            let mut categories = settings.trigger_categories.get();
-                            for category in TriggerCategory::ALL {
-                                let (colour, label) = trigger_style(category);
-                                let mut value = categories & category.bit() != 0;
-                                let style = ui.push_style_color(StyleColor::Text, colour);
-                                if ui.checkbox(label, &mut value) {
-                                    categories ^= category.bit();
-                                    settings.trigger_categories.set(categories);
-                                }
-                                style.pop();
-                            }
+                            let categories = TriggerCategory::ALL
+                                .iter()
+                                .map(|&category| {
+                                    let (colour, label) = trigger_style(category);
+                                    (category.bit(), label.to_string(), Some(colour))
+                                })
+                                .collect();
+                            bit_checkboxes(ui, &settings.trigger_categories, categories, &[]);
                         }
                         slider(ui, "Opacity##triggers", 0.0, 1.0, "%.2f", &settings.trigger_opacity);
                         ui.unindent();
@@ -844,23 +855,11 @@ impl TombHelperHud {
                             // Which kinds of collision (bits of the meshes' filters), and how many meshes in the level have
                             // each; what they're for isn't known, besides 0x2 (Lara's movement)
                             ui.indent();
-                            let mut kinds = settings.other_kinds.get();
-                            let mut shown = 0;
-                            for bit in 0..16 {
-                                let count = ui_data.mesh_kind_counts[bit];
-                                if count == 0 {
-                                    continue;
-                                }
-                                if shown % 3 != 0 {
-                                    ui.same_line_with_pos(shown as f32 % 3.0 * 125.0 + 30.0);
-                                }
-                                shown += 1;
-                                let mut value = kinds & 1 << bit != 0;
-                                if ui.checkbox(format!("{:X} ({})##kind", 1 << bit, count), &mut value) {
-                                    kinds ^= 1 << bit;
-                                    settings.other_kinds.set(kinds);
-                                }
-                            }
+                            let kinds = (0..16)
+                                .filter(|&bit| ui_data.mesh_kind_counts[bit] != 0)
+                                .map(|bit| (1 << bit, format!("{:X} ({})##kind", 1 << bit, ui_data.mesh_kind_counts[bit]), None))
+                                .collect();
+                            bit_checkboxes(ui, &settings.other_kinds, kinds, &[155.0, 280.0]);
                             ui.unindent();
                         }
                         slider(ui, "Opacity", 0.0, 1.0, "%.2f", &settings.mesh_opacity);
