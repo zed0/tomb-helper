@@ -106,6 +106,7 @@ Each version looks like:
 - `offsets` are pointer chains: the first is relative to the game's exe, the rest are followed as pointers. Values a version doesn't have can be left out, and features that need them won't load
 - `witnesses` are optional, see [Finding offsets for a new game version](#finding-offsets-for-a-new-game-version)
 - `unverified` is ignored, and is where the tools put offsets they couldn't confirm
+- The file can also have a `words` section, beside `versions`, with the words tomb-helper goes by to tell what things are: `trigger_categories` (each category from `trigger_categories` in the config, with the words in trigger names that put a trigger in it, checked in order), `script_actions` (part of a script node's class name, and which of the `trigger_actions` it counts as), `not_interactable` (names of things with interactions that aren't for Lara), and for Tomb Raider 2013 `interactable_components`, `inventory_components` and `npc_components`. Any left out are the built in ones, which `src/words.rs` lists
 - `layout` is optional: where things are in the game's structures, for the overlay, where they differ from Rise of the Tomb Raider (Steam)'s. E.g. `"layout": {"instance": {"position": "0x20"}, "collide": {"capsule_radius": "0x30"}}`. The groups and their fields are in `src/layout.rs`, with what each is. See [Porting the overlay](#porting-the-overlay)
 
 ## Overlay

@@ -49,6 +49,7 @@ mod offsets_file;
 mod tracked_memory;
 mod watch;
 mod witness;
+mod words;
 mod tracked_position;
 mod trigger;
 mod trigger_scripts;

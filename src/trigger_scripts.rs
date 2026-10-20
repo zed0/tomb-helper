@@ -31,50 +31,7 @@ const MESSAGE_SEND_NODE: &str = ".?AVAGMessageSendNode@@";
 // A node for an instance (its id at `layout.object_instance`, as in an AGObjectNode), which is how scripts use triggers
 // in games without trigger nodes
 const INSTANCE_REFERENCE_NODE: &str = ".?AVAGInstanceNode@@";
-// What a script does, by part of the class names of the nodes a trigger leads to, most important first (the words are
-// `TRIGGER_ACTIONS`)
-const ACTIONS: [(&str, &str); 40] = [
-    ("Checkpoint", "checkpoint"),
-    ("GameObjective", "objective"),
-    ("GlobalProgress", "progress"),
-    ("Timeline", "cutscene"),
-    ("MovesetProfile", "moveset"),
-    ("Camera", "camera"),
-    ("Streaming", "streaming"),
-    ("StreamStates", "streaming"),
-    ("UnitStream", "streaming"),
-    ("UnloadUnit", "streaming"),
-    ("Teleport", "teleport"),
-    ("BattleConductor", "combat"),
-    ("Spawn", "spawn"),
-    ("GiveBirth", "spawn"),
-    ("InstanceDestroy", "despawn"),
-    ("FadeOut", "despawn"),
-    ("HealthAndDamage", "damage"),
-    ("Dialogue", "dialogue"),
-    ("Subtitle", "dialogue"),
-    ("SoundVocal", "dialogue"),
-    ("Tutorial", "tutorial"),
-    ("HeadTrack", "look at"),
-    ("NPC", "NPC"),
-    ("HuntManager", "NPC"),
-    ("Inventory", "inventory"),
-    ("Ammo", "inventory"),
-    ("Campsite", "campsite"),
-    ("Lighting", "lighting"),
-    ("GraphicsOverride", "lighting"),
-    ("Fog", "lighting"),
-    ("Weather", "weather"),
-    ("Wetness", "weather"),
-    ("Wwise", "audio"),
-    ("SoundPlex", "audio"),
-    ("SoundReverb", "audio"),
-    ("SFX", "audio"),
-    ("Notification", "UI"),
-    ("UI_", "UI"),
-    ("PadShock", "rumble"),
-    ("PersistentData", "saves state"),
-];
+// What a script does, by part of the class names of the nodes a trigger leads to, is in `words`
 const MAX_GRAPH_NODES: usize = 20000;
 const MAX_LINKS: usize = 100000;
 const CHUNK: usize = 64 << 20;
@@ -112,7 +69,7 @@ pub struct TriggerScript {
 // What a node the trigger leads to does
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Effect {
-    // An index in `ACTIONS`
+    // An index in `words::current().script_actions`
     Action(usize),
     // Acts on the instance whose id is at this offset in the node
     ActsOn(usize),
@@ -235,7 +192,8 @@ fn categorise(nodes: &[Node], triggers: &HashSet<u64>, names: &HashMap<u64, Stri
             let mut actions: Vec<usize> = using.iter().flat_map(|n| n.actions.iter().copied()).collect();
             actions.sort();
             actions.dedup();
-            let mut does: Vec<String> = actions.iter().map(|&a| ACTIONS[a].1.to_string()).collect();
+            let words = crate::words::current();
+            let mut does: Vec<String> = actions.iter().map(|&a| words.script_actions[a].1.clone()).collect();
             does.dedup();
             let mut bits = does.iter().fold(0, |bits, word| bits | trigger_action_bit(word));
             for target in using.iter().flat_map(|n| n.targets.iter()).filter(|t| *t != id) {
@@ -259,8 +217,8 @@ fn categorise(nodes: &[Node], triggers: &HashSet<u64>, names: &HashMap<u64, Stri
 // Without the prefixes most of the instances scripts act on have (`tr11_animhost_friendly_npc_roaming_musician_guitar`)
 fn short_name(name: &str) -> String {
     let mut name = name;
-    for prefix in ["tr11_", "animhost_", "friendly_"] {
-        name = name.strip_prefix(prefix).unwrap_or(name);
+    for prefix in &crate::words::current().name_prefixes {
+        name = name.strip_prefix(prefix.as_str()).unwrap_or(name);
     }
     name.to_string()
 }
@@ -389,6 +347,7 @@ fn leads_to(graph: &Graph, start: usize) -> Vec<usize> {
 // Trigger nodes' vtables, and those of nodes that say what a script does
 fn find_classes(data: &[u8], base_address: usize, layout: &ScriptLayout) -> Classes {
     let vtables = crate::rtti::all_vtables(data, base_address);
+    let words = crate::words::current();
     let trigger_kind = |name: &str| match name {
         PLAYER_NODE => Some(NodeKind::Player),
         INSTANCE_NODE => Some(NodeKind::Instance),
@@ -413,7 +372,7 @@ fn find_classes(data: &[u8], base_address: usize, layout: &ScriptLayout) -> Clas
         let effect = match name.as_str() {
             OBJECT_NODE => Some(Effect::ActsOn(layout.object_instance)),
             MESSAGE_SEND_NODE => layout.message_instance.map(Effect::ActsOn),
-            n => ACTIONS.iter().position(|(part, _)| n.contains(part)).map(Effect::Action),
+            n => words.script_actions.iter().position(|(part, _)| n.contains(part.as_str())).map(Effect::Action),
         };
         if let Some(effect) = effect {
             classes.effects.insert(vtable, effect);
@@ -451,8 +410,9 @@ mod tests {
     #[test]
     fn what_triggers_do_is_most_important_first_then_who_they_act_on() {
         let (trigger, other_trigger, musician) = (1u64, 2, 100);
-        let objective = ACTIONS.iter().position(|a| a.1 == "objective").unwrap();
-        let audio = ACTIONS.iter().position(|a| a.1 == "audio").unwrap();
+        let actions = crate::words::Words::default().script_actions;
+        let objective = actions.iter().position(|a| a.1 == "objective").unwrap();
+        let audio = actions.iter().position(|a| a.1 == "audio").unwrap();
         let mut using = node(NodeKind::Player, vec![trigger]);
         using.actions = vec![audio, objective, audio];
         // Itself, a trigger that isn't loaded and an instance that is
@@ -468,8 +428,8 @@ mod tests {
 
     #[test]
     fn every_action_can_be_shown_by() {
-        for (_, word) in ACTIONS {
-            assert_ne!(trigger_action_bit(word), 0, "{}", word);
+        for (_, word) in crate::words::Words::default().script_actions {
+            assert_ne!(trigger_action_bit(&word), 0, "{}", word);
         }
     }
 
