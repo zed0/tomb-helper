@@ -180,7 +180,9 @@ again (`derive` plus live checks).
   capsule, high u32 + 1 is the bone), +0x10 -> shape in bone space (+0x0 centre, +0x10 quaternion, +0x28 radius,
   +0x2C length). 10 `DefensiveCapsule_*` plus attack spheres. Slow to draw, off by default.
 - **Ground probes:** `PlayerProbes` (mod+0x1A8C720) is a count, then 0x60 byte records from +0x70 (+0x10 hit, +0x20
-  start, +0x30 end): rays per foot and one for her body. Hits far from their ray are stale.
+  start, +0x30 end): rays per foot and one for her body, then other characters' (two per foot). Hits far from their ray
+  are stale. Hers aren't always in it: once paused in the valley hub it held only four NPCs' (8 probes, none within
+  250 of her); moving, she had hers (12-16 probes, the nearest starting ~35 from her).
 - **How it was found:** `watch XPosition --write` -> the player move (+0x83B330, adds a delta to her position) <- 55
   callers, the main one +0x840460 which collides via +0x82B770 on the proxy; the half length's only reader is the
   easing at +0x1DD0B0, which sets the physics shape's radius/length (+0x193FD0/+0x193F80).

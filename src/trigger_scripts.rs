@@ -88,8 +88,6 @@ struct Node {
 struct Classes {
     triggers: HashMap<usize, NodeKind>,
     effects: HashMap<usize, Effect>,
-    // Whether the game has no trigger nodes, so triggers are found through the nodes for any instance
-    by_reference: bool,
 }
 
 // A graph's nodes and, for each, the nodes it links to
@@ -153,16 +151,15 @@ impl TriggerScripts {
     }
 }
 
-/// Finds what sets the triggers off and what they do now, rather than in the background (for `check`), and whether
-/// they were found through the nodes for any instance, as the game has no trigger nodes
+/// Finds what sets the triggers off and what they do now, rather than in the background (for `check`)
 pub fn scripts_now(
     handle: Handle,
     base_address: usize,
     triggers: &[u64],
     names: &HashMap<u64, String>,
-) -> Result<(HashMap<u64, TriggerScript>, bool), String> {
-    let (classes, nodes) = scan(handle, base_address, None, &layout::current().script)?;
-    Ok((categorise(&nodes, &triggers.iter().copied().collect(), names), classes.by_reference))
+) -> Result<HashMap<u64, TriggerScript>, String> {
+    let (_, nodes) = scan(handle, base_address, None, &layout::current().script)?;
+    Ok(categorise(&nodes, &triggers.iter().copied().collect(), names))
 }
 
 // What sets each trigger off, going by the nodes that have its id in them, and what those lead to
@@ -355,7 +352,7 @@ fn find_classes(data: &[u8], base_address: usize, layout: &ScriptLayout) -> Clas
         _ => None,
     };
     let by_reference = !vtables.iter().any(|(_, name)| trigger_kind(name).is_some());
-    let mut classes = Classes { by_reference, ..Default::default() };
+    let mut classes = Classes::default();
     for (vtable, name) in vtables {
         let kind = match name.as_str() {
             INSTANCE_REFERENCE_NODE | OBJECT_NODE if by_reference => Some(NodeKind::Other),
