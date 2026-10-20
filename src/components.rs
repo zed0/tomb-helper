@@ -4,9 +4,9 @@
 //! many tables are shorter than the slots used, so a slot can hold something else).
 
 use crate::rtti::Classes;
-use crate::game_memory::{pointer_from, pointer_size, read_pointer};
+use crate::game_memory::{Handle, pointer_from, pointer_size, read_pointer};
 use crate::layout;
-use process_memory::{CopyAddress, ProcessHandle};
+use process_memory::CopyAddress;
 use std::collections::{HashMap, HashSet};
 
 pub const TRANSFORM: &str = ".?AVTransformComponent@cdc@@";
@@ -79,7 +79,7 @@ impl Components {
     }
 
     /// The instance's component of the class, if it has one
-    pub fn get(&mut self, handle: ProcessHandle, instance: usize, class: &str) -> Option<usize> {
+    pub fn get(&mut self, handle: Handle, instance: usize, class: &str) -> Option<usize> {
         let table = read_pointer(handle, instance.wrapping_add(layout::current().instance.components?))?;
         if !self.slots.contains_key(class) {
             if self.scans_left == 0 || !self.scanned.insert(table) {
@@ -98,7 +98,7 @@ impl Components {
     }
 
     /// Learns the slot of every component in the table
-    fn learn(&mut self, handle: ProcessHandle, instance: usize, table: usize) {
+    fn learn(&mut self, handle: Handle, instance: usize, table: usize) {
         let back_offset = layout::current().component.instance;
         let size = pointer_size();
         for first in (0..MAX_SLOTS).step_by(SLOTS_PER_READ) {

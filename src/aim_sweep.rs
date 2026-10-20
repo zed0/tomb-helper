@@ -4,13 +4,12 @@
 //! is held through her weapon slot: her own handle -> her inventory record -> its map, keyed by its current item -> the
 //! weapon's instance -> its type record -> the tuning block. Where everything is is in `layout::AimSweepLayout`.
 
-use crate::game_memory::{read_floats, read_u32};
+use crate::game_memory::{Handle, read_floats, read_u32};
 use crate::layout;
 use crate::object_list;
 use crate::position::Position;
 use crate::ui_ipc_data::Capsule;
 use nalgebra::Vector3;
-use process_memory::ProcessHandle;
 
 // Map nodes followed at most
 const MAX_NODES: usize = 64;
@@ -21,11 +20,11 @@ const MIN_PUSH: f32 = 0.05;
 /// The record a handle (index, id) refers to in a pool, if it's still that one: the pool's handle entries say which
 /// record, and the record says which index and id it is
 // Pools' indices and ids are u32s
-fn read_index(handle: ProcessHandle, address: usize) -> Option<usize> {
+fn read_index(handle: Handle, address: usize) -> Option<usize> {
     read_u32(handle, address).map(|v| v as usize)
 }
 
-fn pool_record(handle: ProcessHandle, pool: usize, index: usize, id: usize, record_size: usize, record_index: usize) -> Option<usize> {
+fn pool_record(handle: Handle, pool: usize, index: usize, id: usize, record_size: usize, record_index: usize) -> Option<usize> {
     let layout = &layout::current().aim_sweep;
     if id == 0 || index >= layout.max_handles {
         return None;
@@ -41,7 +40,7 @@ fn pool_record(handle: ProcessHandle, pool: usize, index: usize, id: usize, reco
 }
 
 /// The instance a handle refers to, if it's still that one
-fn instance(handle: ProcessHandle, instances: usize, index: usize, id: usize) -> Option<usize> {
+fn instance(handle: Handle, instances: usize, index: usize, id: usize) -> Option<usize> {
     let layout = &layout::current().aim_sweep;
     if id == 0 || index >= layout.max_handles {
         return None;
@@ -52,7 +51,7 @@ fn instance(handle: ProcessHandle, instances: usize, index: usize, id: usize) ->
 }
 
 /// The tuning block of the weapon Lara has out, if she has one out
-fn tuning_block(handle: ProcessHandle, instances: usize, inventories: usize, types: usize, lara: usize) -> Option<usize> {
+fn tuning_block(handle: Handle, instances: usize, inventories: usize, types: usize, lara: usize) -> Option<usize> {
     let layout = &layout::current().aim_sweep;
     let (index, id) = (read_index(handle, lara + layout.type_handle)?, read_index(handle, lara + layout.type_handle + 4)?);
     let inventory = pool_record(handle, inventories, index, id, layout.inventory_size, layout.inventory_index)?;
@@ -81,7 +80,7 @@ fn tuning_block(handle: ProcessHandle, instances: usize, inventories: usize, typ
 
 /// The aim sweep in world space, as a capsule, if Lara has a weapon out, and whether it's pushing her. `lara` is her
 /// instance.
-pub fn read(handle: ProcessHandle, instances: usize, inventories: usize, types: usize, lara: usize) -> Option<(Capsule, bool)> {
+pub fn read(handle: Handle, instances: usize, inventories: usize, types: usize, lara: usize) -> Option<(Capsule, bool)> {
     let layout = &layout::current().aim_sweep;
     let block = tuning_block(handle, instances, inventories, types, lara)?;
     let start = read_floats::<3>(handle, block + layout.start)?;

@@ -1,4 +1,4 @@
-use crate::game_memory::{floats_at, read_pointer};
+use crate::game_memory::{Handle, floats_at, read_pointer, resolve};
 use crate::collision::{self, CapsuleShape};
 use crate::collision_mesh::CollisionMeshes;
 use crate::components::{self, Components};
@@ -37,6 +37,8 @@ const TOUCHING_HOLD: time::Duration = time::Duration::from_millis(150);
 pub struct OverlayHandler {
     active: bool,
     handle: ProcessHandle,
+    // The same, for reading the game's structures
+    memory: Handle,
     pid: Pid,
     arch: Architecture,
     base_addr: usize,
@@ -134,6 +136,7 @@ impl OverlayHandler {
         Some(OverlayHandler {
             active: false,
             handle: *handle,
+            memory: Handle::Live(*pid, *handle),
             pid: *pid,
             arch: *arch,
             base_addr: *base_addr,
@@ -177,7 +180,7 @@ impl OverlayHandler {
             objects: vec![],
             npc_capsules: HashMap::new(),
             triggers: vec![],
-            trigger_scripts: TriggerScripts::new(*pid, *handle, *base_addr),
+            trigger_scripts: TriggerScripts::new(Handle::Live(*pid, *handle), *base_addr),
             components: Components::new(*base_addr),
             lara_address: None,
             object_settings: (false, false, 0, false, false, 0),
@@ -192,9 +195,9 @@ impl OverlayHandler {
     // TR2013's aim sweep, found from Lara's proxy, and whether it's hitting something
     fn read_aim_sweep(&self, proxy: usize) -> Option<(Capsule, bool)> {
         let (instances, inventories, types) = self.aim_sweep_offsets.as_ref()?;
-        let lara = read_pointer(self.handle, proxy + crate::layout::current().aim_sweep.proxy_instance)?;
+        let lara = read_pointer(self.memory, proxy + crate::layout::current().aim_sweep.proxy_instance)?;
         crate::aim_sweep::read(
-            self.handle,
+            self.memory,
             self.resolve(instances).ok()?,
             self.resolve(inventories).ok()?,
             self.resolve(types).ok()?,
@@ -202,12 +205,9 @@ impl OverlayHandler {
         )
     }
 
-    fn resolve(&self, offsets: &Vec<usize>) -> io::Result<usize> {
-        let mut offsets = offsets.clone();
-        offsets[0] += self.base_addr;
-        DataMember::<u8>::new_offset(self.handle, offsets)
-            .set_arch(self.arch)
-            .get_offset()
+    fn resolve(&self, offsets: &[usize]) -> io::Result<usize> {
+        resolve(self.memory, self.base_addr, offsets)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "the pointer chain doesn't resolve"))
     }
 
     fn refresh_objects(
@@ -233,7 +233,7 @@ impl OverlayHandler {
             ((p.x - lara.x).powi(2) + (p.y - lara.y).powi(2) + (p.z - lara.z).powi(2)).sqrt()
         };
 
-        let all = self.object_list.as_mut().unwrap().instances(self.handle)?;
+        let all = self.object_list.as_mut().unwrap().instances(self.memory)?;
         let names: HashMap<u64, String> = all.iter().map(|i| (i.id, i.name.clone())).collect();
         let mut nearby: Vec<Instance> =
             all.into_iter().filter(|i| distance(&i.position) <= self.config.object_radius).collect();
@@ -242,7 +242,7 @@ impl OverlayHandler {
         // She has her own collision drawn, and counts as interactable herself (she has an InteractableComponent). She's
         // the nearest instance with a PlayerComponent.
         self.components.start_refresh();
-        let handle = self.handle;
+        let handle = self.memory;
         let components = &mut self.components;
         let lara_address = nearby
             .iter()
@@ -258,7 +258,7 @@ impl OverlayHandler {
             let full_name = instance.full_name.to_lowercase();
             let named = filters.iter().any(|f| name.contains(f.as_str()) || full_name.contains(f.as_str()));
             let kinds = if interactables || triggers || npcs {
-                trigger::read_kinds(self.handle, &mut self.components, instance.address)
+                trigger::read_kinds(self.memory, &mut self.components, instance.address)
             } else {
                 trigger::Kinds::default()
             };
@@ -301,7 +301,7 @@ impl OverlayHandler {
             if (by_action && actions & does == 0) || shown.len() >= MAX_TRIGGERS {
                 continue;
             }
-            if let Some(shape) = trigger::read_shape(self.handle, &mut self.components, instance.address) {
+            if let Some(shape) = trigger::read_shape(self.memory, &mut self.components, instance.address) {
                 let mut label = match by {
                     Some(by) => format!("{} ({})", instance.name, by),
                     None => instance.name.clone(),
@@ -320,14 +320,14 @@ impl OverlayHandler {
         let mut boxes = vec![];
         self.lara = None;
         if let (true, Some(address)) = (self.config.lara_capsules, lara_address) {
-            let shapes = collision::read_capsule_shapes(self.handle, &mut self.components, address)?;
+            let shapes = collision::read_capsule_shapes(self.memory, &mut self.components, address)?;
             if shapes.is_empty() {
                 // Better than nothing
                 boxes.push((
                     Instance {
                         address,
                         id: 0,
-                        position: object_list::read_position(self.handle, address)?,
+                        position: object_list::read_position(self.memory, address)?,
                         name: "Lara".to_string(),
                         full_name: String::new(),
                         bounds: None,
@@ -345,12 +345,12 @@ impl OverlayHandler {
         // Models can change (e.g. Lara's outfit), so these are refreshed with the list
         self.npc_capsules.clear();
         for (object, kind, category) in &mut boxes {
-            object.bounds = object_list::read_bounds(self.handle, &mut self.components, object.address);
+            object.bounds = object_list::read_bounds(self.memory, &mut self.components, object.address);
             if object.bounds.is_none() && *kind == BoxKind::Model {
                 *kind = BoxKind::Estimated;
             }
             if *category == ObjectCategory::Npc {
-                if let Ok(shapes) = collision::read_capsule_shapes(self.handle, &mut self.components, object.address) {
+                if let Ok(shapes) = collision::read_capsule_shapes(self.memory, &mut self.components, object.address) {
                     if !shapes.is_empty() {
                         self.npc_capsules.insert(object.address, shapes);
                     }
@@ -470,13 +470,13 @@ impl Handler for OverlayHandler {
             self.mesh_settings = mesh_settings;
             if let (true, Some(offsets)) = (show_meshes, &self.collision_scene_offsets) {
                 let (coarse, detailed, other_kinds) = mesh_settings;
-                self.collision_meshes.refresh(self.handle, self.resolve(offsets)?, coarse, detailed, other_kinds)?;
+                self.collision_meshes.refresh(self.memory, self.resolve(offsets)?, coarse, detailed, other_kinds)?;
             }
         }
 
         let probes = match (lara_collision && self.config.lara_probes, &self.player_probes_offsets) {
             (true, Some(offsets)) => {
-                let probes = collision::read_probes(self.handle, self.resolve(offsets)?)?;
+                let probes = collision::read_probes(self.memory, self.resolve(offsets)?)?;
                 collision::probes_near(&probes, &self.position.to_position())
             }
             _ => vec![],
@@ -487,13 +487,13 @@ impl Handler for OverlayHandler {
         // Her proxy is in a static (TR2013) or one of her components
         let proxy = match (show_proxy || follow_aim, &self.player_proxy_offsets, self.lara_address) {
             (true, Some(offsets), _) => self.resolve(offsets).ok(),
-            (true, None, Some(lara)) => self.components.get(self.handle, lara, components::PROXY),
+            (true, None, Some(lara)) => self.components.get(self.memory, lara, components::PROXY),
             _ => None,
         };
         // Proxies attached to hers that are found on their own (TR2013's combat proxy)
         let standalone: Vec<usize> =
             self.combat_proxy_offsets.as_ref().and_then(|offsets| self.resolve(offsets).ok()).into_iter().collect();
-        let mut proxies = proxy.and_then(|proxy| collision::read_proxy(self.handle, proxy, &standalone).ok());
+        let mut proxies = proxy.and_then(|proxy| collision::read_proxy(self.memory, proxy, &standalone).ok());
         // The aim sweep (TR2013) is drawn like the proxies attached to hers
         if let (Some(proxies), Some(rod)) = (&mut proxies, proxy.and_then(|p| self.read_aim_sweep(p))) {
             proxies.attached.push(rod);
@@ -511,7 +511,7 @@ impl Handler for OverlayHandler {
         let mut objects = vec![];
         for (object, kind, category) in &self.objects {
             // Objects can be unloaded between refreshes
-            let transform = match object_list::read_transform(self.handle, object.address) {
+            let transform = match object_list::read_transform(self.memory, object.address) {
                 Ok(t) => t,
                 Err(_) => continue,
             };
@@ -524,7 +524,7 @@ impl Handler for OverlayHandler {
             let placed = self
                 .npc_capsules
                 .get(&object.address)
-                .and_then(|shapes| collision::place_capsules(self.handle, object.address, shapes).ok())
+                .and_then(|shapes| collision::place_capsules(self.memory, object.address, shapes).ok())
                 .and_then(|capsules| capsule_bounds(&capsules, &transform));
             let (min, max) = placed.unwrap_or((min, max));
             objects.push(ObjectBox {
@@ -542,7 +542,7 @@ impl Handler for OverlayHandler {
         let mut trigger_lines = vec![];
         let mut trigger_faces = vec![];
         for (trigger, shape, category, label, action) in &self.triggers {
-            let transform = match object_list::read_transform(self.handle, trigger.address) {
+            let transform = match object_list::read_transform(self.memory, trigger.address) {
                 Ok(t) => t,
                 Err(_) => continue,
             };
@@ -573,7 +573,7 @@ impl Handler for OverlayHandler {
         let attached: Vec<_> = attached.iter().map(|(capsule, _)| *capsule).collect();
 
         let capsules = match (lara_collision, &self.lara) {
-            (true, Some((address, shapes))) => collision::place_capsules(self.handle, *address, shapes)?,
+            (true, Some((address, shapes))) => collision::place_capsules(self.memory, *address, shapes)?,
             _ => vec![],
         };
 
@@ -588,13 +588,13 @@ impl Handler for OverlayHandler {
             // Its last row is where it is, the one before which way it faces
             let origin = Vector3::new(m[12], m[13], m[14]);
             let forward = Vector3::new(m[8], m[9], m[10]).try_normalize(1e-6)?;
-            let hit = self.collision_meshes.raycast(self.handle, origin, forward, MAX_AIM_DISTANCE)?;
+            let hit = self.collision_meshes.raycast(self.memory, origin, forward, MAX_AIM_DISTANCE)?;
             let point = origin + forward * hit;
             Some(Position { x: point.x, y: point.y, z: point.z })
         });
         let mesh_centre = aim_point.unwrap_or(position);
         let triangles = if show_meshes {
-            self.collision_meshes.triangles_near(self.handle, &mesh_centre, coarse_radius, detailed_radius, MAX_TRIANGLES)
+            self.collision_meshes.triangles_near(self.memory, &mesh_centre, coarse_radius, detailed_radius, MAX_TRIANGLES)
         } else {
             vec![]
         };

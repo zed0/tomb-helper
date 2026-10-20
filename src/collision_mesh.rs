@@ -1,9 +1,9 @@
-use crate::game_memory::{pointer_at, read_u32, u16_at, u32_at, vector_at};
+use crate::game_memory::{Handle, pointer_at, read_u32, u16_at, u32_at, vector_at};
 use crate::layout;
 use crate::position::Position;
 use crate::ui_ipc_data::{SurfaceKind, Triangle};
 use nalgebra::Vector3;
-use process_memory::{CopyAddress, ProcessHandle};
+use process_memory::CopyAddress;
 use std::collections::{HashMap, HashSet};
 use std::io;
 
@@ -64,7 +64,7 @@ impl CollisionMeshes {
     // collides with them and `coarse`).
     pub fn refresh(
         &mut self,
-        handle: ProcessHandle,
+        handle: Handle,
         scene_address: usize,
         coarse: bool,
         detailed: bool,
@@ -154,7 +154,7 @@ impl CollisionMeshes {
     }
 
     // Drops the cached mesh if the header changed, so it gets loaded again when it's needed
-    fn mesh_header(&mut self, handle: ProcessHandle, address: usize) -> io::Result<Vec<u8>> {
+    fn mesh_header(&mut self, handle: Handle, address: usize) -> io::Result<Vec<u8>> {
         let mut header = vec![0u8; layout::current().collision_mesh.header_size];
         handle.copy_address(address, &mut header)?;
         if self.meshes.get(&address).map_or(false, |m| m.header != header) {
@@ -166,7 +166,7 @@ impl CollisionMeshes {
     // The triangles that come within the radius for their kind of mesh of `centre`, closest first
     pub fn triangles_near(
         &mut self,
-        handle: ProcessHandle,
+        handle: Handle,
         centre: &Position,
         coarse_radius: f32,
         detailed_radius: f32,
@@ -204,7 +204,7 @@ impl CollisionMeshes {
 impl CollisionMeshes {
     /// How far along the ray from `origin` towards `direction` (unit length) it first hits one of the meshes, if it does
     /// within `max`
-    pub fn raycast(&mut self, handle: ProcessHandle, origin: Vector3<f32>, direction: Vector3<f32>, max: f32) -> Option<f32> {
+    pub fn raycast(&mut self, handle: Handle, origin: Vector3<f32>, direction: Vector3<f32>, max: f32) -> Option<f32> {
         let layout = &layout::current().collision_instance;
         let margin = Vector3::repeat(RAY_MARGIN);
         let mut nearest: Option<f32> = None;
@@ -231,7 +231,7 @@ impl CollisionMeshes {
 
 // Places the placement's mesh in the world with the matrix in `bytes` (the instance as it is now), loading it if need
 // be; false if it can't be read
-fn place(handle: ProcessHandle, placement: &mut Placement, meshes: &mut HashMap<usize, Mesh>, bytes: &[u8]) -> bool {
+fn place(handle: Handle, placement: &mut Placement, meshes: &mut HashMap<usize, Mesh>, bytes: &[u8]) -> bool {
     let layout = &layout::current().collision_instance;
     if !meshes.contains_key(&placement.mesh) {
         match read_mesh(handle, placement.mesh) {
@@ -298,7 +298,7 @@ fn ray_triangle(origin: &Vector3<f32>, direction: &Vector3<f32>, triangle: &Tria
     Some(t)
 }
 
-pub fn read_mesh(handle: ProcessHandle, address: usize) -> io::Result<Mesh> {
+pub fn read_mesh(handle: Handle, address: usize) -> io::Result<Mesh> {
     let layout = &layout::current().collision_mesh;
     let mut header = vec![0u8; layout.header_size];
     handle.copy_address(address, &mut header)?;
