@@ -107,7 +107,7 @@ pub fn read(handle: Handle, instances: usize, inventories: usize, types: usize, 
             + Vector3::new(m[0], m[1], m[2]) * p[0]
             + Vector3::new(m[4], m[5], m[6]) * p[1]
             + Vector3::new(m[8], m[9], m[10]) * p[2];
-        Position { x: v.x, y: v.y, z: v.z }
+        Position::from(v)
     };
     // The push is added to the player's movement this frame, as one kind of it
     let pushing = read_index(handle, lara + layout.instance_player)

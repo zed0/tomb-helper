@@ -173,7 +173,7 @@ impl CollisionMeshes {
         max: usize,
     ) -> Vec<Triangle> {
         let layout = &layout::current().collision_instance;
-        let centre = Vector3::new(centre.x, centre.y, centre.z);
+        let centre = centre.vector();
         let mut found = vec![];
         for placement in &mut self.placements {
             let radius = if placement.detailed { detailed_radius } else { coarse_radius };
@@ -280,7 +280,7 @@ fn ray_hits_box(origin: &Vector3<f32>, direction: &Vector3<f32>, max: f32, min: 
 
 // How far along the ray it hits the triangle (from either side), by Moller-Trumbore
 fn ray_triangle(origin: &Vector3<f32>, direction: &Vector3<f32>, triangle: &Triangle) -> Option<f32> {
-    let [a, b, c] = triangle.corners.map(|p| Vector3::new(p.x, p.y, p.z));
+    let [a, b, c] = triangle.corners.map(|p| p.vector());
     let (ab, ac) = (b - a, c - a);
     let p = direction.cross(&ac);
     let determinant = ab.dot(&p);
@@ -355,7 +355,7 @@ fn place_triangles(mesh: &Mesh, matrix: &[u8], flipped: bool, detailed: bool) ->
                 min: corners[0].inf(&corners[1]).inf(&corners[2]),
                 max: corners[0].sup(&corners[1]).sup(&corners[2]),
                 triangle: Triangle {
-                    corners: corners.map(|c| Position { x: c.x, y: c.y, z: c.z }),
+                    corners: corners.map(Position::from),
                     kind: surface_kind(&corners),
                     detailed,
                 },

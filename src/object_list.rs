@@ -133,7 +133,7 @@ pub fn read_transform(handle: Handle, instance_address: usize) -> io::Result<[f3
     let mut matrix = [0f32; 16];
     for axis in 0..3 {
         let old_axis = read_position_from(&axes, axis * 16);
-        let scale = Vector3::new(old_axis.x, old_axis.y, old_axis.z).norm();
+        let scale = old_axis.vector().norm();
         let direction = rotation.matrix().column(axis) * scale;
         matrix[axis * 4..axis * 4 + 3].copy_from_slice(direction.as_slice());
     }

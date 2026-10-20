@@ -183,7 +183,7 @@ pub fn read_proxy(handle: Handle, proxy: usize, standalone: &[usize]) -> io::Res
         capsules.push((
             size,
             offset,
-            Capsule { a: to_position(&(shape_centre - half_axis)), b: to_position(&(shape_centre + half_axis)), radius },
+            Capsule { a: Position::from(shape_centre - half_axis), b: Position::from(shape_centre + half_axis), radius },
         ));
     }
     let shapes: Vec<Capsule> = capsules.into_iter().map(|(_, _, capsule)| capsule).collect();
@@ -268,8 +268,8 @@ pub fn read_contacts(handle: Handle, proxy: usize) -> Vec<Vector3<f32>> {
 
 fn capsule_segment(capsule: &Capsule) -> (Vector3<f32>, Vector3<f32>) {
     (
-        Vector3::new(capsule.a.x, capsule.a.y, capsule.a.z),
-        Vector3::new(capsule.b.x, capsule.b.y, capsule.b.z),
+        capsule.a.vector(),
+        capsule.b.vector(),
     )
 }
 
@@ -342,7 +342,7 @@ fn read_physics_capsule(handle: Handle, body: usize) -> Option<(Capsule, Vector3
     let radius = f32_at(&bytes, layout.radius);
     let half_axis = quaternion_at(&bytes, layout.rotation) * Vector3::z() * (f32_at(&bytes, layout.radius + 4) / 2.0);
     Some((
-        Capsule { a: to_position(&(centre - half_axis)), b: to_position(&(centre + half_axis)), radius },
+        Capsule { a: Position::from(centre - half_axis), b: Position::from(centre + half_axis), radius },
         centre,
         bytes[layout.touching] != 0,
     ))
@@ -380,9 +380,9 @@ pub fn read_probes(handle: Handle, probes_address: usize) -> io::Result<Vec<Prob
             let hit = vector_at(record, layout.hit);
             let has_hit = distance_to_segment(&hit, &start, &end) <= PROBE_HIT_TOLERANCE;
             Probe {
-                start: to_position(&start),
-                end: to_position(&end),
-                hit: to_position(&hit),
+                start: Position::from(start),
+                end: Position::from(end),
+                hit: Position::from(hit),
                 has_hit,
             }
         })
@@ -391,10 +391,10 @@ pub fn read_probes(handle: Handle, probes_address: usize) -> io::Result<Vec<Prob
 
 // The probes starting near the position (a character's feet)
 pub fn probes_near(probes: &[Probe], position: &Position) -> Vec<Probe> {
-    let position = Vector3::new(position.x, position.y, position.z);
+    let position = position.vector();
     probes
         .iter()
-        .filter(|p| (Vector3::new(p.start.x, p.start.y, p.start.z) - position).norm() < PROBE_OWNER_DISTANCE)
+        .filter(|p| (p.start.vector() - position).norm() < PROBE_OWNER_DISTANCE)
         .copied()
         .collect()
 }
@@ -405,17 +405,13 @@ fn distance_to_segment(point: &Vector3<f32>, start: &Vector3<f32>, end: &Vector3
     (point - (start + line * t)).norm()
 }
 
-fn to_position(vector: &Vector3<f32>) -> Position {
-    Position { x: vector.x, y: vector.y, z: vector.z }
-}
-
 // `point * matrix` for a row-major matrix of row vectors, like the game's
 fn to_world(matrix: &[u8], point: &Vector3<f32>) -> Position {
     let world = vector_at(matrix, 0) * point.x
         + vector_at(matrix, 16) * point.y
         + vector_at(matrix, 32) * point.z
         + vector_at(matrix, 48);
-    Position { x: world.x, y: world.y, z: world.z }
+    Position::from(world)
 }
 
 
