@@ -249,6 +249,7 @@ All of the above works for TR2013 too, with a few differences:
 
 - Its later builds (e.g. the current Steam one) were made with a newer compiler than the original release, so their code isn't alike byte for byte. When `derive` can't match a static that way, it matches by what the code around each reference does instead (the strings and imports it uses, its constants and field offsets), and says `(by what the code does)`. A match is only sure if deriving it back leads to where it started, or near it. Pointer chain levels are copied rather than matched between such builds, since a recompile doesn't change how structs are laid out, so they're always `UNSURE`: check them with `probe`.
 - Lara's position isn't in a static the code uses directly in any build, and the array it's in changed between builds, so find it with `chains` with the game running, rather than with `derive`.
+- The original release (v1.01.748.0) has the overlay offsets too. Steam starts its own install if you start that one directly, which a `steam_appid.txt` containing `203160` next to its exe stops.
 - `update-offsets` finds the overlay's offsets as for the other games, with Lara found through her movement proxy (a static in TR2013) rather than a component. The inventory and type pools the aim sweep uses can only be derived from a known build with `--from`.
 - The newer builds don't inline small getters (like the one for the camera), so `trace` and `chains` follow what a getter returns into the code calling it.
 

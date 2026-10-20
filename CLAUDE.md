@@ -372,6 +372,12 @@ again (`derive` plus live checks).
     which end is which when drawn.
   - The instance array's header (+0xC0) differs from slot to slot (and slot 0's +0x80 is 0 where the rest are -1), so
     `discover` looks for runs of nonzero headers and checks them by their objects' names.
+- v1.01.748 has the overlay too, all found by `update-offsets --from` the Steam exe (with that install's
+  `steam_appid.txt`, 203160, so it runs from D: rather than Steam starting its own copy): `check` passes everything that
+  runs. Its layout is Steam's but for Lara's proxy, a static at mod+0x117D200 that points at her instance through +0x10
+  (Steam +0x18, which `update-offsets` found and moved itself; Steam's +0x10 is flags, so `proxy.flags` is null here
+  until found). `TypePool` is unverified (`--from` was unsure), so there's no aim sweep yet. The Steam build's layout
+  witnesses don't match into it (a different compiler, and witnesses match by bytes).
 - Live tools all work on Steam TR2013: `probe`, `chains`, `update-offsets` (finds every static but the two pools, which `--from` derives), `watch`/`watch-raw` (debug
   registers set in the native context, registers read from the WOW64 one; 800 traps in 2s on the QueryPerformanceCounter
   import slot). Lara's position and the camera weren't read at all while the game was unfocused (paused).
