@@ -4,7 +4,7 @@
 //! is held through her weapon slot: her own handle -> her inventory record -> its map, keyed by its current item -> the
 //! weapon's instance -> its type record -> the tuning block. Where everything is is in `layout::AimSweepLayout`.
 
-use crate::game_memory::{Handle, read_floats, read_u32};
+use crate::game_memory::{Handle, read_floats, read_pointer, read_u32};
 use crate::layout;
 use crate::object_list;
 use crate::position::Position;
@@ -13,6 +13,8 @@ use nalgebra::Vector3;
 
 // Map nodes followed at most
 const MAX_NODES: usize = 64;
+// How far from Lara a tuning block's points can be, and how long its sweep
+const MAX_SWEEP: f32 = 500.0;
 // How far she has to be pushed (horizontally, in a frame) to count as pushed
 const MIN_PUSH: f32 = 0.05;
 
@@ -73,9 +75,24 @@ fn tuning_block(handle: Handle, instances: usize, inventories: usize, types: usi
     }
     let weapon_handle = (read_index(handle, node + layout.node_item)?, read_index(handle, node + layout.node_item + 4)?);
     let weapon = instance(handle, instances, weapon_handle.0, weapon_handle.1)?;
+    // The weapon pool has a record per weapon instance, by its handle, with its tuning
     let type_handle = (read_index(handle, weapon + layout.type_handle)?, read_index(handle, weapon + layout.type_handle + 4)?);
     let record = pool_record(handle, types, type_handle.0, type_handle.1, layout.type_size, layout.type_index)?;
-    Some(read_index(handle, record + layout.type_data)? + layout.block)
+    Some(read_pointer(handle, record + layout.type_data)? + layout.block)
+}
+
+// A tuning block's sweep in Lara's space (start, end, radius), if it's a sane one
+fn read_sweep(handle: Handle, block: usize) -> Option<([f32; 3], [f32; 3], f32)> {
+    let layout = &layout::current().aim_sweep;
+    let start = read_floats::<3>(handle, block + layout.start)?;
+    let middle = read_floats::<3>(handle, block + layout.middle)?;
+    let radius = read_floats::<1>(handle, block + layout.radius)?[0];
+    // It's swept from the start to the middle point less the radius
+    let end = [middle[0], middle[1] - radius, middle[2]];
+    let near = |p: &[f32; 3]| p.iter().all(|v| v.is_finite() && v.abs() < MAX_SWEEP);
+    let length = ((end[0] - start[0]).powi(2) + (end[1] - start[1]).powi(2) + (end[2] - start[2]).powi(2)).sqrt();
+    let sane = near(&start) && near(&middle) && radius > 0.0 && radius < 100.0 && length > 10.0 && length < MAX_SWEEP;
+    sane.then(|| (start, end, radius))
 }
 
 /// The aim sweep in world space, as a capsule, if Lara has a weapon out, and whether it's pushing her. `lara` is her
@@ -83,14 +100,7 @@ fn tuning_block(handle: Handle, instances: usize, inventories: usize, types: usi
 pub fn read(handle: Handle, instances: usize, inventories: usize, types: usize, lara: usize) -> Option<(Capsule, bool)> {
     let layout = &layout::current().aim_sweep;
     let block = tuning_block(handle, instances, inventories, types, lara)?;
-    let start = read_floats::<3>(handle, block + layout.start)?;
-    let middle = read_floats::<3>(handle, block + layout.middle)?;
-    let radius = read_floats::<1>(handle, block + layout.radius)?[0];
-    if !(radius > 0.0 && radius < 100.0) {
-        return None;
-    }
-    // It's swept from the start to the middle point less the radius, in her space
-    let end = [middle[0], middle[1] - radius, middle[2]];
+    let (start, end, radius) = read_sweep(handle, block)?;
     let m = object_list::read_transform(handle, lara).ok()?;
     let to_world = |p: [f32; 3]| {
         let v = Vector3::new(m[12], m[13], m[14])

@@ -375,9 +375,19 @@ again (`derive` plus live checks).
 - v1.01.748 has the overlay too, all found by `update-offsets --from` the Steam exe (with that install's
   `steam_appid.txt`, 203160, so it runs from D: rather than Steam starting its own copy): `check` passes everything that
   runs. Its layout is Steam's but for Lara's proxy, a static at mod+0x117D200 that points at her instance through +0x10
-  (Steam +0x18, which `update-offsets` found and moved itself; Steam's +0x10 is flags, so `proxy.flags` is null here
-  until found). `TypePool` is unverified (`--from` was unsure), so there's no aim sweep yet. The Steam build's layout
-  witnesses don't match into it (a different compiler, and witnesses match by bytes).
+  (Steam +0x18, which `update-offsets` found and moved itself). Its proxies' flags are at +0x8 (Steam +0x10), found
+  by sampling while aiming: the combat proxy's bit 0x2 is set and Lara's bit 0x20 clears while she aims. The Steam build's layout witnesses don't match into it (a different compiler, and witnesses match by
+  bytes).
+- v1.01.748's aim sweep works the same way as Steam's: `TypePool` is the weapon pool (mod+0x1F54FE0), a record per
+  weapon *instance* keyed by its handle (instance +0x50, which is its own handle in both builds), whose data pointer is
+  at +0x8 (Steam +0x10), tuning block at data+0x298. A rifle has two instances, only one of them with its real tuning
+  (the other, like the axes, has a default (0, 0, 100) to (0, -100, 100) r10), so the tuning has to come through the
+  instance, not its type: the instance's +0x64 is shared by both and led to the default for the rifle. Its handle
+  entries are (record, flags, id, 0), not (record, -1, id, 0) like the inventory's, which hid it from a first search.
+  The inventory pool's records start 8 bytes before `aim_sweep.records` (0xBC10, which both pools share), so its
+  fields are 8 earlier in the layout. The player is [[instance+0xA4]+0xC] (Steam [[+0xA8]+0x14]); the push at +0x540
+  isn't checked. Weapons in both builds: pistol (-10, 0, 120) to (-33, -70, 120) r8, shotgun (-7, 0, 110) to (-27,
+  -70, 110) r7, rifle (-10, 0, 120) to (-30, -75, 120) r5, bow (-10, 0, 125) to (-20, -90, 125) r5.
 - Live tools all work on Steam TR2013: `probe`, `chains`, `update-offsets` (finds every static but the two pools, which `--from` derives), `watch`/`watch-raw` (debug
   registers set in the native context, registers read from the WOW64 one; 800 traps in 2s on the QueryPerformanceCounter
   import slot). Lara's position and the camera weren't read at all while the game was unfocused (paused).
