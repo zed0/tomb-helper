@@ -8,7 +8,6 @@ use crate::collision::AttachedProxy;
 use crate::game_memory::{Handle, read_floats, read_pointer, read_u32};
 use crate::layout;
 use crate::object_list;
-use crate::position::Position;
 use crate::ui_ipc_data::Capsule;
 use nalgebra::Vector3;
 
@@ -103,13 +102,7 @@ pub fn read(handle: Handle, instances: usize, inventories: usize, types: usize, 
     let block = tuning_block(handle, instances, inventories, types, lara)?;
     let (start, end, radius) = read_sweep(handle, block)?;
     let m = object_list::read_transform(handle, lara).ok()?;
-    let to_world = |p: [f32; 3]| {
-        let v = Vector3::new(m[12], m[13], m[14])
-            + Vector3::new(m[0], m[1], m[2]) * p[0]
-            + Vector3::new(m[4], m[5], m[6]) * p[1]
-            + Vector3::new(m[8], m[9], m[10]) * p[2];
-        Position::from(v)
-    };
+    let to_world = |p: [f32; 3]| object_list::to_world(&m, Vector3::from(p));
     // The push is added to the player's movement this frame, as one kind of it
     let pushing = read_index(handle, lara + layout.instance_player)
         .and_then(|p| read_index(handle, p + layout.player))

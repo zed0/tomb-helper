@@ -1,6 +1,7 @@
 use crate::game_memory::{Handle, f32_at, pointer_at, read_pointer, read_u32, u32_at, vector_at};
 use crate::components::{self, Components};
 use crate::layout;
+use crate::object_list;
 use crate::position::Position;
 use crate::ui_ipc_data::TriggerCategory;
 use nalgebra::{Matrix3, Vector3};
@@ -178,11 +179,7 @@ fn read_component_shape(handle: Handle, components: &mut Components, instance_ad
 
 // The shape's outline as world space lines, for a row-major object-to-world matrix of row vectors
 pub fn outline(shape: &Shape, matrix: &[f32; 16]) -> Vec<(Position, Position)> {
-    let row = |r: usize| Vector3::new(matrix[r * 4], matrix[r * 4 + 1], matrix[r * 4 + 2]);
-    let world = |p: Vector3<f32>| {
-        let w = row(0) * p.x + row(1) * p.y + row(2) * p.z + row(3);
-        Position::from(w)
-    };
+    let world = |p: Vector3<f32>| object_list::to_world(matrix, p);
     let mut lines = vec![];
     let mut line = |a: Vector3<f32>, b: Vector3<f32>| lines.push((world(a), world(b)));
     match shape {
@@ -287,11 +284,7 @@ pub fn contains(shape: &Shape, matrix: &[f32; 16], point: &Position) -> bool {
 // The shape's surface as world space triangles (winding not consistent), for a row-major object-to-world matrix of row
 // vectors
 pub fn faces(shape: &Shape, matrix: &[f32; 16]) -> Vec<[Position; 3]> {
-    let row = |r: usize| Vector3::new(matrix[r * 4], matrix[r * 4 + 1], matrix[r * 4 + 2]);
-    let world = |p: Vector3<f32>| {
-        let w = row(0) * p.x + row(1) * p.y + row(2) * p.z + row(3);
-        Position::from(w)
-    };
+    let world = |p: Vector3<f32>| object_list::to_world(matrix, p);
     let mut faces = vec![];
     let quad = |a: Vector3<f32>, b: Vector3<f32>, c: Vector3<f32>, d: Vector3<f32>| {
         [[world(a), world(b), world(c)], [world(a), world(c), world(d)]]
