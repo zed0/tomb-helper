@@ -1,6 +1,6 @@
 use crate::game::Game;
 use crate::game_memory::{Handle, floats_at};
-use crate::collision::{self, CapsuleShape};
+use crate::collision::{self, AttachedProxy, CapsuleShape, ProxyCapsules};
 use crate::collision_mesh::CollisionMeshes;
 use crate::components::Components;
 use crate::config::OverlayConfig;
@@ -19,7 +19,7 @@ use std::error::Error;
 use hudhook::inject::Process;
 use process_memory::{Architecture, CopyAddress, DataMember, Memory, Pid, ProcessHandle};
 use crate::trigger::{self, Shape};
-use crate::trigger_scripts::{SetOffBy, TriggerScripts};
+use crate::trigger_scripts::{SetOffBy, TriggerScript, TriggerScripts};
 use crate::handler::HelperState;
 use crate::ui_ipc_data::{REQUEST_RESTORE_POSITION, REQUEST_STORE_POSITION, REQUEST_TOGGLE_FLYING, name_bytes, text_bytes, trigger_action_bit, trigger_action_mask, projection_from_lens, BoxKind, Capsule, Line, ObjectBox, ObjectCategory, SharedMemoryManager, TriggerCategory, TriggerFace, TriggerLabel, UiSettings, MAX_ATTACHED, MAX_OBJECTS, MAX_TRIANGLES, MAX_TRIGGERS};
 
@@ -70,6 +70,69 @@ struct ShownTrigger {
     label: String,
     // The `TRIGGER_ACTIONS` index it's coloured by
     action: u32,
+}
+
+impl MeshSettings {
+    fn any(&self) -> bool {
+        self.coarse || self.detailed
+    }
+}
+
+// What the window says to draw this tick
+struct TickSettings {
+    objects: ObjectSettings,
+    meshes: MeshSettings,
+    // Lara's capsules, probes and proxies
+    lara_collision: bool,
+    // The meshes round where Lara's aiming, while she aims
+    follow_aim: bool,
+    // How far from Lara (or where she's aiming) the meshes are drawn
+    coarse_radius: f32,
+    detailed_radius: f32,
+}
+
+impl TickSettings {
+    // "Collision meshes" turns all the collision off at once
+    fn read(settings: &UiSettings) -> TickSettings {
+        let collision = settings.collision.get();
+        let meshes = MeshSettings {
+            coarse: collision && settings.coarse_meshes.get(),
+            detailed: collision && settings.detailed_meshes.get(),
+            other_kinds: settings.other_kinds.get(),
+        };
+        TickSettings {
+            objects: ObjectSettings {
+                interactables: settings.interactables.get(),
+                triggers: settings.triggers.get(),
+                trigger_categories: settings.trigger_categories.get(),
+                npcs: settings.npcs.get(),
+                triggers_by_action: settings.triggers_by_action.get(),
+                trigger_actions: settings.trigger_actions.get(),
+            },
+            follow_aim: meshes.any() && settings.follow_aim.get(),
+            meshes,
+            lara_collision: collision && settings.lara_collision.get(),
+            coarse_radius: settings.coarse_radius.get(),
+            detailed_radius: settings.detailed_radius.get(),
+        }
+    }
+}
+
+// Lara's proxies as drawn, touching if they were within `TOUCHING_HOLD`
+struct DrawnProxies {
+    shapes: Vec<Capsule>,
+    touching: bool,
+    attached: Vec<Capsule>,
+    attached_touching: [bool; MAX_ATTACHED],
+    attached_active: bool,
+}
+
+// The shown triggers' world space outlines, faces and labels
+#[derive(Default)]
+struct TriggerGeometry {
+    labels: Vec<TriggerLabel>,
+    lines: Vec<Line>,
+    faces: Vec<TriggerFace>,
 }
 
 pub struct OverlayHandler {
@@ -179,9 +242,8 @@ impl OverlayHandler {
         })
     }
 
+    // Finds Lara, and the objects and triggers near her to show
     fn refresh_objects(&mut self, settings: ObjectSettings) -> Result<(), Box<dyn Error>> {
-        let ObjectSettings { interactables, triggers, trigger_categories, npcs, triggers_by_action, trigger_actions } =
-            settings;
         if self.object_list.is_none() {
             if !self.game.has(AddressType::InstanceArray) {
                 return Ok(());
@@ -189,90 +251,97 @@ impl OverlayHandler {
             self.object_list = Some(ObjectList::new(self.game.require(AddressType::InstanceArray)?));
         }
 
-        let filters: Vec<String> = self.config.object_filters.iter().map(|f| f.to_lowercase()).collect();
         let lara = self.position.to_position();
-
         let all = self.object_list.as_mut().unwrap().instances(self.game.handle)?;
         let names: HashMap<u64, String> = all.iter().map(|i| (i.id, i.name.clone())).collect();
         let mut nearby: Vec<Instance> =
             all.into_iter().filter(|i| lara.distance(&i.position) <= self.config.object_radius).collect();
         nearby.sort_by(|a, b| lara.distance(&a.position).total_cmp(&lara.distance(&b.position)));
 
-        // She has her own collision drawn, and counts as interactable herself (she has an InteractableComponent)
         self.components.start_refresh();
         let nearest: Vec<usize> = nearby.iter().map(|i| i.address).collect();
-        let lara_address = self.game.find_lara(&mut self.components, &nearest);
-        self.lara_address = lara_address;
+        self.lara_address = self.game.find_lara(&mut self.components, &nearest);
 
+        let (objects, triggers) = self.choose(nearby, &settings);
+        // What sets them off is found in the background, so it can change from "unchecked" between refreshes
+        if settings.triggers {
+            let ids: Vec<u64> = triggers.iter().map(|(i, _)| i.id).collect();
+            self.trigger_scripts.update(&ids, &names);
+        }
+        self.triggers = self.shown_triggers(triggers, &settings);
+        self.objects = self.shown_objects(objects)?;
+        Ok(())
+    }
+
+    // Which of the instances near Lara to box, and the triggers that might be shown (by what they do, once that's known)
+    fn choose(
+        &mut self,
+        nearby: Vec<Instance>,
+        settings: &ObjectSettings,
+    ) -> (Vec<ShownObject>, Vec<(Instance, TriggerCategory)>) {
+        let filters: Vec<String> = self.config.object_filters.iter().map(|f| f.to_lowercase()).collect();
         let mut objects = vec![];
-        let mut trigger_shapes = vec![];
+        let mut triggers = vec![];
         for instance in nearby {
             let name = instance.name.to_lowercase();
             let full_name = instance.full_name.to_lowercase();
             let named = filters.iter().any(|f| name.contains(f.as_str()) || full_name.contains(f.as_str()));
-            let kinds = if interactables || triggers || npcs {
+            let kinds = if settings.interactables || settings.triggers || settings.npcs {
                 trigger::read_kinds(self.game.handle, &mut self.components, instance.address)
             } else {
                 trigger::Kinds::default()
             };
             let category = trigger::categorise(&instance.name, &instance.full_name);
-            // By what they do once that's known, below
-            let wanted = triggers_by_action || trigger_categories & category.bit() != 0;
-            if triggers && kinds.trigger && wanted {
-                trigger_shapes.push((instance.clone(), category));
+            let wanted = settings.triggers_by_action || settings.trigger_categories & category.bit() != 0;
+            if settings.triggers && kinds.trigger && wanted {
+                triggers.push((instance.clone(), category));
             }
-            let is_lara = Some(instance.address) == lara_address;
-            if named {
-                objects.push((instance, ObjectCategory::Named));
+            // She has her own collision drawn, and counts as interactable herself (she has an InteractableComponent)
+            let is_lara = Some(instance.address) == self.lara_address;
+            let category = if named {
+                ObjectCategory::Named
             } else if is_lara {
                 continue;
             } else if kinds.npc {
                 // They have interaction components too (for looting them)
-                if npcs {
-                    objects.push((instance, ObjectCategory::Npc));
+                if !settings.npcs {
+                    continue;
                 }
-            } else if interactables && kinds.interactable && trigger::for_lara(&instance.name) {
-                objects.push((instance, ObjectCategory::Interactable));
-            }
-        }
-        // What sets them off is found in the background, so it can change from "unchecked" between refreshes
-        let ids: Vec<u64> = trigger_shapes.iter().map(|(i, _)| i.id).collect();
-        if triggers {
-            self.trigger_scripts.update(&ids, &names);
-        }
-        let mut shown = vec![];
-        for (instance, category) in trigger_shapes {
-            let script = self.trigger_scripts.script(instance.id);
-            let by = match script.map(|s| &s.set_off_by) {
-                Some(SetOffBy::Lara) => Some("Lara".to_string()),
-                Some(SetOffBy::Instance(name)) => Some(name.clone().unwrap_or_else(|| "an instance".to_string())),
-                Some(SetOffBy::Script) => Some("script".to_string()),
-                Some(SetOffBy::Nothing) => Some("no script".to_string()),
-                None => None,
+                ObjectCategory::Npc
+            } else if settings.interactables && kinds.interactable && trigger::for_lara(&instance.name) {
+                ObjectCategory::Interactable
+            } else {
+                continue;
             };
+            objects.push(ShownObject { instance, kind: BoxKind::Model, category });
+        }
+        (objects, triggers)
+    }
+
+    // The triggers to show, with their shapes and labels
+    fn shown_triggers(&mut self, candidates: Vec<(Instance, TriggerCategory)>, settings: &ObjectSettings) -> Vec<ShownTrigger> {
+        let mut shown = vec![];
+        for (instance, category) in candidates {
+            let script = self.trigger_scripts.script(instance.id);
             let does = script.map_or(trigger_action_bit("unchecked"), |s| s.actions);
-            if (triggers_by_action && trigger_actions & does == 0) || shown.len() >= MAX_TRIGGERS {
+            if (settings.triggers_by_action && settings.trigger_actions & does == 0) || shown.len() >= MAX_TRIGGERS {
                 continue;
             }
             if let Some(shape) = trigger::read_shape(self.game.handle, &mut self.components, instance.address) {
-                let mut label = match by {
-                    Some(by) => format!("{} ({})", instance.name, by),
-                    None => instance.name.clone(),
-                };
-                // What it does on a second line
-                if let Some(script) = script.filter(|s| !s.does.is_empty()) {
-                    label = format!("{}\n{}", label, script.does.join(", "));
-                }
+                let label = trigger_label(&instance.name, script);
                 // The first of what it does that's shown (all of it when shown by name)
-                let shown_does = if triggers_by_action { does & trigger_actions } else { does };
+                let shown_does = if settings.triggers_by_action { does & settings.trigger_actions } else { does };
                 shown.push(ShownTrigger { instance, shape, category, label, action: shown_does.trailing_zeros() });
             }
         }
-        self.triggers = shown;
+        shown
+    }
 
+    // The objects to box, and Lara if her hit capsules are to be drawn but she has none, with their models' bounds
+    fn shown_objects(&mut self, objects: Vec<ShownObject>) -> Result<Vec<ShownObject>, Box<dyn Error>> {
         let mut boxes = vec![];
         self.lara = None;
-        if let (true, Some(address)) = (self.config.lara_capsules, lara_address) {
+        if let (true, Some(address)) = (self.config.lara_capsules, self.lara_address) {
             let shapes = collision::read_capsule_shapes(self.game.handle, &mut self.components, address)?;
             if shapes.is_empty() {
                 // Better than nothing
@@ -292,7 +361,7 @@ impl OverlayHandler {
                 self.lara = Some((address, shapes));
             }
         }
-        boxes.extend(objects.into_iter().map(|(instance, category)| ShownObject { instance, kind: BoxKind::Model, category }));
+        boxes.extend(objects);
         boxes.truncate(MAX_OBJECTS);
 
         // Models can change (e.g. Lara's outfit), so these are refreshed with the list
@@ -310,8 +379,162 @@ impl OverlayHandler {
                 }
             }
         }
-        self.objects = boxes;
+        Ok(boxes)
+    }
+
+    // Actions the window's buttons asked for, which `take_actions` hands on
+    fn take_requests(&mut self) {
+        let requests = self.ui_memory_manager.get().settings.requests.swap(0, std::sync::atomic::Ordering::SeqCst);
+        for (bit, action) in [
+            (REQUEST_STORE_POSITION, Action::StorePosition {}),
+            (REQUEST_RESTORE_POSITION, Action::RestorePosition {}),
+            (REQUEST_TOGGLE_FLYING, Action::ToggleActive {}),
+        ] {
+            if requests & bit != 0 {
+                self.requested.push(action);
+            }
+        }
+    }
+
+    // The objects every so often, and the objects and meshes straight away when their settings change
+    fn refresh(&mut self, settings: &TickSettings) -> Result<(), Box<dyn Error>> {
+        let refresh_due = self.last_object_refresh.map_or(true, |t| t.elapsed() > OBJECT_REFRESH_INTERVAL);
+        if refresh_due || settings.objects != self.object_settings {
+            self.last_object_refresh = Some(time::Instant::now());
+            self.object_settings = settings.objects;
+            self.refresh_objects(settings.objects)?;
+        }
+        if refresh_due || settings.meshes != self.mesh_settings {
+            self.mesh_settings = settings.meshes;
+            if settings.meshes.any() && self.game.has(AddressType::CollisionScene) {
+                let MeshSettings { coarse, detailed, other_kinds } = settings.meshes;
+                let scene = self.game.require(AddressType::CollisionScene)?;
+                self.collision_meshes.refresh(self.game.handle, scene, coarse, detailed, other_kinds)?;
+            }
+        }
         Ok(())
+    }
+
+    // Lara's proxies to draw (none unless `show`), and whether she's aiming: her attached proxies being used is the best
+    // sign of it. She can be reloaded (and moved) between refreshes, which `components.get` notices.
+    fn lara_proxies(&mut self, show: bool, follow_aim: bool) -> (DrawnProxies, bool) {
+        let proxy = if show || follow_aim {
+            self.game.lara_proxy(&mut self.components, self.lara_address)
+        } else {
+            None
+        };
+        let proxies = proxy.and_then(|proxy| self.game.lara_proxies(proxy).ok());
+        let aiming = proxies.as_ref().map_or(false, |p| p.attached_active);
+        let ProxyCapsules { shapes, touching, attached, attached_active } = match proxies {
+            Some(proxies) if show => proxies,
+            _ => ProxyCapsules::default(),
+        };
+        let (touching, attached_touching) = self.hold_touching(touching, &attached);
+        let attached = attached.iter().map(|proxy| proxy.capsule).collect();
+        (DrawnProxies { shapes, touching, attached, attached_touching, attached_active }, aiming)
+    }
+
+    // Whether Lara's proxy and each attached one were touching something in the last `TOUCHING_HOLD`
+    fn hold_touching(&mut self, touching: bool, attached: &[AttachedProxy]) -> (bool, [bool; MAX_ATTACHED]) {
+        let held = |last: Option<time::Instant>| last.map_or(false, |t| t.elapsed() < TOUCHING_HOLD);
+        if touching {
+            self.proxy_last_touching = Some(time::Instant::now());
+        }
+        let mut attached_touching = [false; MAX_ATTACHED];
+        for (i, proxy) in attached.iter().take(MAX_ATTACHED).enumerate() {
+            if proxy.touching {
+                self.attached_last_touching[i] = Some(time::Instant::now());
+            }
+            attached_touching[i] = held(self.attached_last_touching[i]);
+        }
+        (held(self.proxy_last_touching), attached_touching)
+    }
+
+    // The objects' boxes where they are now
+    fn object_boxes(&self) -> Vec<ObjectBox> {
+        let size = self.config.object_box_size;
+        let mut boxes = vec![];
+        for ShownObject { instance: object, kind, category } in &self.objects {
+            // Objects can be unloaded between refreshes
+            let transform = match object_list::read_transform(self.game.handle, object.address) {
+                Ok(t) => t,
+                Err(_) => continue,
+            };
+            let (min, max) = object.bounds.unwrap_or((
+                Position { x: -size, y: -size, z: -size },
+                Position { x: size, y: size, z: size },
+            ));
+            // Round the capsules where they are now
+            let placed = self
+                .npc_capsules
+                .get(&object.address)
+                .and_then(|shapes| collision::place_capsules(self.game.handle, object.address, shapes).ok())
+                .and_then(|capsules| capsule_bounds(&capsules, &transform));
+            let (min, max) = placed.unwrap_or((min, max));
+            boxes.push(ObjectBox { transform, min, max, kind: *kind, category: *category, name: name_bytes(&object.name) });
+        }
+        boxes
+    }
+
+    // The triggers' outlines, faces and labels where they are now
+    fn trigger_geometry(&self) -> TriggerGeometry {
+        let lara = self.position.to_position();
+        let mut geometry = TriggerGeometry::default();
+        for ShownTrigger { instance: trigger, shape, category, label, action } in &self.triggers {
+            let transform = match object_list::read_transform(self.game.handle, trigger.address) {
+                Ok(t) => t,
+                Err(_) => continue,
+            };
+            let (category, action) = (*category, *action);
+            let outline = trigger::outline(shape, &transform);
+            let origin = Position { x: transform[12], y: transform[13], z: transform[14] };
+            geometry.labels.push(TriggerLabel {
+                position: top_of(&outline).unwrap_or(origin),
+                category,
+                action,
+                name: text_bytes(label),
+            });
+            let inside = [0.0, LARA_MIDDLE]
+                .iter()
+                .any(|up| trigger::contains(shape, &transform, &Position { z: lara.z + up, ..lara }));
+            geometry.lines.extend(outline.into_iter().map(|(a, b)| Line { a, b, category, action, inside }));
+            let faces = trigger::faces(shape, &transform);
+            geometry.faces.extend(faces.into_iter().map(|corners| TriggerFace { corners, category, action }));
+        }
+        geometry
+    }
+
+    // Where the camera's looking (the reticle's in the middle of the screen): the first collision triangle along it
+    fn aim_point(&mut self) -> Option<Position> {
+        let camera = self.camera_to_world.as_mut()?;
+        camera.fetch_from_game(self.handle).ok()?;
+        let m = camera.matrix;
+        // Its last row is where it is, the one before which way it faces
+        let origin = Vector3::new(m[12], m[13], m[14]);
+        let forward = Vector3::new(m[8], m[9], m[10]).try_normalize(1e-6)?;
+        let hit = self.collision_meshes.raycast(self.game.handle, origin, forward, MAX_AIM_DISTANCE)?;
+        Some(Position::from(origin + forward * hit))
+    }
+}
+
+// A trigger's name and what sets it off, and on a second line what it does, once that's known
+fn trigger_label(name: &str, script: Option<&TriggerScript>) -> String {
+    let script = match script {
+        Some(script) => script,
+        None => return name.to_string(),
+    };
+    let by = match &script.set_off_by {
+        SetOffBy::Lara => "Lara",
+        SetOffBy::Instance(Some(name)) => name.as_str(),
+        SetOffBy::Instance(None) => "an instance",
+        SetOffBy::Script => "script",
+        SetOffBy::Nothing => "no script",
+    };
+    let label = format!("{} ({})", name, by);
+    if script.does.is_empty() {
+        label
+    } else {
+        format!("{}\n{}", label, script.does.join(", "))
     }
 }
 
@@ -401,165 +624,29 @@ impl Handler for OverlayHandler {
         if let Some(camera_lens) = &mut self.camera_lens {
             camera_lens.fetch_from_game(self.handle)?;
         }
+        self.take_requests();
+        let settings = TickSettings::read(&self.ui_memory_manager.get().settings);
+        self.refresh(&settings)?;
 
-        let settings = &self.ui_memory_manager.get().settings;
-        let requests = settings.requests.swap(0, std::sync::atomic::Ordering::SeqCst);
-        for (bit, action) in [
-            (REQUEST_STORE_POSITION, Action::StorePosition {}),
-            (REQUEST_RESTORE_POSITION, Action::RestorePosition {}),
-            (REQUEST_TOGGLE_FLYING, Action::ToggleActive {}),
-        ] {
-            if requests & bit != 0 {
-                self.requested.push(action);
-            }
-        }
-        let collision = settings.collision.get();
-        let lara_collision = collision && settings.lara_collision.get();
-        let mesh_settings = MeshSettings {
-            coarse: collision && settings.coarse_meshes.get(),
-            detailed: collision && settings.detailed_meshes.get(),
-            other_kinds: settings.other_kinds.get(),
-        };
-        let show_meshes = mesh_settings.coarse || mesh_settings.detailed;
-        let follow_aim = show_meshes && settings.follow_aim.get();
-        let coarse_radius = settings.coarse_radius.get();
-        let detailed_radius = settings.detailed_radius.get();
-
-        let object_settings = ObjectSettings {
-            interactables: settings.interactables.get(),
-            triggers: settings.triggers.get(),
-            trigger_categories: settings.trigger_categories.get(),
-            npcs: settings.npcs.get(),
-            triggers_by_action: settings.triggers_by_action.get(),
-            trigger_actions: settings.trigger_actions.get(),
-        };
-
-        // Every so often, and straight away when the settings change
-        let refresh_due = self.last_object_refresh.map_or(true, |t| t.elapsed() > OBJECT_REFRESH_INTERVAL);
-        if refresh_due || object_settings != self.object_settings {
-            self.last_object_refresh = Some(time::Instant::now());
-            self.object_settings = object_settings;
-            self.refresh_objects(object_settings)?;
-        }
-        if refresh_due || mesh_settings != self.mesh_settings {
-            self.mesh_settings = mesh_settings;
-            if show_meshes && self.game.has(AddressType::CollisionScene) {
-                let MeshSettings { coarse, detailed, other_kinds } = mesh_settings;
-                let scene = self.game.require(AddressType::CollisionScene)?;
-                self.collision_meshes.refresh(self.game.handle, scene, coarse, detailed, other_kinds)?;
-            }
-        }
-
-        let probes = match (lara_collision && self.config.lara_probes, self.game.probes()) {
-            (true, Some(probes)) => collision::probes_near(&probes?, &self.position.to_position()),
+        let position = self.position.to_position();
+        let probes = match (settings.lara_collision && self.config.lara_probes, self.game.probes()) {
+            (true, Some(probes)) => collision::probes_near(&probes?, &position),
             _ => vec![],
         };
-        // Lara can be reloaded (and moved) between refreshes, which `components.get` notices. Her attached proxies being
-        // used is also the best sign she's aiming.
-        let show_proxy = lara_collision && self.config.lara_proxy;
-        let proxy = if show_proxy || follow_aim {
-            self.game.lara_proxy(&mut self.components, self.lara_address)
-        } else {
-            None
-        };
-        let proxies = proxy.and_then(|proxy| self.game.lara_proxies(proxy).ok());
-        let aiming = proxies.as_ref().map_or(false, |p| p.attached_active);
-        let (proxies, proxy_touching, attached, attached_active) = match proxies {
-            Some(p) if show_proxy => (p.shapes, p.touching, p.attached, p.attached_active),
-            _ => (vec![], false, vec![], false),
-        };
-        if proxy_touching {
-            self.proxy_last_touching = Some(time::Instant::now());
-        }
-
-        let size = self.config.object_box_size;
-        let mut objects = vec![];
-        for ShownObject { instance: object, kind, category } in &self.objects {
-            // Objects can be unloaded between refreshes
-            let transform = match object_list::read_transform(self.game.handle, object.address) {
-                Ok(t) => t,
-                Err(_) => continue,
-            };
-            let name = name_bytes(&object.name);
-            let (min, max) = object.bounds.unwrap_or((
-                Position { x: -size, y: -size, z: -size },
-                Position { x: size, y: size, z: size },
-            ));
-            // Round the capsules where they are now
-            let placed = self
-                .npc_capsules
-                .get(&object.address)
-                .and_then(|shapes| collision::place_capsules(self.game.handle, object.address, shapes).ok())
-                .and_then(|capsules| capsule_bounds(&capsules, &transform));
-            let (min, max) = placed.unwrap_or((min, max));
-            objects.push(ObjectBox {
-                transform,
-                min,
-                max,
-                kind: *kind,
-                category: *category,
-                name,
-            });
-        }
-
-        let mut trigger_labels = vec![];
-        let lara = self.position.to_position();
-        let mut trigger_lines = vec![];
-        let mut trigger_faces = vec![];
-        for ShownTrigger { instance: trigger, shape, category, label, action } in &self.triggers {
-            let transform = match object_list::read_transform(self.game.handle, trigger.address) {
-                Ok(t) => t,
-                Err(_) => continue,
-            };
-            let outline = trigger::outline(shape, &transform);
-            let origin = Position { x: transform[12], y: transform[13], z: transform[14] };
-            trigger_labels.push(TriggerLabel {
-                position: top_of(&outline).unwrap_or(origin),
-                category: *category,
-                action: *action,
-                name: text_bytes(label),
-            });
-            let inside = [0.0, LARA_MIDDLE]
-                .iter()
-                .any(|up| trigger::contains(shape, &transform, &Position { z: lara.z + up, ..lara }));
-            trigger_lines.extend(outline.into_iter().map(|(a, b)| Line { a, b, category: *category, action: *action, inside }));
-            let faces = trigger::faces(shape, &transform);
-            trigger_faces.extend(faces.into_iter().map(|corners| TriggerFace { corners, category: *category, action: *action }));
-        }
-
-        let proxy_touching = self.proxy_last_touching.map_or(false, |t| t.elapsed() < TOUCHING_HOLD);
-        let mut attached_touching = [false; MAX_ATTACHED];
-        for (i, proxy) in attached.iter().take(MAX_ATTACHED).enumerate() {
-            if proxy.touching {
-                self.attached_last_touching[i] = Some(time::Instant::now());
-            }
-            attached_touching[i] = self.attached_last_touching[i].map_or(false, |t| t.elapsed() < TOUCHING_HOLD);
-        }
-        let attached: Vec<_> = attached.iter().map(|proxy| proxy.capsule).collect();
-
-        let capsules = match (lara_collision, &self.lara) {
+        let (proxies, aiming) = self.lara_proxies(settings.lara_collision && self.config.lara_proxy, settings.follow_aim);
+        let objects = self.object_boxes();
+        let triggers = self.trigger_geometry();
+        let capsules = match (settings.lara_collision, &self.lara) {
             (true, Some((address, shapes))) => collision::place_capsules(self.game.handle, *address, shapes)?,
             _ => vec![],
         };
 
-        let position = self.position.to_position();
         let started = time::Instant::now();
-        // Where the camera's looking (the reticle's in the middle of the screen), while Lara aims
-        let camera = match (follow_aim && aiming, &mut self.camera_to_world) {
-            (true, Some(camera)) => camera.fetch_from_game(self.handle).ok().map(|_| camera.matrix),
-            _ => None,
-        };
-        let aim_point = camera.and_then(|m| {
-            // Its last row is where it is, the one before which way it faces
-            let origin = Vector3::new(m[12], m[13], m[14]);
-            let forward = Vector3::new(m[8], m[9], m[10]).try_normalize(1e-6)?;
-            let hit = self.collision_meshes.raycast(self.game.handle, origin, forward, MAX_AIM_DISTANCE)?;
-            let point = origin + forward * hit;
-            Some(Position::from(point))
-        });
+        let aim_point = if settings.follow_aim && aiming { self.aim_point() } else { None };
         let mesh_centre = aim_point.unwrap_or(position);
-        let triangles = if show_meshes {
-            self.collision_meshes.triangles_near(self.game.handle, &mesh_centre, coarse_radius, detailed_radius, MAX_TRIANGLES)
+        let triangles = if settings.meshes.any() {
+            let (coarse, detailed) = (settings.coarse_radius, settings.detailed_radius);
+            self.collision_meshes.triangles_near(self.game.handle, &mesh_centre, coarse, detailed, MAX_TRIANGLES)
         } else {
             vec![]
         };
@@ -596,15 +683,15 @@ impl Handler for OverlayHandler {
             val.camera_lens_address = camera_lens_address;
             val.object_count = fill(&mut val.objects, &objects);
             val.probe_count = fill(&mut val.probes, &probes);
-            val.proxy_count = fill(&mut val.proxies, &proxies);
-            val.proxy_touching = proxy_touching;
-            val.attached_count = fill(&mut val.attached, &attached);
-            val.attached_touching = attached_touching;
-            val.attached_active = attached_active;
+            val.proxy_count = fill(&mut val.proxies, &proxies.shapes);
+            val.proxy_touching = proxies.touching;
+            val.attached_count = fill(&mut val.attached, &proxies.attached);
+            val.attached_touching = proxies.attached_touching;
+            val.attached_active = proxies.attached_active;
             val.capsule_count = fill(&mut val.capsules, &capsules);
-            val.trigger_count = fill(&mut val.triggers, &trigger_labels);
-            val.trigger_line_count = fill(&mut val.trigger_lines, &trigger_lines);
-            val.trigger_face_count = fill(&mut val.trigger_faces, &trigger_faces);
+            val.trigger_count = fill(&mut val.triggers, &triggers.labels);
+            val.trigger_line_count = fill(&mut val.trigger_lines, &triggers.lines);
+            val.trigger_face_count = fill(&mut val.trigger_faces, &triggers.faces);
             val.triangle_count = fill(&mut val.triangles, &triangles);
             val.triangle_milliseconds = triangle_milliseconds;
             val.mesh_kind_counts = kind_counts;
@@ -686,6 +773,14 @@ pub fn print_overlay_data(version: Option<String>, delay: u64) -> Result<(), Str
     println!("Lara at ({:.0}, {:.0}, {:.0}), camera {}", data.position.x, data.position.y, data.position.z,
         if data.camera_view_address == 0 { "missing" } else { "found" });
     println!("{} objects", data.object_count);
+    println!(
+        "{} triggers ({} lines, {} faces), {} collision triangles, {} probes, {} hit capsules",
+        data.trigger_count, data.trigger_line_count, data.trigger_face_count, data.triangle_count, data.probe_count,
+        data.capsule_count
+    );
+    for label in data.triggers.iter().take((data.trigger_count as usize).min(5)) {
+        println!("    {}", label.name().replace('\n', ": "));
+    }
     println!("Lara's proxy shapes (pushing her: {}):", data.proxy_touching);
     for c in &data.proxies[..(data.proxy_count as usize).min(data.proxies.len())] {
         println!("    {}", capsule(c));
