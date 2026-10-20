@@ -4,6 +4,7 @@
 //! is held through her weapon slot: her own handle -> her inventory record -> its map, keyed by its current item -> the
 //! weapon's instance -> its type record -> the tuning block. Where everything is is in `layout::AimSweepLayout`.
 
+use crate::collision::AttachedProxy;
 use crate::game_memory::{Handle, read_floats, read_pointer, read_u32};
 use crate::layout;
 use crate::object_list;
@@ -97,7 +98,7 @@ fn read_sweep(handle: Handle, block: usize) -> Option<([f32; 3], [f32; 3], f32)>
 
 /// The aim sweep in world space, as a capsule, if Lara has a weapon out, and whether it's pushing her. `lara` is her
 /// instance.
-pub fn read(handle: Handle, instances: usize, inventories: usize, types: usize, lara: usize) -> Option<(Capsule, bool)> {
+pub fn read(handle: Handle, instances: usize, inventories: usize, types: usize, lara: usize) -> Option<AttachedProxy> {
     let layout = &layout::current().aim_sweep;
     let block = tuning_block(handle, instances, inventories, types, lara)?;
     let (start, end, radius) = read_sweep(handle, block)?;
@@ -114,5 +115,5 @@ pub fn read(handle: Handle, instances: usize, inventories: usize, types: usize, 
         .and_then(|p| read_index(handle, p + layout.player))
         .and_then(|player| read_floats::<2>(handle, player + layout.push))
         .map_or(false, |[x, y]| (x * x + y * y).sqrt() > MIN_PUSH);
-    Some((Capsule { a: to_world(start), b: to_world(end), radius }, pushing))
+    Some(AttachedProxy { capsule: Capsule { a: to_world(start), b: to_world(end), radius }, touching: pushing })
 }

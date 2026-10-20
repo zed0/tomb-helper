@@ -33,6 +33,45 @@ const OBJECT_REFRESH_INTERVAL: time::Duration = time::Duration::from_secs(1);
 // Lara's contacts are often caught mid update, so keep showing an attached proxy as touching for this long
 const TOUCHING_HOLD: time::Duration = time::Duration::from_millis(150);
 
+// Which objects the window says to show
+#[derive(Clone, Copy, Default, PartialEq)]
+struct ObjectSettings {
+    interactables: bool,
+    triggers: bool,
+    trigger_categories: u32,
+    npcs: bool,
+    // Show triggers by `TRIGGER_ACTIONS` rather than by category, and which
+    triggers_by_action: bool,
+    trigger_actions: u32,
+}
+
+// Which collision meshes the window says to draw
+#[derive(Clone, Copy, Default, PartialEq)]
+struct MeshSettings {
+    // Those Lara collides with, and the rest
+    coarse: bool,
+    detailed: bool,
+    // The kinds of collision that are detailed
+    other_kinds: u32,
+}
+
+// An object to box
+struct ShownObject {
+    instance: Instance,
+    kind: BoxKind,
+    category: ObjectCategory,
+}
+
+// A trigger to draw
+struct ShownTrigger {
+    instance: Instance,
+    shape: Shape,
+    category: TriggerCategory,
+    label: String,
+    // The `TRIGGER_ACTIONS` index it's coloured by
+    action: u32,
+}
+
 pub struct OverlayHandler {
     active: bool,
     handle: ProcessHandle,
@@ -51,22 +90,20 @@ pub struct OverlayHandler {
     // What the other handlers have to show, and actions the window's buttons asked for
     helper_state: HelperState,
     requested: Vec<Action>,
-    // Coarse and detailed, and the kinds that are detailed, as of the last refresh
-    mesh_settings: (bool, bool, u32),
+    // As of the last refresh
+    mesh_settings: MeshSettings,
     object_list: Option<ObjectList>,
-    objects: Vec<(Instance, BoxKind, ObjectCategory)>,
+    objects: Vec<ShownObject>,
     // Characters' and animals' hit capsules in bone space, by instance. Their models' bounds are often only part of
     // them (people are several models), so they're boxed round these instead.
     npc_capsules: HashMap<usize, Vec<CapsuleShape>>,
-    // With their labels, and the `TRIGGER_ACTIONS` index they're coloured by
-    triggers: Vec<(Instance, Shape, TriggerCategory, String, u32)>,
+    triggers: Vec<ShownTrigger>,
     trigger_scripts: TriggerScripts,
     components: Components,
     // Found by her PlayerComponent each refresh
     lara_address: Option<usize>,
-    // Interactables, triggers, trigger categories, NPCs, whether triggers are shown by action and which, as of the last
-    // refresh
-    object_settings: (bool, bool, u32, bool, bool, u32),
+    // As of the last refresh
+    object_settings: ObjectSettings,
     proxy_last_touching: Option<time::Instant>,
     attached_last_touching: [Option<time::Instant>; MAX_ATTACHED],
     // Lara's instance and her capsules in bone space
@@ -143,7 +180,7 @@ impl OverlayHandler {
                 .get(&AddressType::CameraSin)
                 .map(|offsets| TrackedCameraMatrix::new(offsets.clone(), *arch, *base_addr)),
             collision_meshes: CollisionMeshes::default(),
-            mesh_settings: (false, false, 0),
+            mesh_settings: MeshSettings::default(),
             helper_state: HelperState::default(),
             requested: vec![],
             object_list: None,
@@ -153,7 +190,7 @@ impl OverlayHandler {
             trigger_scripts: TriggerScripts::new(Handle::Live(*pid, *handle), *base_addr),
             components: Components::new(*base_addr),
             lara_address: None,
-            object_settings: (false, false, 0, false, false, 0),
+            object_settings: ObjectSettings::default(),
             lara: None,
             last_object_refresh: None,
             proxy_last_touching: None,
@@ -162,15 +199,9 @@ impl OverlayHandler {
         })
     }
 
-    fn refresh_objects(
-        &mut self,
-        interactables: bool,
-        triggers: bool,
-        categories: u32,
-        npcs: bool,
-        by_action: bool,
-        actions: u32,
-    ) -> Result<(), Box<dyn Error>> {
+    fn refresh_objects(&mut self, settings: ObjectSettings) -> Result<(), Box<dyn Error>> {
+        let ObjectSettings { interactables, triggers, trigger_categories, npcs, triggers_by_action, trigger_actions } =
+            settings;
         if self.object_list.is_none() {
             if !self.game.has(AddressType::InstanceArray) {
                 return Ok(());
@@ -206,7 +237,7 @@ impl OverlayHandler {
             };
             let category = trigger::categorise(&instance.name, &instance.full_name);
             // By what they do once that's known, below
-            let wanted = by_action || categories & category.bit() != 0;
+            let wanted = triggers_by_action || trigger_categories & category.bit() != 0;
             if triggers && kinds.trigger && wanted {
                 trigger_shapes.push((instance.clone(), category));
             }
@@ -240,7 +271,7 @@ impl OverlayHandler {
                 None => None,
             };
             let does = script.map_or(trigger_action_bit("unchecked"), |s| s.actions);
-            if (by_action && actions & does == 0) || shown.len() >= MAX_TRIGGERS {
+            if (triggers_by_action && trigger_actions & does == 0) || shown.len() >= MAX_TRIGGERS {
                 continue;
             }
             if let Some(shape) = trigger::read_shape(self.game.handle, &mut self.components, instance.address) {
@@ -253,8 +284,8 @@ impl OverlayHandler {
                     label = format!("{}\n{}", label, script.does.join(", "));
                 }
                 // The first of what it does that's shown (all of it when shown by name)
-                let shown_does = if by_action { does & actions } else { does };
-                shown.push((instance, shape, category, label, shown_does.trailing_zeros()));
+                let shown_does = if triggers_by_action { does & trigger_actions } else { does };
+                shown.push(ShownTrigger { instance, shape, category, label, action: shown_does.trailing_zeros() });
             }
         }
         self.triggers = shown;
@@ -265,8 +296,8 @@ impl OverlayHandler {
             let shapes = collision::read_capsule_shapes(self.game.handle, &mut self.components, address)?;
             if shapes.is_empty() {
                 // Better than nothing
-                boxes.push((
-                    Instance {
+                boxes.push(ShownObject {
+                    instance: Instance {
                         address,
                         id: 0,
                         position: object_list::read_position(self.game.handle, address)?,
@@ -274,19 +305,19 @@ impl OverlayHandler {
                         full_name: String::new(),
                         bounds: None,
                     },
-                    BoxKind::Lara,
-                    ObjectCategory::Named,
-                ));
+                    kind: BoxKind::Lara,
+                    category: ObjectCategory::Named,
+                });
             } else {
                 self.lara = Some((address, shapes));
             }
         }
-        boxes.extend(objects.into_iter().map(|(o, category)| (o, BoxKind::Model, category)));
+        boxes.extend(objects.into_iter().map(|(instance, category)| ShownObject { instance, kind: BoxKind::Model, category }));
         boxes.truncate(MAX_OBJECTS);
 
         // Models can change (e.g. Lara's outfit), so these are refreshed with the list
         self.npc_capsules.clear();
-        for (object, kind, category) in &mut boxes {
+        for ShownObject { instance: object, kind, category } in &mut boxes {
             object.bounds = object_list::read_bounds(self.game.handle, &mut self.components, object.address);
             if object.bounds.is_none() && *kind == BoxKind::Model {
                 *kind = BoxKind::Estimated;
@@ -379,38 +410,36 @@ impl Handler for OverlayHandler {
         }
         let collision = UiSettings::get(&settings.collision);
         let lara_collision = collision && UiSettings::get(&settings.lara_collision);
-        let mesh_settings = (
-            collision && UiSettings::get(&settings.coarse_meshes),
-            collision && UiSettings::get(&settings.detailed_meshes),
-            UiSettings::get_u32(&settings.other_kinds),
-        );
-        let show_meshes = mesh_settings.0 || mesh_settings.1;
+        let mesh_settings = MeshSettings {
+            coarse: collision && UiSettings::get(&settings.coarse_meshes),
+            detailed: collision && UiSettings::get(&settings.detailed_meshes),
+            other_kinds: UiSettings::get_u32(&settings.other_kinds),
+        };
+        let show_meshes = mesh_settings.coarse || mesh_settings.detailed;
         let follow_aim = show_meshes && UiSettings::get(&settings.follow_aim);
         let coarse_radius = UiSettings::get_f32(&settings.coarse_radius);
         let detailed_radius = UiSettings::get_f32(&settings.detailed_radius);
 
-        let object_settings = (
-            UiSettings::get(&settings.interactables),
-            UiSettings::get(&settings.triggers),
-            UiSettings::get_u32(&settings.trigger_categories),
-            UiSettings::get(&settings.npcs),
-            UiSettings::get(&settings.triggers_by_action),
-            UiSettings::get_u32(&settings.trigger_actions),
-        );
+        let object_settings = ObjectSettings {
+            interactables: UiSettings::get(&settings.interactables),
+            triggers: UiSettings::get(&settings.triggers),
+            trigger_categories: UiSettings::get_u32(&settings.trigger_categories),
+            npcs: UiSettings::get(&settings.npcs),
+            triggers_by_action: UiSettings::get(&settings.triggers_by_action),
+            trigger_actions: UiSettings::get_u32(&settings.trigger_actions),
+        };
 
+        // Every so often, and straight away when the settings change
         let refresh_due = self.last_object_refresh.map_or(true, |t| t.elapsed() > OBJECT_REFRESH_INTERVAL);
-        // Straight away when they're toggled too
         if refresh_due || object_settings != self.object_settings {
             self.last_object_refresh = Some(time::Instant::now());
             self.object_settings = object_settings;
-            let (interactables, triggers, categories, npcs, by_action, actions) = object_settings;
-            self.refresh_objects(interactables, triggers, categories, npcs, by_action, actions)?;
+            self.refresh_objects(object_settings)?;
         }
-        // Straight away when they're toggled
         if refresh_due || mesh_settings != self.mesh_settings {
             self.mesh_settings = mesh_settings;
             if show_meshes && self.game.has(AddressType::CollisionScene) {
-                let (coarse, detailed, other_kinds) = mesh_settings;
+                let MeshSettings { coarse, detailed, other_kinds } = mesh_settings;
                 let scene = self.game.require(AddressType::CollisionScene)?;
                 self.collision_meshes.refresh(self.game.handle, scene, coarse, detailed, other_kinds)?;
             }
@@ -439,7 +468,7 @@ impl Handler for OverlayHandler {
 
         let size = self.config.object_box_size;
         let mut objects = vec![];
-        for (object, kind, category) in &self.objects {
+        for ShownObject { instance: object, kind, category } in &self.objects {
             // Objects can be unloaded between refreshes
             let transform = match object_list::read_transform(self.game.handle, object.address) {
                 Ok(t) => t,
@@ -471,7 +500,7 @@ impl Handler for OverlayHandler {
         let lara = self.position.to_position();
         let mut trigger_lines = vec![];
         let mut trigger_faces = vec![];
-        for (trigger, shape, category, label, action) in &self.triggers {
+        for ShownTrigger { instance: trigger, shape, category, label, action } in &self.triggers {
             let transform = match object_list::read_transform(self.game.handle, trigger.address) {
                 Ok(t) => t,
                 Err(_) => continue,
@@ -494,13 +523,13 @@ impl Handler for OverlayHandler {
 
         let proxy_touching = self.proxy_last_touching.map_or(false, |t| t.elapsed() < TOUCHING_HOLD);
         let mut attached_touching = [false; MAX_ATTACHED];
-        for (i, (_, touching)) in attached.iter().take(MAX_ATTACHED).enumerate() {
-            if *touching {
+        for (i, proxy) in attached.iter().take(MAX_ATTACHED).enumerate() {
+            if proxy.touching {
                 self.attached_last_touching[i] = Some(time::Instant::now());
             }
             attached_touching[i] = self.attached_last_touching[i].map_or(false, |t| t.elapsed() < TOUCHING_HOLD);
         }
-        let attached: Vec<_> = attached.iter().map(|(capsule, _)| *capsule).collect();
+        let attached: Vec<_> = attached.iter().map(|proxy| proxy.capsule).collect();
 
         let capsules = match (lara_collision, &self.lara) {
             (true, Some((address, shapes))) => collision::place_capsules(self.game.handle, *address, shapes)?,

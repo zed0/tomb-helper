@@ -141,10 +141,24 @@ pub struct ProxyCapsules {
     pub shapes: Vec<Capsule>,
     // Whether the one in use is pushing her off something
     pub touching: bool,
-    // Of the proxies attached to Lara's, and whether each is touching something
-    pub attached: Vec<(Capsule, bool)>,
+    pub attached: Vec<AttachedProxy>,
     // Whether the attached proxies collide
     pub attached_active: bool,
+}
+
+/// A proxy attached to Lara's (or TR2013's aim sweep, drawn as one)
+#[derive(Clone, Copy)]
+pub struct AttachedProxy {
+    pub capsule: Capsule,
+    // Whether it's touching something (pushing her)
+    pub touching: bool,
+}
+
+// A shape of a proxy, and what it was made from, to leave out a second one the same
+struct ProxyCapsule {
+    size: Vector3<f32>,
+    offset: Vector3<f32>,
+    capsule: Capsule,
 }
 
 // The shapes of a proxy (Lara's cdc::ProxyComponent) in world space. `standalone` are proxies attached to it that
@@ -159,13 +173,13 @@ pub fn read_proxy(handle: Handle, proxy: usize, standalone: &[usize]) -> io::Res
     // the game stores, and place the other shape relative to it
     let mut centre = vector_at(&bytes, layout.centre);
     let in_use_offset = vector_at(&bytes, shapes[0].offset);
-    let mut capsules: Vec<(Vector3<f32>, Vector3<f32>, Capsule)> = vec![];
+    let mut capsules: Vec<ProxyCapsule> = vec![];
 
     // The physics shape is what's actually swept, so prefer it for the shape in use
-    let body = layout.body.map_or(0, |offset| pointer_at(&bytes, offset));
-    if let Some((capsule, physics_centre, _)) = read_physics_capsule(handle, body) {
+    let body = layout.body.map(|offset| pointer_at(&bytes, offset)).filter(|&body| body != 0);
+    if let Some((capsule, physics_centre, _)) = body.and_then(|body| read_physics_capsule(handle, body)) {
         let size = Vector3::new(f32_at(&bytes, shapes[0].size), f32_at(&bytes, shapes[0].size + 4), 0.0);
-        capsules.push((size, in_use_offset, capsule));
+        capsules.push(ProxyCapsule { size, offset: in_use_offset, capsule });
         centre = physics_centre;
     }
 
@@ -175,18 +189,17 @@ pub fn read_proxy(handle: Handle, proxy: usize, standalone: &[usize]) -> io::Res
         let offset = vector_at(&bytes, shape.offset);
         let rotation = quaternion_at(&bytes, shape.rotation);
         let size = Vector3::new(radius, length, 0.0);
-        if capsules.iter().any(|(s, o, _)| (s - size).norm() < PROXY_SAME_SHAPE && (o - offset).norm() < PROXY_SAME_SHAPE) {
+        let same = |c: &ProxyCapsule| (c.size - size).norm() < PROXY_SAME_SHAPE && (c.offset - offset).norm() < PROXY_SAME_SHAPE;
+        if capsules.iter().any(same) {
             continue;
         }
         let shape_centre = centre + rotation * (offset - in_use_offset);
         let half_axis = rotation * quaternion_at(&bytes, shape.local_rotation) * Vector3::z() * (length / 2.0);
-        capsules.push((
-            size,
-            offset,
-            Capsule { a: Position::from(shape_centre - half_axis), b: Position::from(shape_centre + half_axis), radius },
-        ));
+        let capsule =
+            Capsule { a: Position::from(shape_centre - half_axis), b: Position::from(shape_centre + half_axis), radius };
+        capsules.push(ProxyCapsule { size, offset, capsule });
     }
-    let shapes: Vec<Capsule> = capsules.into_iter().map(|(_, _, capsule)| capsule).collect();
+    let shapes: Vec<Capsule> = capsules.into_iter().map(|c| c.capsule).collect();
 
     // An attached proxy is pushing Lara if one of her contacts is on it. Its touching flag also says so,
     // unless it's just touching her own capsule (the camera does whenever she aims).
@@ -194,25 +207,21 @@ pub fn read_proxy(handle: Handle, proxy: usize, standalone: &[usize]) -> io::Res
     let on_contact = |capsule: &Capsule| {
         contacts.iter().any(|c| (distance_to_capsule(c, capsule) - capsule.radius).abs() <= CONTACT_TOLERANCE)
     };
-    let mut attached = if body == 0 { vec![] } else { read_attached_capsules(handle, body) };
+    let mut attached = body.map_or(vec![], |body| read_attached_capsules(handle, body));
     // They only collide while she aims, when the camera's touching flag is always set as it overlaps her capsule
     // (and the weapon's can only be set then)
-    let mut attached_active = attached.iter().any(|(_, touching)| *touching);
+    let mut attached_active = attached.iter().any(|a| a.touching);
     // Ones found on their own say whether they collide in their flags, and are only touching if on a contact
     for &other in standalone {
         if let Ok((capsule, collides)) = read_attached_proxy(handle, other) {
-            attached.push((capsule, false));
+            attached.push(AttachedProxy { capsule, touching: false });
             attached_active |= collides;
         }
     }
-    let attached = attached
-        .into_iter()
-        .map(|(capsule, touching)| {
-            let on_contact = on_contact(&capsule);
-            let touching_lara = shapes.first().map_or(false, |lara| capsules_overlap(&capsule, lara));
-            (capsule, on_contact || (touching && !touching_lara))
-        })
-        .collect();
+    for proxy in &mut attached {
+        let touching_lara = shapes.first().map_or(false, |lara| capsules_overlap(&proxy.capsule, lara));
+        proxy.touching = on_contact(&proxy.capsule) || (proxy.touching && !touching_lara);
+    }
 
     Ok(ProxyCapsules {
         // Its touching flag is always set, so only go by contacts
@@ -301,7 +310,7 @@ fn segment_distance(a: Vector3<f32>, b: Vector3<f32>, c: Vector3<f32>, d: Vector
 }
 
 // The capsules of bodies attached (directly or not) to `body`, which follow it in the list
-fn read_attached_capsules(handle: Handle, body: usize) -> Vec<(Capsule, bool)> {
+fn read_attached_capsules(handle: Handle, body: usize) -> Vec<AttachedProxy> {
     let layout = &layout::current().body;
     let mut family = vec![body];
     let mut capsules = vec![];
@@ -316,7 +325,7 @@ fn read_attached_capsules(handle: Handle, body: usize) -> Vec<(Capsule, bool)> {
             _ => continue,
         }
         if let Some((capsule, _, touching)) = read_physics_capsule(handle, current) {
-            capsules.push((capsule, touching));
+            capsules.push(AttachedProxy { capsule, touching });
         }
     }
     capsules
@@ -324,9 +333,6 @@ fn read_attached_capsules(handle: Handle, body: usize) -> Vec<(Capsule, bool)> {
 
 // The capsule, its centre, and whether it's touching something
 fn read_physics_capsule(handle: Handle, body: usize) -> Option<(Capsule, Vector3<f32>, bool)> {
-    if body == 0 {
-        return None;
-    }
     let all = layout::current();
     let layout = &all.physics_shape;
     let shape = read_pointer_or_null(handle, body + all.body.shape).ok()?;
