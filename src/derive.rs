@@ -185,8 +185,7 @@ fn export_offsets(out: Option<&str>) -> Result<(), String> {
         versions: known_process_details().iter().map(VersionEntry::from_details).collect(),
         words: crate::words::current().as_ref().clone(),
     };
-    std::fs::write(&path, to_json(&file) + "
-").map_err(|e| format!("Could not write {:?}: {}", path, e))?;
+    std::fs::write(&path, to_json(&file) + "\n").map_err(|e| format!("Could not write {:?}: {}", path, e))?;
     println!("Wrote {} versions to {:?}", file.versions.len(), path);
     Ok(())
 }

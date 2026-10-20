@@ -42,8 +42,7 @@ pub struct OverlayHandler {
     arch: Architecture,
     config: OverlayConfig,
     position: TrackedPosition,
-    // The camera and objects, for drawing in the world, if this game has the offsets (TR2013 doesn't yet), else only
-    // the window is shown
+    // The camera, for drawing in the world, if this game has the offsets, else only the window is shown
     camera_view: Option<TrackedCameraMatrix>,
     camera_lens: Option<TrackedMemory<[f32; 8]>>,
     // Camera to world, which starts at `CameraSin`
@@ -59,7 +58,6 @@ pub struct OverlayHandler {
     // Characters' and animals' hit capsules in bone space, by instance. Their models' bounds are often only part of
     // them (people are several models), so they're boxed round these instead.
     npc_capsules: HashMap<usize, Vec<CapsuleShape>>,
-    // With their labels
     // With their labels, and the `TRIGGER_ACTIONS` index they're coloured by
     triggers: Vec<(Instance, Shape, TriggerCategory, String, u32)>,
     trigger_scripts: TriggerScripts,
@@ -309,8 +307,6 @@ impl OverlayHandler {
     }
 }
 
-// The box round the (world space) capsules in the space of the object-to-world `transform` (row-major, row
-// vectors), so it turns with the object. None if there aren't any capsules, or the transform can't be inverted.
 // The middle of the top of an outline (world z is up), for its label
 fn top_of(outline: &[(Position, Position)]) -> Option<Position> {
     let points = || outline.iter().flat_map(|(a, b)| [a, b]);
@@ -322,6 +318,8 @@ fn top_of(outline: &[(Position, Position)]) -> Option<Position> {
     Some(Position { x: middle(|p| p.x), y: middle(|p| p.y), z: fold(f32::max, |p| p.z, f32::MIN) })
 }
 
+// The box round the (world space) capsules in the space of the object-to-world `transform` (row-major, row
+// vectors), so it turns with the object. None if there aren't any capsules, or the transform can't be inverted.
 fn capsule_bounds(capsules: &[Capsule], transform: &[f32; 16]) -> Option<(Position, Position)> {
     // Columns are the object's axes in world space
     let axes = Matrix3::from_column_slice(&[

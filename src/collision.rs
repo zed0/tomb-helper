@@ -223,7 +223,7 @@ pub fn read_proxy(handle: Handle, proxy: usize, standalone: &[usize]) -> io::Res
     })
 }
 
-/// A proxy attached to Lara's that's found on its own (TR2013's camera): its shape in use, and whether it collides,
+/// A proxy attached to Lara's that's found on its own (TR2013's combat proxy): its shape in use, and whether it collides,
 /// from its flags
 pub fn read_attached_proxy(handle: Handle, proxy: usize) -> io::Result<(Capsule, bool)> {
     let layout = &layout::current().proxy;
