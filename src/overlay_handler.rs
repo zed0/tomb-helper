@@ -126,28 +126,8 @@ impl OverlayHandler {
         let mut ui_memory_manager = SharedMemoryManager::new(true);
         // Kept when the handler is recreated (e.g. when the offsets change)
         let settings = &ui_memory_manager.get().settings;
-        if !UiSettings::get(&settings.initialised) {
-            UiSettings::set(&settings.collision, config.collision);
-            UiSettings::set(&settings.lara_collision, true);
-            UiSettings::set(&settings.coarse_meshes, config.collision_meshes);
-            UiSettings::set(&settings.detailed_meshes, config.detailed_collision_meshes);
-            UiSettings::set_u32(&settings.other_kinds, config.collision_mesh_other_kinds);
-            UiSettings::set_f32(&settings.coarse_radius, config.collision_mesh_radius);
-            UiSettings::set_f32(&settings.detailed_radius, config.detailed_collision_mesh_radius);
-            UiSettings::set_f32(&settings.mesh_opacity, config.collision_opacity);
-            UiSettings::set_f32(&settings.trigger_opacity, config.trigger_opacity);
-            UiSettings::set(&settings.fade_with_distance, config.collision_mesh_fade);
-            UiSettings::set_f32(&settings.fade_strength, config.collision_mesh_fade_strength);
-            UiSettings::set(&settings.cull_hidden, config.collision_mesh_cull_hidden);
-            UiSettings::set(&settings.follow_aim, config.collision_mesh_follow_aim);
-            UiSettings::set(&settings.interactables, config.interactables);
-            UiSettings::set(&settings.triggers, config.triggers);
-            UiSettings::set(&settings.npcs, config.npcs);
-            UiSettings::set_u32(&settings.trigger_categories, TriggerCategory::mask(&config.trigger_categories));
-            UiSettings::set(&settings.triggers_by_action, config.triggers_by_action);
-            UiSettings::set_u32(&settings.trigger_actions, trigger_action_mask(&config.trigger_actions));
-            UiSettings::set(&settings.show_window, config.settings_window);
-            UiSettings::set(&settings.initialised, true);
+        if !settings.initialised.get() {
+            initialise_settings(settings, config);
         }
         ui_memory_manager.get_mut().update(|val| {
             val.debug = config.console;
@@ -335,6 +315,31 @@ impl OverlayHandler {
     }
 }
 
+// The window's settings start as the config says
+fn initialise_settings(settings: &UiSettings, config: &OverlayConfig) {
+    settings.collision.set(config.collision);
+    settings.lara_collision.set(true);
+    settings.coarse_meshes.set(config.collision_meshes);
+    settings.detailed_meshes.set(config.detailed_collision_meshes);
+    settings.other_kinds.set(config.collision_mesh_other_kinds);
+    settings.coarse_radius.set(config.collision_mesh_radius);
+    settings.detailed_radius.set(config.detailed_collision_mesh_radius);
+    settings.mesh_opacity.set(config.collision_opacity);
+    settings.trigger_opacity.set(config.trigger_opacity);
+    settings.fade_with_distance.set(config.collision_mesh_fade);
+    settings.fade_strength.set(config.collision_mesh_fade_strength);
+    settings.cull_hidden.set(config.collision_mesh_cull_hidden);
+    settings.follow_aim.set(config.collision_mesh_follow_aim);
+    settings.interactables.set(config.interactables);
+    settings.triggers.set(config.triggers);
+    settings.npcs.set(config.npcs);
+    settings.trigger_categories.set(TriggerCategory::mask(&config.trigger_categories));
+    settings.triggers_by_action.set(config.triggers_by_action);
+    settings.trigger_actions.set(trigger_action_mask(&config.trigger_actions));
+    settings.show_window.set(config.settings_window);
+    settings.initialised.set(true);
+}
+
 // The middle of the top of an outline (world z is up), for its label
 fn top_of(outline: &[(Position, Position)]) -> Option<Position> {
     let points = || outline.iter().flat_map(|(a, b)| [a, b]);
@@ -408,25 +413,25 @@ impl Handler for OverlayHandler {
                 self.requested.push(action);
             }
         }
-        let collision = UiSettings::get(&settings.collision);
-        let lara_collision = collision && UiSettings::get(&settings.lara_collision);
+        let collision = settings.collision.get();
+        let lara_collision = collision && settings.lara_collision.get();
         let mesh_settings = MeshSettings {
-            coarse: collision && UiSettings::get(&settings.coarse_meshes),
-            detailed: collision && UiSettings::get(&settings.detailed_meshes),
-            other_kinds: UiSettings::get_u32(&settings.other_kinds),
+            coarse: collision && settings.coarse_meshes.get(),
+            detailed: collision && settings.detailed_meshes.get(),
+            other_kinds: settings.other_kinds.get(),
         };
         let show_meshes = mesh_settings.coarse || mesh_settings.detailed;
-        let follow_aim = show_meshes && UiSettings::get(&settings.follow_aim);
-        let coarse_radius = UiSettings::get_f32(&settings.coarse_radius);
-        let detailed_radius = UiSettings::get_f32(&settings.detailed_radius);
+        let follow_aim = show_meshes && settings.follow_aim.get();
+        let coarse_radius = settings.coarse_radius.get();
+        let detailed_radius = settings.detailed_radius.get();
 
         let object_settings = ObjectSettings {
-            interactables: UiSettings::get(&settings.interactables),
-            triggers: UiSettings::get(&settings.triggers),
-            trigger_categories: UiSettings::get_u32(&settings.trigger_categories),
-            npcs: UiSettings::get(&settings.npcs),
-            triggers_by_action: UiSettings::get(&settings.triggers_by_action),
-            trigger_actions: UiSettings::get_u32(&settings.trigger_actions),
+            interactables: settings.interactables.get(),
+            triggers: settings.triggers.get(),
+            trigger_categories: settings.trigger_categories.get(),
+            npcs: settings.npcs.get(),
+            triggers_by_action: settings.triggers_by_action.get(),
+            trigger_actions: settings.trigger_actions.get(),
         };
 
         // Every so often, and straight away when the settings change
@@ -643,14 +648,14 @@ impl Handler for OverlayHandler {
                     println!("done");
                 }
             },
-            Action::ToggleLaraCollision {} => UiSettings::toggle(&self.ui_memory_manager.get().settings.lara_collision),
-            Action::ToggleCoarseCollision {} => UiSettings::toggle(&self.ui_memory_manager.get().settings.coarse_meshes),
-            Action::ToggleDetailedCollision {} => UiSettings::toggle(&self.ui_memory_manager.get().settings.detailed_meshes),
-            Action::ToggleInteractables {} => UiSettings::toggle(&self.ui_memory_manager.get().settings.interactables),
-            Action::ToggleTriggers {} => UiSettings::toggle(&self.ui_memory_manager.get().settings.triggers),
-            Action::ToggleNpcs {} => UiSettings::toggle(&self.ui_memory_manager.get().settings.npcs),
-            Action::ToggleCollision {} => UiSettings::toggle(&self.ui_memory_manager.get().settings.collision),
-            Action::ToggleSettingsWindow {} => UiSettings::toggle(&self.ui_memory_manager.get().settings.show_window),
+            Action::ToggleLaraCollision {} => self.ui_memory_manager.get().settings.lara_collision.toggle(),
+            Action::ToggleCoarseCollision {} => self.ui_memory_manager.get().settings.coarse_meshes.toggle(),
+            Action::ToggleDetailedCollision {} => self.ui_memory_manager.get().settings.detailed_meshes.toggle(),
+            Action::ToggleInteractables {} => self.ui_memory_manager.get().settings.interactables.toggle(),
+            Action::ToggleTriggers {} => self.ui_memory_manager.get().settings.triggers.toggle(),
+            Action::ToggleNpcs {} => self.ui_memory_manager.get().settings.npcs.toggle(),
+            Action::ToggleCollision {} => self.ui_memory_manager.get().settings.collision.toggle(),
+            Action::ToggleSettingsWindow {} => self.ui_memory_manager.get().settings.show_window.toggle(),
             _ => (),
         }
         Ok(())
@@ -669,7 +674,7 @@ pub fn print_overlay_data(version: Option<String>, delay: u64) -> Result<(), Str
     let mut handler =
         OverlayHandler::new_overlay_handler(&details.address_offsets, &details.arch, &base_addr, &handle, &pid, &config.overlay)
             .ok_or("This version has no overlay")?;
-    UiSettings::set(&handler.ui_memory_manager.get().settings.collision, true);
+    handler.ui_memory_manager.get().settings.collision.set(true);
     handler.active = true;
     handler.handle_tick().map_err(|e| format!("The update failed: {}", e))?;
     handler.active = false;
