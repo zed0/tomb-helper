@@ -2,6 +2,14 @@
 //! seconds and putting hardware breakpoints on it. This finds code that a static trace can't reach,
 //! e.g. fields read through objects found in lists. `derive` then matches these instructions in a
 //! new build to find where the field moved to.
+//!
+//! It sets DR0-3 on up to 4 values (resolved after `--delay`) and records each accessing instruction with its callers
+//! (return addresses scanned off the stack); `--write` breaks on writes only. In a 32-bit game the debug registers are
+//! in the native context and the registers the code sees in the WOW64 one (`Context`); an access by a `call [mem]` is
+//! found at the return address. Hidden `watch-raw <pid> <addr or +rva>[,...]` does the same for any addresses (`--exec`
+//! breaks on running the instruction there and records the registers; `--dump <register>:<hex length>` also copies the
+//! memory a register points at, the first 3 times per instruction, e.g. `esp:40` for a function's arguments), and
+//! `disasm` prints instructions with their RVAs.
 
 use anyhow::{bail, Context as _, Result};
 use crate::derive::format_offsets;

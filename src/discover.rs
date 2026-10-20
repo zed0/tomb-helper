@@ -1,6 +1,11 @@
 //! `tomb-helper discover`: finds the overlay's static addresses in the running game through the RTTI class names of
 //! what they point to, which are the same between versions (and in SOTTR). Uses the layout for the offsets within,
 //! and for what has no RTTI (TR2013's collision scene, its proxies). Works for 32 and 64-bit games.
+//!
+//! It finds GameRender (the camera), TR9MultibodyClient (-> CollisionSceneClient, or `collision_scene.in_client` where
+//! it has no RTTI), the instance array (the longest run of slots with a nonzero header whose transforms are
+//! TransformComponents, or without transforms whose objects have names) and, where Lara's proxy is a static (TR2013),
+//! `PlayerProxy` and `CombatProxy`; `--save` writes them to the offsets file.
 
 use anyhow::{Context, Result};
 use crate::game_memory::{pointer_from, pointer_size, Handle};

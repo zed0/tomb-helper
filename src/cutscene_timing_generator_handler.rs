@@ -1,3 +1,6 @@
+//! Records cutscene timings, by watching the cutscene's memory and asking LiveSplit Server for the time over TCP
+//! (`getcurrenttime`), and writes the timing file after each cutscene.
+
 use crate::action::Action;
 use crate::handler::Handler;
 use crate::process_details::{AddressOffsets, AddressType};

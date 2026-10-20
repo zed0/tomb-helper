@@ -1,3 +1,7 @@
+//! A value in the game at the end of a pointer chain (the first offset relative to the module base), cached:
+//! `fetch_from_game` reads it, `apply_to_game` writes it back. Used by the position and cutscene handlers; everything
+//! else reads through `game_memory`.
+
 use process_memory::{Architecture, DataMember, Memory, ProcessHandle};
 use std::io;
 

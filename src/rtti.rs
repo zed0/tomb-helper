@@ -1,6 +1,9 @@
 //! MSVC RTTI: an object's first pointer is its vtable, whose entry before the first is a CompleteObjectLocator with its
 //! type descriptor, which has the class name (e.g. `.?AVGameRender@@`). 64-bit locators refer to things by RVA,
 //! 32-bit ones (TR2013) by address.
+//!
+//! `Classes` maps vtables to class names (cached) and `all_vtables` lists every vtable in an image and its class.
+//! Tested on fake images of both pointer sizes.
 
 use crate::game_memory::{Handle, pointer_size, read_pointer, read_u32};
 use process_memory::CopyAddress;

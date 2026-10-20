@@ -1,3 +1,8 @@
+//! The level's collision meshes (CLAUDE.md's "Level collision"): `CollisionMeshes::refresh` walks the scene's instance
+//! list (dropping duplicates), and `triangles_near` caches each mesh's vertices and triangles and returns the world
+//! space triangles near a point, closest first, tagged floor, wall or ceiling by their normal. `raycast` finds where a
+//! line first hits them.
+
 use crate::game_memory::{Handle, pointer_at, read_u32, u16_at, u32_at, vector_at};
 use crate::layout;
 use crate::position::Position;

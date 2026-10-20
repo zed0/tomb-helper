@@ -1,7 +1,10 @@
 //! Follows how the game's code uses a static address: which offsets it dereferences from the
 //! pointer stored there, and from the pointers loaded from those, and so on. Each memory access is
-//! reported as a chain in the same form as `process_details.rs` (`[static, o1, ..., on]`), so the
+//! reported as a chain in the same form as the offsets file's (`[static, o1, ..., on]`), so the
 //! chains the code itself uses can be found, and matched up between game versions.
+//!
+//! `Tracer` follows pointer loads, branches, direct calls (arguments and the returned `rax`) and, with a live
+//! `CallResolver`, virtual calls; on x86 also into the callers of a getter returning the static's pointer.
 
 use crate::pe_image::PeImage;
 use iced_x86::{

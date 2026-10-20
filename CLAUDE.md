@@ -43,57 +43,52 @@ User docs (hotkeys, config, cutscene timing generation) live in `README.md`.
 
 ## File index
 
+Each module's `//!` doc says what's in it and how it works; this is where to look.
+
 | File | What's there |
 |---|---|
-| `src/main.rs` | Entry, process polling loop, handler construction, hotkey wiring, action/tick loop |
-| `src/config.rs` | `Config` (serde), loaded from `tomb-helper.json` next to the exe; default hotkeys, default gist URLs, `CutsceneTiming::On/Off` |
-| `src/action.rs` | `Action` enum — every hotkey-bindable action. Movement actions carry `distance` (default 100.0) |
-| `src/handler.rs` | `Handler` trait: `handle_tick`, `handle_action`, and for the overlay's window `take_actions` (button presses, given to every handler like hotkeys), `report`/`show` (`HelperState`: the position handler's saved position and flight mode, shown by the overlay) |
-| `offsets.json` | **Per-game-version memory offsets** (built into the exe with `include_str!`). Hex strings, `bits`, optional `image_size` (to tell Steam/Epic apart), optional `witnesses` (from `watch`, only used by `derive`) and `layout_witnesses` (from `watch-layout`, keyed `group.field`), ignored `unverified` (kept when the file is saved) |
-| `src/offsets_file.rs` | JSON schema (`OffsetsFile`/`VersionEntry`/`Hex`, `deny_unknown_fields` to catch typos), `OffsetsSource` (`tomb-helper-offsets.json` next to the exe overrides the built in file; `changed()` for hot reload), `known_process_details()` for the CLI tools, `to_json` (one line per offset list) |
-| `src/process_details.rs` | Types only: `AddressType` enum (serde names are the JSON keys), `ProcessDetails`, `VersionIdentifier` |
-| `src/cli.rs` | The command line tools: a `clap` subcommand per tool (`tomb-helper --help` lists them; `watch-raw`, `disasm`, `check-matching` and `overlay-data` are hidden), each with its own flags after it (e.g. `check --version <v>`); `export-offsets` and `dump` are here, the rest call into their modules. Errors are `anyhow` (`io::Result` for reading the game) |
-| `src/derive.rs` | `derive`: fuzzy-matches code references between builds to find static addresses (`Deriver`: byte windows, or when that isn't confident `normalised`, sure only if deriving back lands within 0x400), then aligns `code_trace` accesses at matched sites to map each chain level (`code`/`witness`/`shifted`/`copied`; between compilers only an unchanged offset or a strong vote counts). On x86 a code position only counts as a reference if an instruction uses it. `check-matching <a> <b> [n]` round-trips n statics to measure matching |
-| `src/normalised.rs` | Matching references between builds from different compilers: the code around each (12 instructions either side, within the function) as tokens without registers, stack offsets or addresses (strings/imports/constants by content), plus one for the referencing instruction; weighted cosine (idf), candidates from an inverted index of rare tokens, runner-up only among references to other statics elsewhere |
-| `src/code_trace.rs` | `Tracer`: data-flow trace from an instruction using a static address, following pointer loads, branches, direct calls (args + returned `rax`) and, with a live `CallResolver`, virtual calls; on x86 also into the callers of a getter returning the static's pointer (direct `call rel32` index); produces `Access` chains in table form |
-| `src/watch.rs` | `watch <AddressType>...`: attaches as a debugger (`DebugActiveProcess`), sets DR0-3 data breakpoints on up to 4 values (resolved after `--delay`), records accessing instructions ("witnesses") and the caller chain of each (return addresses scanned off the stack), clears and detaches. `--write` breaks on writes only. 32-bit games: debug registers in the native context, the registers the code sees from the WOW64 one (`Context`); an access by a `call [mem]` is found at the return address. Hidden `watch-raw <pid> <addr or +rva>[,...]` for up to 4 addresses (`--exec` breaks on running the instruction there and records the registers, resuming with the resume flag; `--dump <register>:<hex length>` also copies the memory a register points at, the first 3 times per instruction, e.g. `esp:40` for a function's arguments), and `disasm <pid> <addr or +rva> [count]` (prints RVAs; call targets are absolute) |
-| `src/aim_sweep.rs` | TR2013's aim sweep (the rod that holds Lara off walls in front of her while she aims): finds the equipped weapon's tuning through Lara's handle, inventory record, its item map, the weapon's instance and type record (`InventoryPool`/`TypePool`, layout `aim_sweep`), and places the swept capsule with her transform; drawn as an attached proxy |
-| `src/fit_layout.rs` | `fit-layout [<group>...] [--snapshot <file>] [--save]`: for each group of a failing check (`CHECK_GROUPS`), or those named, tries moving its offset fields from each one on by up to 0x40 either way (read sizes, `READ_SIZES`, grow with them; `NOT_OFFSETS` never move), scoring by that group's checks via a quiet `check` without the script scan (panics from bad layouts caught), keeps the best, repeats. Recovered a +8 shift of TR2013's proxy from a snapshot in 23s. Add new layout values that aren't offsets to `NOT_OFFSETS` |
-| `src/layout_witness.rs` | Layout witnesses: `watch-layout <group.field>... [--save]` finds each field's structure in the running game (`group_address`: camera, proxy, instance, collision scene/instance/mesh so far), records the instructions accessing it with its offset as displacement (`watch::record`), and with `--save` keeps them in the version's `layout_witnesses`; `derive_layout` matches them into a new build (`witness`), which `update-offsets --from` and `derive` apply to the new entry's layout. Fields by name via the layout's JSON (`field_offset`/`with_field`) |
-| `src/words.rs` | `Words`, the offsets file's top level `words` section (defaults in `Default`, set when the file is parsed, validated against `TriggerCategory`/`TRIGGER_ACTIONS`): trigger categories by name words, script actions by node class name parts (`trigger_scripts`), names that aren't interactable, TR2013's component data names, name prefixes. Add a game's words there, not in code |
-| `src/witness.rs` | Matches witness instructions into a new build by byte-window similarity around the displacement; the displacement change gives the new last offset |
-| `src/chains.rs` | Live: `chains` traces every static reference, evaluates the chains in the running game and lists code chains landing on each current value; `probe` prints current values |
-| `src/pe_image.rs` | `PeImage`: load an exe in memory layout (or a dump), or dump a running process's main module (works on Denuvo builds); `sections()`, `imports()` (IAT slot -> name) |
-| `src/find_process.rs` | Win32 process/module lookup (`get_pid`, `get_base_address`, `is_process_running`), version detection (image size first, else reads version string from memory), `force_version` override |
-| `src/tracked_memory.rs` | `TrackedMemory<T>`: cached value + pointer-chain offsets; `fetch_from_game` / `apply_to_game`. First offset is relative to module base |
-| `src/tracked_position.rs` | `TrackedPosition`: three `TrackedMemory<f32>` (x/y/z), `to_position()` |
-| `src/position.rs` | Plain `#[repr(C)] Position {x,y,z}` (shared with the DLL) |
-| `src/position_handler.rs` | Store/restore position, toggle "active" (freezes position by re-writing it every tick), camera-relative WASD/up/down movement using `CameraSin`/`CameraCos` |
-| `src/cutscene_handler.rs` | Cutscene skipping (SOTTR): checks prompt/status/timeline vs. blacklist delay, sets status=5 to skip, tracks RTA/IGT saved using timing info. Also `Blacklist` type |
-| `src/cutscene_timing_info.rs` | `TimingInfo` / `TimingEntry` JSON format (cutscene ids → durations, skippable-at times) |
-| `src/cutscene_timing_generator_handler.rs` | Records cutscene timings by watching memory + querying LiveSplit Server over TCP (`getcurrenttime`); writes the timing file after each cutscene |
-| `src/readable_from_path.rs` | `ReadableFromPath` trait: load JSON from a local path or URL (blocking reqwest), default on failure |
-| `src/inject32.rs` | Injects the 32-bit overlay into a 32-bit game: `LoadLibraryW` from the game's own 32-bit kernel32 (export table read from the game), as hudhook's injector uses this process's 64-bit one |
-| `src/overlay_handler.rs` | On `ToggleUI` injects `tomb_helper_ui.dll` into the game (`hudhook::inject`), or `tomb_helper_ui32.dll` into a 32-bit one (`inject32`); the camera and instance array are optional (without them the overlay gets camera address 0 and only shows its window); each tick streams into shared memory: position, `CameraView`, a projection built from `CameraLens`, object boxes (objects matching `config.overlay` filters, rescanned every second), and Lara's collision from `collision.rs` (hit capsules, ground probes, proxy capsules, with a 150ms hold on "pushing"); sets `should_exit` to eject on toggle-off/drop. `TrackedCameraMatrix` reads a 4x4 matrix in one copy |
-| `src/object_list.rs` | Reads the game's static instance array (`InstanceArray`, 0x120 byte records until a zero header): position, placement names, world matrix (built from the instance's position + Rx*Ry*Rz Euler rotation, with only the scale from `cdc::TransformComponent`, which goes stale for Lara), and model bounds (`read_bounds`: component table -> DrawableComponent -> InstanceDrawable -> CommonRenderModelInstance -> CommonRenderModel -> `Mesh` header min/max). Layout offsets are constants found in ROTTR Steam |
-| `src/collision.rs` | Lara's collision, see "Lara's collision" below: hit capsules (`read_capsule_shapes`/`place_capsules`), ground probes (`read_probes`), and her movement proxy with the camera/weapon proxies attached to it (`read_proxy`), including which of them is pushing her (contacts on their surface). Has unit tests for the capsule geometry |
-| `src/collision_mesh.rs` | The level's collision meshes (see "Level collision" below): `CollisionMeshes::refresh` walks the scene's instance list (dropping duplicates), `triangles_near` caches each mesh's vertices/triangles and returns the world space triangles near Lara, closest first, tagged floor/wall/ceiling by their normal |
-| `src/trigger.rs` | What an instance is from its component table (`read_kinds`: interactable via Interactable/Loot/Collectible components, trigger via TriggerComponent, character/animal via Npc or Health + Corpse components; RTTI checked), resources by name (`is_resource`), trigger categories by name (`categorise`, `words.trigger_categories`), trigger shapes (`read_shape`: box, plane, sphere, polygon volume), their world space outlines and faces (`faces`, which the overlay fills in at `trigger_opacity`; polygon caps are ear clipped as they can be concave) |
-| `src/layout.rs` | `Layout`: where everything the overlay reads is in the game's structures (instance, drawable, collide, proxy, body, physics shape, probes, camera, collision scene/instance/mesh, trigger shape), ROTTR Steam's by default, overridable per version in the offsets file's `layout` section (optional offsets, e.g. TR2013's missing instance `transform`, are `null`). `layout::set_for(details)` on connecting sets it and the game's pointer size (in `game_memory`) |
-| `src/game.rs` | `Game`: a `Handle`, the module base and the version's offsets, and how the overlay and `check` both find things with them: `resolve`/`require`/`has`, `find_lara` (PlayerComponent among the nearest `LARA_CANDIDATES`), `lara_proxy` (`PlayerProxy` static or her ProxyComponent), `standalone_proxies` (`CombatProxy`), `aim_sweep`, `lara_proxies` (all of them together, as drawn), `probes`. Add to this rather than finding things separately in each |
-| `src/game_memory.rs` | Reading the game's memory, for every game: `Handle` (the running game, a recording of it, or a snapshot; everything reading the game's structures takes one, `ProcessHandle` is only for `process_memory`'s own readers), `resolve` (offset file chains), its pointer size (set on connecting), `read_pointer` (None if null), `read_pointer_or_null`, `read_u32`/`read_u64`/`read_floats`, and accessors for bytes copied out of it (`pointer_at`, `u16_at`, `u32_at`, `u64_at`, `f32_at`, `floats_at`, `vector_at`). Use these rather than reading pointers by hand |
-| `src/snapshot.rs` | `snapshot [<file>]`: runs `check` with a recording `Handle`, saves the image, the merged reads and the report `check` gives from the snapshot (to `H:\tomb-helper-dumps\snapshots`); `check-snapshots [<dir>]` replays each and lists changed report lines, `accept-snapshots` saves the new reports after a change meant to change them. The trigger script scan's bulk reads aren't kept (`Handle::scan_read`), the nodes read after are, and a replay scans the snapshot's regions. An `#[ignore]`d test runs it |
-| `src/rtti.rs` | MSVC RTTI for 32 and 64-bit games (one locator `Format` per pointer size): `Classes` (vtable -> class name, cached) and `all_vtables` (every vtable in an image dump and its class). Unit tested on fake images of both |
-| `src/components.rs` | Components by RTTI class name (`rtti::Classes`): `Components::get` learns each class's slot from a table (budgeted per `start_refresh`) and checks class + back pointer. Class name constants |
-| `src/discover.rs` | `discover [--save]`: finds GameRender (camera), TR9MultibodyClient (-> CollisionSceneClient, or `collision_scene.in_client` where it has no RTTI), the instance array (the longest run of slots with a nonzero header whose transforms are TransformComponents, or with no transforms whose objects have names) and, where Lara's proxy is a static (`proxy.instance` set, TR2013), `PlayerProxy` (the static ProxyComponent whose instance is "lara...") and `CombatProxy` (`proxy.attached`), optionally writing them to the offsets file. 32 and 64-bit |
-| `src/update_offsets.rs` | `update-offsets [--from <exe or dump>] [--dry-run]`: the one command for a new build. Attaches to any known exe (new builds start from the last known entry for it; an entry without a layout borrows the last one of the same game that has one), finds statics (`discover::find_statics`), Lara (PlayerComponent) -> position chain (kept if the previous chain still lands there, else `chains::best_code_chains`; Y/Z = X + 4/8), ground probes by contents, version string; `--from` adds `derive::derive_lines`; the rest goes to `unverified` for a new build. Saves (`discover::save_entry`) and runs `check::run`. The same for 32-bit games, where Lara is found as `PlayerProxy`'s instance |
-| `src/check.rs` | `check`: reads everything the overlay does from the running game and checks it makes sense, to port the layout. Every check runs for every game, skipping (with the reason) what the layout or offsets say the game doesn't have |
-| `src/trigger_scripts.rs` | What sets triggers off and what they do: a background heap scan for ActionGraph trigger nodes (vtables of every class found by RTTI in the image, `rtti::all_vtables`), or in a game without trigger node classes (TR2013) the nodes for any instance, matched to triggers by instance id, then each node's links in its graph followed (`layout.script`) to the nodes it leads to, described by class (`words.script_actions`) and the instances they act on; cached per id, rescanned for new triggers (10s) and ones with no script (60s). The overlay can show triggers by these words (`TRIGGER_ACTIONS` in `ui_ipc_data`) instead of by name |
-| `src/ui_ipc_data.rs` | Shared-memory IPC (`shared_memory` crate, os_id `"TombHelperIPC-<size of UiDoubleBuffer>"` so a stale mapping from another layout is never opened): `UiData` (camera, `ObjectBox`es, `Capsule`s, `Probe`s, collision `Triangle`s), `UiDoubleBuffer` with a sequence counter per buffer, changed and read in place since `UiData` is ~7MB, copying only the triangles in use, plus `UiSettings` (atomic show/hide toggles, mesh radii, opacity, fade and hidden triangle culling, which the DLL's checkboxes/sliders and the exe's hotkeys change) (`update`; the reader uses `try_read` into a scratch box and keeps its last good copy, since the exe never waits), `SharedMemoryManager` (exe is owner) |
-| `src/lib.rs` | Injected overlay: `TombHelperHud` implements `ImguiRenderLoop`; opens a console only if `config.overlay.console`; shows a position window and draws (near-plane clipped, in world space via `Projector`) a box + name per `ObjectBox`, Lara's capsules, probes, a circle at her feet and the level's collision triangles (filled faintly, under everything, without anti-aliasing,
-skipping back faces and ones off screen, and optionally ones behind others via a quarter resolution software ID buffer
-(`OcclusionBuffer`); the position window shows how long they took to find and draw). Colours: model boxes green, estimated yellow, collision capsules white / yellow while pushing, proxy's next shape red, probes cyan, collision floors green / walls orange / ceilings blue. Calls `eject()` when `should_exit` is set. Reads the camera itself each frame (`ReadProcessMemory` on its own process,
-at addresses the exe sends) since the exe's copy lags and made everything judder as the camera turned |
+| `src/main.rs` | Entry: process polling, handler construction, hotkeys, the action/tick loop; hands CLI args to `cli` |
+| `src/cli.rs` | The command line tools as `clap` subcommands (some hidden), `export-offsets`, `dump` |
+| `src/config.rs` | `tomb-helper.json`: hotkeys, cutscene files, the overlay's starting settings |
+| `src/action.rs` | `Action`: everything a hotkey can be bound to |
+| `src/handler.rs` | The `Handler` trait every feature implements |
+| `offsets.json` | **Per-game-version offsets** (built into the exe), layouts, witnesses and `words` |
+| `src/offsets_file.rs` | The offsets file's JSON, `OffsetsSource` (the file next to the exe overrides the built in one, hot reloaded) |
+| `src/process_details.rs` | Types: `AddressType` (the offsets file's keys), `ProcessDetails`, `VersionIdentifier` |
+| `src/find_process.rs` | Finding the game process and which version it is |
+| `src/game.rs` | `Game`: how the overlay and `check` both find things (Lara, her proxies, probes, ...) |
+| `src/game_memory.rs` | Reading the game: `Handle` (live, recording, snapshot), pointer size, readers, `*_at` accessors |
+| `src/layout.rs` | `Layout`: where things are in the game's structures, per version, ROTTR Steam's by default |
+| `src/words.rs` | The offsets file's `words`: names and class name parts the tools go by |
+| `src/rtti.rs`, `src/components.rs` | MSVC RTTI (32/64-bit), and components found by RTTI class name |
+| `src/object_list.rs` | Instances: positions, names, transforms (`to_world`), model bounds |
+| `src/collision.rs` | Lara's collision: hit capsules, ground probes, her proxy and attached proxies |
+| `src/collision_mesh.rs` | The level's collision meshes near a point, and raycasts against them |
+| `src/aim_sweep.rs` | TR2013's aim sweep (weapon rod) through her inventory to the weapon's tuning |
+| `src/trigger.rs` | What an instance is (interactable, trigger, NPC), trigger categories and shapes |
+| `src/trigger_scripts.rs` | What sets triggers off and what they do, from a background scan for script nodes |
+| `src/overlay_handler.rs` | Injects the overlay and sends it what to draw each tick; `overlay-data` |
+| `src/inject32.rs` | Injecting the 32-bit overlay into a 32-bit game |
+| `src/ui_ipc_data.rs` | The shared memory: `UiData`, `UiSettings`, double buffering (shared with the DLL) |
+| `src/lib.rs` | The injected overlay (DLL): its window and drawing |
+| `src/position.rs` | `Position`, with `Vector3` conversions (shared with the DLL) |
+| `src/position_handler.rs` | Save/restore position, flight mode and movement |
+| `src/tracked_memory.rs`, `src/tracked_position.rs` | Cached values at pointer chains, for the position and cutscene handlers |
+| `src/cutscene_handler.rs` | Cutscene skipping (SOTTR) and time saved |
+| `src/cutscene_timing_info.rs`, `src/cutscene_timing_generator_handler.rs` | The cutscene timing file, and recording it with LiveSplit |
+| `src/readable_from_path.rs` | JSON from a path or URL |
+| `src/check.rs` | `check`: reads what the overlay does and checks it makes sense |
+| `src/snapshot.rs` | `snapshot`/`check-snapshots`/`accept-snapshots`: `check` without the game |
+| `src/discover.rs` | `discover`: the overlay's statics through RTTI |
+| `src/update_offsets.rs` | `update-offsets`: the one command for a new build |
+| `src/fit_layout.rs` | `fit-layout`: searching for layout offsets `check` passes with |
+| `src/derive.rs` | `derive`: offsets for a new build by matching code references, `trace`, `check-matching` |
+| `src/normalised.rs`, `src/witness.rs` | Matching references between compilers, and witness instructions between builds |
+| `src/code_trace.rs` | Tracing how code uses a static: the pointer chains it accesses |
+| `src/chains.rs` | `chains` and `probe`, live |
+| `src/watch.rs` | `watch` (and hidden `watch-raw`, `disasm`): hardware breakpoints for the instructions accessing values |
+| `src/layout_witness.rs` | `watch-layout`: witnesses for layout fields, matched into new builds |
+| `src/pe_image.rs` | `PeImage`: an exe or dump in memory layout, or dumped from a process |
 
 ## Common changes
 
@@ -110,7 +105,7 @@ at addresses the exe sends) since the exe's copy lags and made everything judder
   when the version string is shared between stores. Only include the `AddressType`s you've found — handlers
   needing missing ones won't load.
 - **Add a new memory value:** add an `AddressType` variant, add offsets per version in `offsets.json`, read it with
-  `TrackedMemory::new(default, offsets.clone(), arch, base_addr)`.
+  `Game` (`read_floats`, `require` and `game_memory`'s readers), or `TrackedMemory` in a handler that writes it.
 - **Add a hotkey action:** add a variant to `Action` (`src/action.rs`), handle it in the relevant
   handler's `handle_action`, optionally add a default in `default_hotkeys()` (`src/config.rs`), and
   document it in `README.md`.

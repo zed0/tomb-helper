@@ -1,3 +1,7 @@
+//! `tomb-helper.json` next to the exe: hotkeys (`default_hotkeys`), the cutscene timing and blacklist files (gist URLs
+//! by default), whether to record cutscene timings (`CutsceneTiming`), and the overlay's settings (`OverlayConfig`, the
+//! overlay window's settings to start with).
+
 use livesplit_hotkey::KeyCode;
 use serde::Deserialize;
 use std::path::PathBuf;

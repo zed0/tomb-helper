@@ -1,3 +1,10 @@
+//! The overlay: on `ToggleUI` injects `tomb_helper_ui.dll` into the game, or `tomb_helper_ui32.dll` into a 32-bit one
+//! (`inject32`), and each tick sends it what to draw through shared memory (`ui_ipc_data`): Lara's position, the camera
+//! (with a projection made from `CameraLens`), boxes round objects (rescanned every second), triggers, the level's
+//! collision near her, and her own collision (with a 150ms hold on "pushing", as contacts are often caught mid update).
+//! Without the camera or instance array the overlay only shows its window. It sets `should_exit` to make the overlay
+//! eject itself when toggled off or dropped. `overlay-data` prints what it would send without injecting.
+
 use anyhow::{anyhow, Context, Result};
 use crate::game::Game;
 use crate::game_memory::Handle;

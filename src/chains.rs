@@ -1,5 +1,8 @@
 //! Live tools that need the game running: finding the pointer chains the game's own code uses to
 //! reach each known value, and printing the current values.
+//!
+//! `chains` traces every static reference (`code_trace`), evaluates the chains in the running game and lists those
+//! landing on each value; `probe` prints the current values. `connect` attaches to the running game for the live tools.
 
 use anyhow::{bail, Context, Result};
 use crate::code_trace::{Access, CallResolver, Tracer};

@@ -1,3 +1,11 @@
+//! tomb-helper: finds the running game, builds the handlers for its version, and passes them hotkey actions and ticks.
+//! With any arguments it runs a command line tool instead (`cli`).
+//!
+//! It polls for a known game every 100ms; once one's running it creates the handlers (`create_handlers`; each is left
+//! out if the version lacks the offsets it needs), registers the hotkeys (one key can trigger several actions), then
+//! loops: actions to every handler, then a tick for each. Every 500ms it checks the offsets file, recreating the
+//! handlers if the running version's offsets changed. It disconnects when the game exits.
+
 use crate::action::Action;
 use crate::config::{Hotkey, CutsceneTiming, Config};
 use crate::handler::{Handler, HelperState};

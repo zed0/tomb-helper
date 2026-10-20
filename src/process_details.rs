@@ -1,3 +1,6 @@
+//! What a game version is (`ProcessDetails`, `VersionIdentifier`) and the values tomb-helper reads from it
+//! (`AddressType`, whose serde names are the offsets file's keys). Types only; the versions are in `offsets.json`.
+
 use crate::layout::Layout;
 use process_memory::Architecture;
 use serde::{Deserialize, Serialize};

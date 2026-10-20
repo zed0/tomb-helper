@@ -1,3 +1,7 @@
+//! Cutscene skipping (SOTTR): skips a cutscene (by setting its status to 5) once its prompt is up and the blacklist's
+//! delay for it has passed, and adds up the real and game time saved using the timing info. `skip` returns `Ok` when
+//! there's no cutscene, as Space is also jump. A blacklist delay of 20000 means never skip.
+
 use crate::action::Action;
 use crate::handler::Handler;
 use crate::process_details::{AddressOffsets, AddressType};

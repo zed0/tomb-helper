@@ -1,3 +1,5 @@
+//! The cutscene timing file: each cutscene's id, how long it lasts and when it can be skipped (`TimingInfo`).
+
 use serde::{Serialize, Deserialize};
 use std::error::Error;
 use std::path::PathBuf;

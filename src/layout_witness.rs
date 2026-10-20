@@ -2,6 +2,11 @@
 //! `watch-layout` and kept in the version's `layout_witnesses`, matched into a new build (`update-offsets --from`) to
 //! see where the field went, the way `witnesses` do for the offsets file's last offsets. Fields are named
 //! `group.field` as in the offsets file's layout section, e.g. `proxy.in_use_size`.
+//!
+//! `group_address` finds a field's structure in the running game (camera, proxy, instance, collision scene, instance
+//! and mesh so far); the instructions accessing it are recorded with its offset as their displacement
+//! (`watch::record`), and `derive_layout` matches them into a new build (`witness`). Fields are found by name through
+//! the layout's JSON (`field_offset`, `with_field`).
 
 use anyhow::{anyhow, bail, Context, Result};
 use crate::components::Components;

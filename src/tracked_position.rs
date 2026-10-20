@@ -1,3 +1,5 @@
+//! Lara's position as three `TrackedMemory<f32>`s (x, y, z), which the position handler reads and writes.
+
 use process_memory::{Architecture, ProcessHandle};
 
 use crate::position::Position;

@@ -1,3 +1,7 @@
+//! What every feature (position, cutscenes, the overlay) implements: `handle_tick` every loop, `handle_action` for each
+//! hotkey action. The overlay's window also asks for actions (`take_actions`, which are given to every handler like
+//! hotkeys), and shows what the other handlers `report` (`HelperState`: the saved position and flight mode).
+
 use crate::action::Action;
 use crate::position::Position;
 use std::error::Error;

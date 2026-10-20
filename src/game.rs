@@ -1,5 +1,8 @@
 //! The game (running, or a snapshot of it) and where things are in it, from its version's offsets: how the overlay and
 //! `check` both find Lara and her collision, so that `check` tests what the overlay draws.
+//!
+//! Finding things in the game belongs here (`find_lara`, `lara_proxy`, `standalone_proxies`, `aim_sweep`,
+//! `lara_proxies`, `probes`, `read_floats`, `lara_position`), rather than in the overlay and `check` separately.
 
 use crate::collision::{self, AttachedProxy, ProxyCapsules};
 use crate::components::{self, Components};

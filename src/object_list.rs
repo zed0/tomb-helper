@@ -1,3 +1,9 @@
+//! The game's instances (game objects) from its static array (`InstanceArray`): position, names (placement, or object
+//! type for spawned ones), world matrix (built from the instance's position and Euler rotation, Rx * Ry * Rz, with only
+//! the scale from its `cdc::TransformComponent`, which goes stale for Lara), and model bounds (`read_bounds`: component
+//! table -> DrawableComponent -> InstanceDrawable -> CommonRenderModelInstance -> CommonRenderModel -> the `Mesh`
+//! header). Where everything is is in the layout (`layout::InstanceLayout`).
+
 use crate::game_memory::{Handle, f32_at, pointer_at, read_pointer, u32_at, u64_at};
 use crate::components::{self, Components};
 use crate::layout;
