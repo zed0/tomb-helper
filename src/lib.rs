@@ -8,6 +8,8 @@ use hudhook::hooks::dx12::ImguiDx12Hooks as GameHooks;
 use crate::ui_ipc_data::{projection_from_lens, BoxKind, Capsule, ObjectBox, ObjectCategory, Probe, SharedMemoryManager, SurfaceKind, Triangle, TriggerCategory, UiData, UiSettings, REQUEST_RESTORE_POSITION, REQUEST_STORE_POSITION, REQUEST_TOGGLE_FLYING, TRIGGER_ACTIONS};
 use crate::tracing::{error, warn};
 
+// Shared with the exe, which uses the other half of it
+#[allow(dead_code)]
 mod ui_ipc_data;
 mod position;
 

@@ -151,7 +151,8 @@ fn run_report(handle: Handle, base_address: usize, details: ProcessDetails, repo
     }
 
     let mut slots: Vec<_> = components.known_slots().iter().collect();
-    slots.sort_by_key(|(_, slot)| **slot);
+    // By class too, as some share a slot (it's a HashMap, so the report would change from run to run)
+    slots.sort_by_key(|&(class, slot)| (*slot, class));
     report.line(String::new());
     report.line(format!("Component slots found: {}", slots.iter().map(|(c, s)| format!("{} {}", s, c)).collect::<Vec<_>>().join(", ")));
     report.line(String::new());
