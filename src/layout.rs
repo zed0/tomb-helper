@@ -9,12 +9,38 @@ use crate::process_details::ProcessDetails;
 
 use crate::offsets_file::Hex;
 
-fn serialize_hex<S: Serializer>(value: &usize, serializer: S) -> Result<S::Ok, S::Error> {
-    Hex(*value).serialize(serializer)
+// An offset as hex, or an optional one (`null` where a game doesn't have it)
+trait HexField: Sized {
+    fn serialize_hex<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error>;
+    fn deserialize_hex<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error>;
 }
 
-fn deserialize_hex<'de, D: Deserializer<'de>>(deserializer: D) -> Result<usize, D::Error> {
-    Hex::deserialize(deserializer).map(|h| h.0)
+impl HexField for usize {
+    fn serialize_hex<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        Hex(*self).serialize(serializer)
+    }
+
+    fn deserialize_hex<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Hex::deserialize(deserializer).map(|h| h.0)
+    }
+}
+
+impl HexField for Option<usize> {
+    fn serialize_hex<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.map(Hex).serialize(serializer)
+    }
+
+    fn deserialize_hex<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Option::<Hex>::deserialize(deserializer).map(|h| h.map(|h| h.0))
+    }
+}
+
+fn serialize_hex<T: HexField, S: Serializer>(value: &T, serializer: S) -> Result<S::Ok, S::Error> {
+    value.serialize_hex(serializer)
+}
+
+fn deserialize_hex<'de, T: HexField, D: Deserializer<'de>>(deserializer: D) -> Result<T, D::Error> {
+    T::deserialize_hex(deserializer)
 }
 
 fn serialize_hex_option<S: Serializer>(value: &Option<usize>, serializer: S) -> Result<S::Ok, S::Error> {
@@ -33,9 +59,19 @@ fn deserialize_hex_list<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Ve
     Vec::<Hex>::deserialize(deserializer).map(|l| l.into_iter().map(|h| h.0).collect())
 }
 
+// A field's type in a `group!`: an offset unless it says (`field: Option<usize> = None`)
+macro_rules! field_type {
+    () => {
+        usize
+    };
+    ($ty:ty) => {
+        $ty
+    };
+}
+
 // A group of hex numbers, each with its ROTTR (Steam) default
 macro_rules! group {
-    ($(#[$meta:meta])* $name:ident { $($(#[$field_meta:meta])* $field:ident = $default:expr,)* }) => {
+    ($(#[$meta:meta])* $name:ident { $($(#[$field_meta:meta])* $field:ident $(: $ty:ty)? = $default:expr,)* }) => {
         $(#[$meta])*
         #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
         #[serde(default, deny_unknown_fields)]
@@ -43,7 +79,7 @@ macro_rules! group {
             $(
                 $(#[$field_meta])*
                 #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
-                pub $field: usize,
+                pub $field: field_type!($($ty)?),
             )*
         }
 
@@ -154,8 +190,6 @@ group! {
     /// TR2013's aim sweep (see `aim_sweep`), from Lara through her inventory to the tuning of the weapon she has out. The
     /// defaults are TR2013 (Steam)'s, and it's only used if `InventoryPool` and `TypePool` are in the offsets file.
     AimSweepLayout {
-        /// In Lara's proxy (`PlayerProxy`), -> her instance
-        proxy_instance = 0x18,
         /// Handles (index, id) into pools of records: the pool starts with this many 0x10 byte entries, each the index of
         /// a record, with the id at +0x8, and the records follow
         max_handles = 0xBB8,
@@ -300,6 +334,12 @@ pub struct ProxyLayout {
     pub flags: Option<usize>,
     #[serde(serialize_with = "serialize_hex", deserialize_with = "deserialize_hex")]
     pub collides: usize,
+    /// -> the instance it belongs to, where `discover` finds Lara's proxy as a static (TR2013)
+    #[serde(serialize_with = "serialize_hex_option", deserialize_with = "deserialize_hex_option")]
+    pub instance: Option<usize>,
+    /// -> the first proxy attached to it that's found on its own, not through its body (`CombatProxy`, TR2013)
+    #[serde(serialize_with = "serialize_hex_option", deserialize_with = "deserialize_hex_option")]
+    pub attached: Option<usize>,
 }
 
 impl Default for ProxyLayout {
@@ -322,6 +362,8 @@ impl Default for ProxyLayout {
             contact_size: 0x60,
             flags: None,
             collides: 0x2,
+            instance: None,
+            attached: None,
         }
     }
 }
@@ -391,6 +433,8 @@ group! {
         first = 0x28,
         /// u32
         count = 0x30,
+        /// Where the scene is in the `TR9MultibodyClient`, for `discover`, if it has no RTTI to find it by (TR2013)
+        in_client: Option<usize> = None,
     }
 }
 

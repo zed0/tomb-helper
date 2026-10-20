@@ -4,8 +4,8 @@
 //! their contents, and the version string. Given the previous build (`--from`), it also derives the rest the way
 //! `derive` does. It then saves the entry to the offsets file and runs `check` on it.
 //!
-//! The overlay is 64-bit only, so for a 32-bit game (TR2013) the RTTI statics, Lara's instance and the probes are
-//! skipped: the version string is found, the rest is derived from `--from`, and the values are printed to check.
+//! The same works for 32-bit games (TR2013), whose Lara is found through her proxy (a static there) rather than a
+//! PlayerComponent. Statics with nothing to find them by (TR2013's inventory and type pools) come from `--from`.
 
 use crate::game_memory::Handle;
 use crate::chains;
@@ -44,16 +44,12 @@ pub fn update_offsets(from: Option<String>, from_version: Option<String>, dry_ru
     println!("Dumping the game...");
     let image = PeImage::dump(pid).map_err(|e| format!("Could not dump the game: {}", e))?;
 
-    let overlay = image.is_64;
-    let pointer_size = if image.is_64 { 8 } else { 4 };
-    if !overlay {
-        println!("A 32-bit game, which the overlay doesn't support, so only looking for the version string here");
-    }
+    let pointer_size = crate::game_memory::pointer_size();
 
     // How each offset list was found, for the summary
     let mut found: BTreeMap<AddressType, (Vec<usize>, String)> = BTreeMap::new();
     let memory = Handle::Live(pid, handle);
-    let statics = if overlay { discover::find_statics(memory, base_address, &image) } else { BTreeMap::new() };
+    let statics = discover::find_statics(memory, base_address, &image);
     for (address_type, chain) in statics {
         let how = match template.address_offsets.get(&address_type) {
             Some(previous) if *previous == chain => "RTTI, unchanged",
@@ -67,10 +63,16 @@ pub fn update_offsets(from: Option<String>, from_version: Option<String>, dry_ru
         .get(&AddressType::InstanceArray)
         .map(|(chain, _)| chain.clone())
         .or_else(|| existing.as_ref().and_then(|d| d.address_offsets.get(&AddressType::InstanceArray).cloned()));
-    let lara = array.filter(|_| overlay).and_then(|array| find_lara(memory, base_address, array[0]));
+    // Where her proxy is a static (TR2013), it says which instance she is
+    let proxy_lara = found.get(&AddressType::PlayerProxy).zip(layout::current().proxy.instance).and_then(|((chain, _), offset)| {
+        crate::game_memory::read_pointer(memory, base_address + chain[0] + offset)
+    });
+    let lara = match proxy_lara {
+        Some(address) => crate::object_list::read_position(memory, address).ok().map(|position| (address, position)),
+        None => array.and_then(|array| find_lara(memory, base_address, array[0])),
+    };
     let mut targets = vec![];
     match lara {
-        None if !overlay => {}
         Some((address, position)) => {
             println!("Lara's instance is at {:#X}, at ({:.0}, {:.0}, {:.0})", address, position.x, position.y, position.z);
             // Y and Z follow X, so they use its chain
@@ -83,7 +85,7 @@ pub fn update_offsets(from: Option<String>, from_version: Option<String>, dry_ru
                 None => println!("Ground probes: NOT FOUND"),
             }
         }
-        None => println!("Lara: NOT FOUND (no instance with a PlayerComponent; load into a level)"),
+        None => println!("Lara: NOT FOUND (no instance with a PlayerComponent or proxy; load into a level)"),
     }
     let version = read_version(handle, base_address, &template, pointer_size);
     if let Some((address, string)) = &version {
@@ -197,14 +199,8 @@ pub fn update_offsets(from: Option<String>, from_version: Option<String>, dry_ru
     } else {
         discover::save_entry(entry)?;
     }
-    if overlay {
-        println!("\nChecking it...");
-        check::run(Handle::Live(pid, handle), base_address, details)
-    } else {
-        println!("\nWhat they point to now (check Lara's position, the camera and so on look right):");
-        chains::print_values(handle, base_address, &details);
-        Ok(())
-    }
+    println!("\nChecking it...");
+    check::run(Handle::Live(pid, handle), base_address, details)
 }
 
 /// The running game (a known executable), its known details if this build is known, and the details to start from:
