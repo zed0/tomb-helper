@@ -5,7 +5,7 @@
 use crate::game::Game;
 use crate::game_memory::{Handle, read_floats, read_pointer};
 use crate::chains;
-use crate::collision;
+use crate::collision::{self, AttachedProxy};
 use crate::collision_mesh::CollisionMeshes;
 use crate::components::{self, Components};
 use crate::object_list::{self, Instance, ObjectList};
@@ -392,7 +392,7 @@ fn check_aim_sweep(game: &Game, report: &mut Report, components: &mut Components
         None => return report.fail("aim sweep", "Lara's proxy wasn't found".to_string()),
     };
     match game.aim_sweep(proxy) {
-        Some((rod, pushing)) => {
+        Some(AttachedProxy { capsule: rod, touching: pushing }) => {
             let length = distance(&rod.a, &rod.b);
             report.result(
                 "aim sweep",

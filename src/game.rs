@@ -1,11 +1,11 @@
 //! The game (running, or a snapshot of it) and where things are in it, from its version's offsets: how the overlay and
 //! `check` both find Lara and her collision, so that `check` tests what the overlay draws.
 
-use crate::collision::{self, ProxyCapsules};
+use crate::collision::{self, AttachedProxy, ProxyCapsules};
 use crate::components::{self, Components};
 use crate::game_memory::{read_pointer, resolve, Handle};
 use crate::process_details::{AddressOffsets, AddressType};
-use crate::ui_ipc_data::{Capsule, Probe};
+use crate::ui_ipc_data::Probe;
 use std::io;
 
 /// Lara is the nearest instance with a PlayerComponent, out of this many
@@ -67,7 +67,7 @@ impl Game {
 
     /// TR2013's aim sweep while Lara has a weapon out, found from her proxy, and whether it's pushing her. None if the
     /// game doesn't have the offsets, or there's no weapon out
-    pub fn aim_sweep(&self, proxy: usize) -> Option<(Capsule, bool)> {
+    pub fn aim_sweep(&self, proxy: usize) -> Option<AttachedProxy> {
         let instances = self.resolve(AddressType::InstanceArray)?;
         let inventories = self.resolve(AddressType::InventoryPool)?;
         let types = self.resolve(AddressType::TypePool)?;
