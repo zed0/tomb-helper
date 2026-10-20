@@ -248,7 +248,8 @@ pub fn read_attached_proxy(handle: Handle, proxy: usize) -> io::Result<(Capsule,
     Ok((capsule, collides))
 }
 
-fn read_contacts(handle: Handle, proxy: usize) -> Vec<Vector3<f32>> {
+/// The world space points where the proxy is touching things (its own and its attached proxies')
+pub fn read_contacts(handle: Handle, proxy: usize) -> Vec<Vector3<f32>> {
     let layout = &layout::current().proxy;
     let contacts = match layout.contacts {
         Some(offset) => offset,

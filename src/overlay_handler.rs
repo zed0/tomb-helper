@@ -664,6 +664,14 @@ pub fn print_overlay_data(version: Option<String>, delay: u64) -> Result<(), Str
     for (c, touching) in data.attached[..(data.attached_count as usize).min(data.attached.len())].iter().zip(data.attached_touching) {
         println!("    {}{}", capsule(c), if touching { ", pushing her" } else { "" });
     }
+    // Where her proxy's touching things, relative to her
+    if let Some(proxy) = handler.game.lara_proxy(&mut handler.components, handler.lara_address) {
+        let contacts = collision::read_contacts(handler.game.handle, proxy);
+        println!("Contacts ({}), from her position:", contacts.len());
+        for c in contacts {
+            println!("    ({:.0}, {:.0}, {:.0})", c.x - data.position.x, c.y - data.position.y, c.z - data.position.z);
+        }
+    }
     Ok(())
 }
 
