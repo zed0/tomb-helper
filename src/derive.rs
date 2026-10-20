@@ -76,6 +76,10 @@ Usage:
   tomb-helper check [--version <version>]
       With the game running and Lara somewhere ordinary in a level, test the overlay's offsets and
       layout against it, e.g. after `discover` or editing the layout for a new version.
+  tomb-helper watch-layout <group.field>... [--seconds <n>] [--delay <n>] [--save]
+      Like `watch`, for up to 4 layout fields (e.g. proxy.in_use_size): record the instructions that access
+      them, so `update-offsets --from` can find where the fields went in a new build. --save keeps them as the
+      version's layout_witnesses in the offsets file next to the exe.
   tomb-helper snapshot [<file>] [--version <version>]
       Run `check` on the running game and save what it read as a snapshot (to
       H:/tomb-helper-dumps/snapshots by default), so it can be checked again without the game.
@@ -146,6 +150,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
         ["probe"] => chains::probe(version, watch),
         ["discover"] => crate::discover::discover(version, save),
         ["check"] => crate::check::check(version),
+        ["watch-layout", names @ ..] => crate::layout_witness::watch_layout(names, version, seconds, delay, save),
         ["snapshot"] => crate::snapshot::take(None, version),
         ["snapshot", out] => crate::snapshot::take(Some(out), version),
         ["check-snapshots"] => crate::snapshot::check_all(None, false),
@@ -882,6 +887,7 @@ pub fn print_entry(
             .filter_map(|(t, chain, sure, _)| chain.as_ref().filter(|_| *sure).map(|c| (*t, hex(c))))
             .collect(),
         witnesses: witnesses.iter().map(|(t, w)| (*t, hex(w))).collect(),
+        layout_witnesses: BTreeMap::new(),
         unverified: lines
             .iter()
             .filter_map(|(t, chain, sure, _)| chain.as_ref().filter(|_| !*sure).map(|c| (*t, hex(c))))
@@ -1018,6 +1024,19 @@ fn derive(from: &str, to: &str, from_version: Option<&str>) -> Result<(), String
          // with `tomb-helper probe`.",
         details.name, details.version.version
     );
+    // Layout fields the old build has witnesses for, moved where those match
+    let mut details = details;
+    for change in crate::layout_witness::derive_layout(&old, &details, &new) {
+        let how = format!("{}/{} witnesses matched", change.matched, change.witnesses);
+        match change.new {
+            Some(offset) if offset != change.old => {
+                println!("//   layout {}: {:#X} -> {:#X} ({})", change.name, change.old, offset, how);
+                details.layout = crate::layout_witness::with_field(&details.layout, &change.name, offset)?;
+            }
+            Some(_) => println!("//   layout {}: unchanged ({})", change.name, how),
+            None => println!("//   layout {}: [UNSURE] kept {:#X} ({})", change.name, change.old, how),
+        }
+    }
     print_entry(&details, &new, "TODO", &lines, &HashMap::new());
     Ok(())
 }

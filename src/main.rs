@@ -36,6 +36,7 @@ mod handler;
 mod aim_sweep;
 mod inject32;
 mod layout;
+mod layout_witness;
 mod object_list;
 mod overlay_handler;
 mod position;

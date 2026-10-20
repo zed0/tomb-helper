@@ -33,7 +33,7 @@ const RESUME_FLAG: u32 = 0x1_0000;
 // Register sets printed per instruction by `watch-raw --exec`
 const MAX_REGISTER_SETS: usize = 5;
 // x86 has 4 debug address registers
-const MAX_WATCHES: usize = 4;
+pub const MAX_WATCHES: usize = 4;
 const STATUS_SINGLE_STEP: u32 = 0x8000_0004;
 const STATUS_BREAKPOINT: u32 = 0x8000_0003;
 // The same, raised by a 32-bit game's code under WOW64
@@ -309,10 +309,10 @@ fn instruction_ending_at(handle: ProcessHandle, c: &Context, ip: usize, watched:
     })
 }
 
-struct Hit {
-    count: usize,
-    text: String,
-    displacement: i64,
+pub struct Hit {
+    pub count: usize,
+    pub text: String,
+    pub displacement: i64,
     // Return addresses found on the stack (as RVAs), most recent first, and how often each chain was seen
     callers: BTreeMap<Vec<usize>, usize>,
     // For execute breakpoints, the registers each time, and how often each set was seen
@@ -401,7 +401,7 @@ fn stack_callers(handle: ProcessHandle, c: &Context, code: (usize, usize), base_
 
 /// Records which instructions access each address, as RVAs relative to `base_addr`, and with `code_range` (the
 /// range of the game's code) which functions called them
-fn record(
+pub fn record(
     pid: Pid,
     handle: ProcessHandle,
     base_addr: usize,
