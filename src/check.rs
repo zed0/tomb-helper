@@ -119,7 +119,7 @@ fn run_report(handle: Handle, base_address: usize, details: ProcessDetails, repo
     let nearby: Vec<Instance> = match (&lara_position, &instances) {
         (Some(lara), Some(instances)) => {
             let mut nearby = instances.clone();
-            nearby.sort_by(|a, b| distance(&a.position, lara).total_cmp(&distance(&b.position, lara)));
+            nearby.sort_by(|a, b| a.position.distance(lara).total_cmp(&b.position.distance(lara)));
             nearby.truncate(NEARBY);
             nearby
         }
@@ -278,7 +278,7 @@ fn check_lara(
     let lara = game.find_lara(components, &nearest).and_then(|address| nearby.iter().find(|i| i.address == address));
     match lara {
         Some(lara) => {
-            let d = distance(&lara.position, position);
+            let d = lara.position.distance(position);
             report.result(
                 "Lara",
                 d < 1.0,
@@ -366,14 +366,14 @@ fn check_combat_proxy(game: &Game, report: &mut Report, position: &Position) {
     };
     match collision::read_attached_proxy(game.handle, proxy) {
         Ok((capsule, collides)) => {
-            let centre = midpoint(&capsule.a, &capsule.b);
+            let centre = capsule.a.midpoint(&capsule.b);
             report.result(
                 "combat proxy",
-                capsule.radius > 5.0 && capsule.radius < 100.0 && distance(&centre, position) < NEAR_LARA * 2.0,
+                capsule.radius > 5.0 && capsule.radius < 100.0 && centre.distance(position) < NEAR_LARA * 2.0,
                 format!(
                     "radius {:.1}, {:.0} from Lara, {}",
                     capsule.radius,
-                    distance(&centre, position),
+                    centre.distance(position),
                     if collides { "colliding (aiming)" } else { "not colliding" }
                 ),
             );
@@ -393,15 +393,15 @@ fn check_aim_sweep(game: &Game, report: &mut Report, components: &mut Components
     };
     match game.aim_sweep(proxy) {
         Some(AttachedProxy { capsule: rod, touching: pushing }) => {
-            let length = distance(&rod.a, &rod.b);
+            let length = rod.a.distance(&rod.b);
             report.result(
                 "aim sweep",
-                length > 10.0 && length < 300.0 && distance(&rod.a, position) < NEAR_LARA,
+                length > 10.0 && length < 300.0 && rod.a.distance(position) < NEAR_LARA,
                 format!(
                     "radius {:.1}, {:.0} long, starting {:.0} from Lara{}",
                     rod.radius,
                     length,
-                    distance(&rod.a, position),
+                    rod.a.distance(position),
                     if pushing { ", pushing her" } else { "" }
                 ),
             );
@@ -422,14 +422,14 @@ fn check_proxy(game: &Game, report: &mut Report, components: &mut Components, la
     match game.lara_proxies(proxy) {
         Ok(capsules) => match capsules.shapes.first() {
             Some(shape) => {
-                let centre = midpoint(&shape.a, &shape.b);
+                let centre = shape.a.midpoint(&shape.b);
                 report.result(
                     "movement capsule",
-                    shape.radius > 5.0 && shape.radius < 100.0 && distance(&centre, position) < NEAR_LARA,
+                    shape.radius > 5.0 && shape.radius < 100.0 && centre.distance(position) < NEAR_LARA,
                     format!(
                         "radius {:.1}, {:.0} from Lara, {} attached proxies",
                         shape.radius,
-                        distance(&centre, position),
+                        centre.distance(position),
                         capsules.attached.len()
                     ),
                 );
@@ -450,7 +450,7 @@ fn check_capsules(game: &Game, report: &mut Report, components: &mut Components,
         Ok(capsules) => {
             let good = capsules
                 .iter()
-                .filter(|c| c.radius > 1.0 && c.radius < 60.0 && distance(&midpoint(&c.a, &c.b), position) < NEAR_LARA)
+                .filter(|c| c.radius > 1.0 && c.radius < 60.0 && c.a.midpoint(&c.b).distance(position) < NEAR_LARA)
                 .count();
             report.result(
                 "hit capsules",
@@ -611,14 +611,6 @@ fn is_rotation(matrix: &[f32; 16], scaled: bool) -> bool {
 
 fn rows(matrix: &[f32; 16]) -> [Vector3<f32>; 3] {
     [0, 4, 8].map(|i| Vector3::new(matrix[i], matrix[i + 1], matrix[i + 2]))
-}
-
-fn distance(a: &Position, b: &Position) -> f32 {
-    ((a.x - b.x).powi(2) + (a.y - b.y).powi(2) + (a.z - b.z).powi(2)).sqrt()
-}
-
-fn midpoint(a: &Position, b: &Position) -> Position {
-    Position { x: (a.x + b.x) / 2.0, y: (a.y + b.y) / 2.0, z: (a.z + b.z) / 2.0 }
 }
 
 

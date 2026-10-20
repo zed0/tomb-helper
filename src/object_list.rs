@@ -141,6 +141,12 @@ pub fn read_transform(handle: Handle, instance_address: usize) -> io::Result<[f3
     Ok(matrix)
 }
 
+/// A point in an object's space in world space, for its transform (`read_transform`'s row-major matrix of row vectors)
+pub fn to_world(transform: &[f32; 16], point: Vector3<f32>) -> Position {
+    let row = |r: usize| Vector3::new(transform[r * 4], transform[r * 4 + 1], transform[r * 4 + 2]);
+    Position::from(row(0) * point.x + row(1) * point.y + row(2) * point.z + row(3))
+}
+
 pub fn read_position(handle: Handle, instance_address: usize) -> io::Result<Position> {
     let mut bytes = [0u8; 12];
     handle.copy_address(instance_address + layout::current().instance.position, &mut bytes)?;

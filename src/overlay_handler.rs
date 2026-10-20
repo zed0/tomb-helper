@@ -452,9 +452,10 @@ impl Handler for OverlayHandler {
         // Lara can be reloaded (and moved) between refreshes, which `components.get` notices. Her attached proxies being
         // used is also the best sign she's aiming.
         let show_proxy = lara_collision && self.config.lara_proxy;
-        let proxy = match show_proxy || follow_aim {
-            true => self.game.lara_proxy(&mut self.components, self.lara_address),
-            false => None,
+        let proxy = if show_proxy || follow_aim {
+            self.game.lara_proxy(&mut self.components, self.lara_address)
+        } else {
+            None
         };
         let proxies = proxy.and_then(|proxy| self.game.lara_proxies(proxy).ok());
         let aiming = proxies.as_ref().map_or(false, |p| p.attached_active);
@@ -565,9 +566,10 @@ impl Handler for OverlayHandler {
         let camera_projection = self.camera_lens.as_ref().map_or([0.0; 16], |l| projection_from_lens(&l.data, lens_fields));
         // 0 tells the overlay there's no camera
         let address = |address_type: AddressType| -> io::Result<u64> {
-            match self.game.has(address_type) {
-                true => self.game.require(address_type).map(|a| a as u64),
-                false => Ok(0),
+            if self.game.has(address_type) {
+                self.game.require(address_type).map(|a| a as u64)
+            } else {
+                Ok(0)
             }
         };
         let camera_view_address = address(AddressType::CameraView)?;

@@ -17,6 +17,10 @@ impl Position {
     pub fn distance(&self, other: &Position) -> f32 {
         (self.vector() - other.vector()).norm()
     }
+
+    pub fn midpoint(&self, other: &Position) -> Position {
+        Position::from((self.vector() + other.vector()) / 2.0)
+    }
 }
 
 impl From<Vector3<f32>> for Position {
