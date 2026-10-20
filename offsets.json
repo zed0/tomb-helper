@@ -51,6 +51,10 @@
         "InventoryPool": ["0x1F6FA90"],
         "TypePool": ["0x1EFEED0"]
       },
+      "layout_witnesses": {
+        "proxy.centre": ["0x170604", "0x175AB4", "0x58334B"],
+        "proxy.in_use_size": ["0x17589C", "0x583354"]
+      },
       "layout": {
         "instance": {"size": "0xD0", "header": "0xC0", "position": "0x0", "rotation": "0x20", "in_use": "0x40", "placement": null, "id": "0x50", "object_name": ["0x40", "0x4C"], "components": null, "transform": null, "component_data": "0x64", "game_object": "0x74"},
         "camera": {"view": "0x4A0", "lens": "0x30", "lens_near": "0x0", "lens_far": "0x1", "lens_fov": "0x2", "lens_aspect": "0x3", "sin": "0x50", "cos": "0x54"},

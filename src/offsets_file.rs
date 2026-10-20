@@ -86,6 +86,10 @@ pub struct VersionEntry {
     // RVAs of instructions that access each value (`tomb-helper watch`), only used by `derive`
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub witnesses: BTreeMap<AddressType, Vec<Hex>>,
+    // RVAs of instructions that access each layout field (`group.field`, `tomb-helper watch-layout`), only used by
+    // `update-offsets --from` to work out where fields went in a new build
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub layout_witnesses: BTreeMap<String, Vec<Hex>>,
     // Offsets a tool found but couldn't confirm, for review. Not used.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub unverified: BTreeMap<AddressType, Vec<Hex>>,
@@ -131,7 +135,8 @@ impl VersionEntry {
             bits: if matches!(details.arch, Architecture::Arch64Bit) { 64 } else { 32 },
             offsets: details.address_offsets.iter().map(|(t, o)| (*t, to_hex(o))).collect(),
             witnesses: details.witnesses.iter().map(|(t, w)| (*t, to_hex(w))).collect(),
-            unverified: BTreeMap::new(),
+            layout_witnesses: details.layout_witnesses.iter().map(|(n, w)| (n.clone(), to_hex(w))).collect(),
+            unverified: details.unverified.iter().map(|(t, o)| (*t, to_hex(o))).collect(),
             layout: details.layout.clone(),
         }
     }
@@ -155,6 +160,8 @@ impl VersionEntry {
             arch,
             address_offsets: self.offsets.iter().map(|(t, o)| (*t, from_hex(o))).collect(),
             witnesses: self.witnesses.iter().map(|(t, w)| (*t, from_hex(w))).collect(),
+            layout_witnesses: self.layout_witnesses.iter().map(|(n, w)| (n.clone(), from_hex(w))).collect(),
+            unverified: self.unverified.iter().map(|(t, o)| (*t, from_hex(o))).collect(),
             layout: self.layout.clone(),
         })
     }

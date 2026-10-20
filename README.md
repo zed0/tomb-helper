@@ -261,6 +261,8 @@ Most of what the overlay reads is found through the game's RTTI class names (e.g
 
 Components are found by class too, so their slots never need porting: each type's slot is learnt from the first component table it's seen in.
 
+Fields that moved can be found from the game's code, like the offsets with `witnesses`: with a build whose layout is right, run `tomb-helper watch-layout <group.field>... --delay 10 --save` (up to 4 fields, e.g. `proxy.in_use_size camera.view`) and play while it watches, which keeps the instructions that read each field as that version's `layout_witnesses`. `update-offsets --from <that build>` on a new build then finds those instructions in it and moves each field to the offset they use there, listing what it changed under "Layout".
+
 ### Snapshots
 
 `tomb-helper snapshot` runs `check` on the running game while saving everything it reads, to `H:\tomb-helper-dumps\snapshots` (or a file you name), along with what `check` reported. `tomb-helper check-snapshots [<dir>]` checks every snapshot again without the games, and shows the lines of any report that have changed, so take one of each game (in an ordinary spot in a level) and run it after changing the code or the offsets file: `SAME` means it reads that game as before. A snapshot is the game's image (tens of MB) plus a few MB of what was read. `cargo test --release --bin tomb-helper -- --ignored snapshots` does the same as a test. After a change that's meant to change what `check` reports, `tomb-helper accept-snapshots` saves the new reports as what to expect.
