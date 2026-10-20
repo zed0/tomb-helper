@@ -63,10 +63,26 @@ pub fn update_offsets(from: Option<String>, from_version: Option<String>, dry_ru
         .get(&AddressType::InstanceArray)
         .map(|(chain, _)| chain.clone())
         .or_else(|| existing.as_ref().and_then(|d| d.address_offsets.get(&AddressType::InstanceArray).cloned()));
-    // Where her proxy is a static (TR2013), it says which instance she is
-    let proxy_lara = found.get(&AddressType::PlayerProxy).zip(layout::current().proxy.instance).and_then(|((chain, _), offset)| {
-        crate::game_memory::read_pointer(memory, base_address + chain[0] + offset)
-    });
+    // Where her proxy is a static (TR2013), it says which instance she is, and where in it that is
+    let mut layout = template.layout.clone();
+    let mut layout_notes: Vec<String> = vec![];
+    let proxy = layout
+        .proxy
+        .instance
+        .filter(|_| found.contains_key(&AddressType::PlayerProxy))
+        .and_then(|offset| discover::find_player_proxy(memory, &image, base_address, offset));
+    if let Some(proxy) = &proxy {
+        if layout.proxy.instance != Some(proxy.instance_offset) {
+            layout_notes.push(format!(
+                "{:<34} {:#X} -> {:#X} (where Lara's proxy points at her)",
+                "proxy.instance",
+                layout.proxy.instance.unwrap_or(0),
+                proxy.instance_offset
+            ));
+            layout.proxy.instance = Some(proxy.instance_offset);
+        }
+    }
+    let proxy_lara = proxy.map(|p| p.lara);
     let lara = match proxy_lara {
         Some(address) => crate::object_list::read_position(memory, address).ok().map(|position| (address, position)),
         None => array.and_then(|array| find_lara(memory, base_address, array[0])),
@@ -126,8 +142,6 @@ pub fn update_offsets(from: Option<String>, from_version: Option<String>, dry_ru
     }
 
     let mut unverified: BTreeMap<AddressType, Vec<usize>> = BTreeMap::new();
-    let mut layout = template.layout.clone();
-    let mut layout_notes: Vec<String> = vec![];
     if let Some(from) = &from {
         let old = derive::load(from)?;
         let old_details = derive::reference_details(&old, from_version.as_deref())?;
@@ -210,7 +224,7 @@ pub fn update_offsets(from: Option<String>, from_version: Option<String>, dry_ru
         println!("  {:<17} {:<44} UNVERIFIED, not used", format!("{:?}", address_type), format_offsets(chain));
     }
     if !layout_notes.is_empty() {
-        println!("  Layout, from the witnesses of the build it was derived from:");
+        println!("  Layout:");
         for note in &layout_notes {
             println!("    {}", note);
         }

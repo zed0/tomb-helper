@@ -21,6 +21,8 @@ const MULTIBODY_CLIENT: &str = ".?AVTR9MultibodyClient@@";
 const COLLISION_SCENE_CLIENT: &str = ".?AVCollisionSceneClient@cdc@@";
 // Lara's proxy, where it's a static (TR2013), belongs to the instance with this in its name
 const LARA_NAME: &str = "lara";
+// How far into a proxy to look for its instance, where it isn't where the layout says (it moved between TR2013 builds)
+const PROXY_SEARCHED: usize = 0x100;
 // How far into the multibody client to look for the collision scene client
 const MULTIBODY_CLIENT_SIZE: usize = 0x200;
 // The instance array is the longest run of slots with the same header, which should be at least this long
@@ -115,11 +117,14 @@ pub fn find_statics(handle: Handle, base_address: usize, image: &PeImage) -> BTr
     // Where Lara's proxy is a static (TR2013), and the attached one found from it
     if let Some(instance_offset) = layout.proxy.instance {
         match find_player_proxy(handle, image, base_address, instance_offset) {
-            Some((rva, lara)) => {
-                println!("Lara's proxy at mod+{:X}, belonging to her instance at {:#X}", rva, lara);
-                found.insert(AddressType::PlayerProxy, vec![rva]);
+            Some(proxy) => {
+                println!("Lara's proxy at mod+{:X}, belonging to her instance at {:#X}", proxy.rva, proxy.lara);
+                if proxy.instance_offset != instance_offset {
+                    println!("  (through +{:X}, not +{:X} as in the layout)", proxy.instance_offset, instance_offset);
+                }
+                found.insert(AddressType::PlayerProxy, vec![proxy.rva]);
                 if let Some(attached) = layout.proxy.attached {
-                    found.insert(AddressType::CombatProxy, vec![rva + attached, 0]);
+                    found.insert(AddressType::CombatProxy, vec![proxy.rva + attached, 0]);
                 }
             }
             None => println!("Lara's proxy: NOT FOUND"),
@@ -128,22 +133,40 @@ pub fn find_statics(handle: Handle, base_address: usize, image: &PeImage) -> BTr
     found
 }
 
-/// Lara's proxy where it's a cdc::ProxyComponent in the image itself (TR2013): its RVA, and her instance
-pub fn find_player_proxy(handle: Handle, image: &PeImage, base_address: usize, instance_offset: usize) -> Option<(usize, usize)> {
+/// Lara's proxy, where it's a cdc::ProxyComponent in the image itself (TR2013)
+pub struct PlayerProxy {
+    pub rva: usize,
+    /// Her instance, and where in the proxy it is
+    pub lara: usize,
+    pub instance_offset: usize,
+}
+
+/// Lara's proxy: the static ProxyComponent whose instance (at `instance_offset`, else the first pointer in it that
+/// leads to one) is hers
+pub fn find_player_proxy(handle: Handle, image: &PeImage, base_address: usize, instance_offset: usize) -> Option<PlayerProxy> {
     let vtables: Vec<usize> = crate::rtti::all_vtables(&image.data, base_address)
         .into_iter()
         .filter(|(_, name)| name == components::PROXY)
         .map(|(vtable, _)| vtable)
         .collect();
     let size = pointer_size();
-    (0..image.data.len().saturating_sub(instance_offset + size)).step_by(size).find_map(|rva| {
-        if !vtables.contains(&pointer_from(&image.data[rva..])) {
-            return None;
+    let is_lara = |instance: usize| {
+        crate::object_list::object_name(handle, instance).map_or(false, |name| name.to_lowercase().contains(LARA_NAME))
+    };
+    let proxies: Vec<usize> = (0..image.data.len().saturating_sub(PROXY_SEARCHED))
+        .step_by(size)
+        .filter(|&rva| vtables.contains(&pointer_from(&image.data[rva..])))
+        .collect();
+    // The layout's offset first, then any other
+    let offsets = std::iter::once(instance_offset).chain((size..PROXY_SEARCHED).step_by(size).filter(|o| *o != instance_offset));
+    for offset in offsets {
+        for &rva in &proxies {
+            if let Some(lara) = pointer_at(&image.data, rva + offset).filter(|&p| p != 0 && is_lara(p)) {
+                return Some(PlayerProxy { rva, lara, instance_offset: offset });
+            }
         }
-        let instance = pointer_at(&image.data, rva + instance_offset)?;
-        let name = crate::object_list::object_name(handle, instance)?;
-        name.to_lowercase().contains(LARA_NAME).then(|| (rva, instance))
-    })
+    }
+    None
 }
 
 // The offset in the object of a pointer to an object of the class
