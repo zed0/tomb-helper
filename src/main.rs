@@ -58,6 +58,8 @@ mod cutscene_timing_info;
 mod readable_from_path;
 mod rtti;
 mod snapshot;
+// Shared with the overlay, which uses the other half of it
+#[allow(dead_code)]
 mod ui_ipc_data;
 
 #[cfg(windows)]
