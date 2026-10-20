@@ -42,6 +42,7 @@ mod overlay_handler;
 mod position;
 mod process_details;
 mod find_process;
+mod fit_layout;
 mod game;
 mod game_memory;
 mod offsets_file;

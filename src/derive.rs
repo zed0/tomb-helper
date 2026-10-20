@@ -80,6 +80,10 @@ Usage:
       Like `watch`, for up to 4 layout fields (e.g. proxy.in_use_size): record the instructions that access
       them, so `update-offsets --from` can find where the fields went in a new build. --save keeps them as the
       version's layout_witnesses in the offsets file next to the exe.
+  tomb-helper fit-layout [<group>...] [--snapshot <file>] [--save]
+      Search for layout offsets that make `check` pass: for each group of a failing check (or each group
+      named, e.g. proxy), try moving its fields from each one on by up to 0x40 either way, and keep what
+      passes the most. On the running game, or a snapshot. --save writes the result to the offsets file.
   tomb-helper snapshot [<file>] [--version <version>]
       Run `check` on the running game and save what it read as a snapshot (to
       H:/tomb-helper-dumps/snapshots by default), so it can be checked again without the game.
@@ -106,6 +110,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
     let mut from = None;
     let mut dry_run = false;
     let mut dump_at = None;
+    let mut snapshot = None;
     let mut rest = args.iter();
     while let Some(arg) = rest.next() {
         match arg.as_str() {
@@ -117,6 +122,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
             "--exec" => execute = true,
             "--dump" => dump_at = Some(crate::watch::Dump::parse(rest.next().ok_or("--dump needs <register>:<length>")?)?),
             "--save" => save = true,
+            "--snapshot" => snapshot = Some(rest.next().ok_or("--snapshot needs a file")?.clone()),
             "--dry-run" => dry_run = true,
             "--from" => from = Some(rest.next().ok_or("--from needs a path")?.clone()),
             "--delay" => delay = rest.next().and_then(|s| s.parse().ok()).ok_or("--delay needs a number")?,
@@ -150,6 +156,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
         ["probe"] => chains::probe(version, watch),
         ["discover"] => crate::discover::discover(version, save),
         ["check"] => crate::check::check(version),
+        ["fit-layout", groups @ ..] => crate::fit_layout::fit_layout(groups, snapshot.as_deref(), version, save),
         ["watch-layout", names @ ..] => crate::layout_witness::watch_layout(names, version, seconds, delay, save),
         ["snapshot"] => crate::snapshot::take(None, version),
         ["snapshot", out] => crate::snapshot::take(Some(out), version),

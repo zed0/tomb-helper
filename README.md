@@ -261,6 +261,8 @@ Most of what the overlay reads is found through the game's RTTI class names (e.g
 
 Components are found by class too, so their slots never need porting: each type's slot is learnt from the first component table it's seen in.
 
+`tomb-helper fit-layout` can also search for them: for each group of a failing check (or the groups you name, e.g. `fit-layout proxy`) it tries moving the group's fields from each field on by up to 0x40 either way, which is how fields usually move when something is added to a structure, and keeps whatever makes most of that group's checks pass. It prints what it changed, and `--save` writes it to the offsets file. It takes about 20 seconds a group, on the running game or a snapshot (`--snapshot <file>`).
+
 Fields that moved can be found from the game's code, like the offsets with `witnesses`: with a build whose layout is right, run `tomb-helper watch-layout <group.field>... --delay 10 --save` (up to 4 fields, e.g. `proxy.in_use_size camera.view`) and play while it watches, which keeps the instructions that read each field as that version's `layout_witnesses`. `update-offsets --from <that build>` on a new build then finds those instructions in it and moves each field to the offset they use there, listing what it changed under "Layout".
 
 ### Snapshots
