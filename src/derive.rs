@@ -81,6 +81,8 @@ Usage:
       H:/tomb-helper-dumps/snapshots by default), so it can be checked again without the game.
   tomb-helper check-snapshots [<dir>]
       Check every snapshot again, and show any whose results have changed since it was taken.
+  tomb-helper accept-snapshots [<dir>]
+      The same, saving what each reports now as what it should report (after a change meant to change it).
   tomb-helper trace <image> <static address in hex>
       Print the pointer chains the code accesses from each reference to a static address.
   tomb-helper watch <address type>... [--version <version>] [--seconds <n>] [--delay <n>] [--write]
@@ -146,8 +148,10 @@ pub fn run(args: &[String]) -> Result<(), String> {
         ["check"] => crate::check::check(version),
         ["snapshot"] => crate::snapshot::take(None, version),
         ["snapshot", out] => crate::snapshot::take(Some(out), version),
-        ["check-snapshots"] => crate::snapshot::check_all(None),
-        ["check-snapshots", dir] => crate::snapshot::check_all(Some(dir)),
+        ["check-snapshots"] => crate::snapshot::check_all(None, false),
+        ["check-snapshots", dir] => crate::snapshot::check_all(Some(dir), false),
+        ["accept-snapshots"] => crate::snapshot::check_all(None, true),
+        ["accept-snapshots", dir] => crate::snapshot::check_all(Some(dir), true),
         ["update-offsets"] => crate::update_offsets::update_offsets(from, version, dry_run),
         ["trace", image, address] => trace(image, address),
         ["overlay-data"] => crate::overlay_handler::print_overlay_data(version, delay),

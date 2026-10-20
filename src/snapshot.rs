@@ -214,21 +214,28 @@ fn timestamp() -> String {
     seconds.to_string()
 }
 
-/// Checks a snapshot again: the lines of its report that are gone (-) and new (+) since it was taken
-pub fn replay(path: &Path) -> Result<Vec<String>, String> {
+/// Checks a snapshot again: the lines of its report that are gone (-) and new (+) since it was taken. With `accept`,
+/// the new report is saved as the one to expect from now on.
+pub fn replay(path: &Path, accept: bool) -> Result<Vec<String>, String> {
     let snapshot = Snapshot::load(path).map_err(|e| format!("couldn't load {}: {}", path.display(), e))?;
+    // It stays in memory (handles are `Copy`, so they borrow it for good); there are only a few
     let snapshot: &'static Snapshot = Box::leak(Box::new(snapshot));
     let details = snapshot.details()?;
     let (lines, _) = crate::check::run_lines(Handle::Snapshot(snapshot), snapshot.header.base_address, details);
     let report = &snapshot.header.report;
     let gone = report.iter().filter(|line| !lines.contains(line)).map(|line| format!("- {}", line));
     let new = lines.iter().filter(|line| !report.contains(line)).map(|line| format!("+ {}", line));
-    // The snapshot stays in memory (handles are `Copy`, so they borrow it for good); there are only a few
-    Ok(gone.chain(new).collect())
+    let changes: Vec<String> = gone.chain(new).collect();
+    if accept && !changes.is_empty() {
+        let header = Header { report: lines, ..snapshot.header.clone() };
+        snapshot.save(path, &header).map_err(|e| format!("couldn't save {}: {}", path.display(), e))?;
+    }
+    Ok(changes)
 }
 
-/// `check-snapshots [<dir>]`: replays every snapshot in the directory (`SNAPSHOT_DIR` by default)
-pub fn check_all(dir: Option<&str>) -> Result<(), String> {
+/// `check-snapshots [<dir>]`: replays every snapshot in the directory (`SNAPSHOT_DIR` by default). `accept-snapshots`
+/// (`accept`) also saves what each reports now as what it should report, after a change that's meant to change it.
+pub fn check_all(dir: Option<&str>, accept: bool) -> Result<(), String> {
     let dir = dir.unwrap_or(SNAPSHOT_DIR);
     let mut paths: Vec<PathBuf> = std::fs::read_dir(dir)
         .map_err(|e| format!("couldn't read {}: {}", dir, e))?
@@ -241,20 +248,24 @@ pub fn check_all(dir: Option<&str>) -> Result<(), String> {
     }
     let mut changed = 0;
     for path in &paths {
-        let changes = replay(path)?;
+        let changes = replay(path, accept)?;
         let name = path.file_name().unwrap_or_default().to_string_lossy();
         if changes.is_empty() {
             println!("SAME  {}", name);
         } else {
             changed += 1;
-            println!("DIFF  {}", name);
+            println!("{}  {}", if accept { "SAVED" } else { "DIFF " }, name);
             for change in changes {
                 println!("      {}", change);
             }
         }
     }
+    if changed > 0 && accept {
+        println!("Saved the new reports of {} of {} snapshots", changed, paths.len());
+        return Ok(());
+    }
     if changed > 0 {
-        return Err(format!("{} of {} snapshots check differently", changed, paths.len()));
+        return Err(format!("{} of {} snapshots check differently (accept-snapshots saves them)", changed, paths.len()));
     }
     println!("All {} snapshots check the same", paths.len());
     Ok(())
@@ -267,6 +278,6 @@ mod tests {
     #[test]
     #[ignore]
     fn snapshots_check_the_same() {
-        super::check_all(None).unwrap();
+        super::check_all(None, false).unwrap();
     }
 }
