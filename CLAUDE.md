@@ -163,6 +163,10 @@ again (`derive` plus live checks).
   hers are the camera (radius 30, length 30, offset (0,-15,90), moving to (0,30,90) i.e. behind her when aiming) and
   her weapon (radius 3.5, 90 long rod in front of her at shoulder height). They only collide while she aims, which
   is why she's held further from walls then (the rod lines up with it, including at angles).
+- SOTTR (234.1) only sets the weapon rod up near something it could hit: aiming in the open, its physics shape's rotation
+  is just her facing (yaw only), so it's upright inside her (hip height) and nothing shows; aiming at a wall up close it's
+  level at shoulder height, 90 long, in front, as in ROTTR. Same layout and code; checked with `overlay-data`, which
+  also prints her proxy's contacts.
 - **What's pushing her:** a shape's +0x99 is 0x2F while it's touching something: always for Lara's, always while
   aiming for the camera (it overlaps her capsule, so this is also the best "attached proxies are on" signal), and
   only against walls for the weapon. Lara's proxy's contacts (counts +0x164/+0x168, 0x60 byte records from +0x190,
