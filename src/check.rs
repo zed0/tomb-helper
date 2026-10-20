@@ -32,11 +32,29 @@ struct Report {
     skipped: usize,
     // Everything printed, for snapshots
     lines: Vec<String>,
+    options: Options,
+}
+
+/// How `check` runs
+#[derive(Debug, Clone, Copy)]
+pub struct Options {
+    /// Print each line
+    pub print: bool,
+    /// Scan for trigger scripts, which takes seconds
+    pub scripts: bool,
+}
+
+impl Default for Options {
+    fn default() -> Self {
+        Options { print: true, scripts: true }
+    }
 }
 
 impl Report {
     fn line(&mut self, line: String) {
-        println!("{}", line);
+        if self.options.print {
+            println!("{}", line);
+        }
         self.lines.push(line);
     }
 
@@ -79,7 +97,12 @@ pub fn run(handle: Handle, base_address: usize, details: ProcessDetails) -> Resu
 
 /// `run`, and what it printed
 pub fn run_lines(handle: Handle, base_address: usize, details: ProcessDetails) -> (Vec<String>, Result<(), String>) {
-    let mut report = Report::default();
+    run_with(handle, base_address, details, Options::default())
+}
+
+/// `run_lines`, choosing what it does
+pub fn run_with(handle: Handle, base_address: usize, details: ProcessDetails, options: Options) -> (Vec<String>, Result<(), String>) {
+    let mut report = Report { options, ..Default::default() };
     let result = run_report(handle, base_address, details, &mut report);
     (report.lines, result)
 }
@@ -122,8 +145,9 @@ fn run_report(handle: Handle, base_address: usize, details: ProcessDetails, repo
         None => report.skip("Lara's collision and the level's", "her position couldn't be read".to_string()),
     }
     check_kinds(&game, report, &mut components, &nearby);
-    if let Some(instances) = &instances {
-        check_trigger_scripts(&game, report, &mut components, instances, &nearby);
+    match &instances {
+        Some(instances) if report.options.scripts => check_trigger_scripts(&game, report, &mut components, instances, &nearby),
+        _ => {}
     }
 
     let mut slots: Vec<_> = components.known_slots().iter().collect();
