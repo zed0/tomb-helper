@@ -6,6 +6,10 @@
 //!
 //! The same works for 32-bit games (TR2013), whose Lara is found through her proxy (a static there) rather than a
 //! PlayerComponent. Statics with nothing to find them by (TR2013's inventory and type pools) come from `--from`.
+//!
+//! A new build starts from the last known entry for its exe (one without a layout borrows the last of the same game
+//! that has one). Lara's position chain is kept if it still lands on her, else the best code chain (Y and Z are X + 4
+//! and 8); what can't be confirmed goes to `unverified`. Saves with `discover::save_entry`, then runs `check::run`.
 
 use anyhow::{anyhow, Context, Result};
 use crate::game_memory::Handle;

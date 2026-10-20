@@ -1,3 +1,10 @@
+//! What the exe sends the overlay, in shared memory (`shared_memory`), which both build: `UiData` (the camera, object
+//! boxes, triggers, capsules, probes and collision triangles) and `UiSettings` (the overlay window's settings, which
+//! its checkboxes and the exe's hotkeys change). `UiData` is ~7MB, so it's double buffered and changed and read in
+//! place, with a sequence count per buffer (`UiDoubleBuffer`): the exe never waits, and the overlay keeps its last good
+//! copy when a read catches a write. The mapping is named after `UiDoubleBuffer`'s size, so one left from another
+//! layout is never opened. Nothing in it may be pointer sized, as the 32-bit overlay reads it too.
+
 use std::ptr;
 use std::sync::atomic::{fence, AtomicBool, AtomicU32, Ordering};
 use shared_memory::{Shmem, ShmemConf, ShmemError};

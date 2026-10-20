@@ -1,3 +1,8 @@
+//! Lara's collision (CLAUDE.md's "Lara's collision" has what's known): her hit capsules (`read_capsule_shapes`,
+//! `place_capsules`), the ground probes (`read_probes`), and her movement proxy with the proxies attached to it (the
+//! camera and weapon, or TR2013's combat proxy) (`read_proxy`), including which of them is pushing her (a contact on
+//! its surface).
+
 use crate::game_memory::{Handle, f32_at, pointer_at, read_pointer_or_null, read_u32, u32_at, u64_at, vector_at};
 use crate::components::{self, Components};
 use crate::layout;

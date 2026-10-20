@@ -1,3 +1,5 @@
+//! Everything a hotkey can be bound to. Movement actions carry a `distance` (default 100).
+
 use serde::Deserialize;
 
 fn default_distance() -> f32 {

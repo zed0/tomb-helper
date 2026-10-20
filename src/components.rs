@@ -2,6 +2,8 @@
 //! SOTTR), rather than by slot number. Each component type has a fixed slot in every instance's component table,
 //! which is learnt by looking through a table for a component of that class (one whose back pointer is the instance;
 //! many tables are shorter than the slots used, so a slot can hold something else).
+//!
+//! Learning slots is budgeted per `start_refresh`, so a single refresh may not know every class yet.
 
 use crate::rtti::Classes;
 use crate::game_memory::{Handle, pointer_from, pointer_size, read_pointer};

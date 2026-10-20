@@ -1,3 +1,6 @@
+//! Finding the game: process and module lookup (`get_pid`, `get_base_address`, `is_process_running`), and which known
+//! version it is, by image size first, else by the version string in its memory (or `force_version`).
+
 use crate::process_details::{AddressType, ProcessDetails};
 use process_memory::{CopyAddress, DataMember, Memory, Pid, TryIntoProcessHandle};
 use std::ptr::{null, null_mut};

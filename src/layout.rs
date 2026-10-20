@@ -1,6 +1,10 @@
 //! Where things are in the game's structures, for the overlay and the `discover`/`check` tools. The defaults are
 //! ROTTR (Steam)'s; a version's entry in the offsets file can override any of them in its "layout" section, e.g.
 //! `"layout": {"instance": {"position": "0x20"}}`. Run `tomb-helper check` to test them against the running game.
+//!
+//! Optional offsets (e.g. TR2013's missing instance `transform`) are `null`. `set_for(details)`, on connecting, sets
+//! the layout and the game's pointer size (`game_memory`). New fields read from the game go here, with ROTTR's value as
+//! the default, rather than in constants.
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::sync::{Arc, OnceLock, RwLock};

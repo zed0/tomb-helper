@@ -1,3 +1,5 @@
+//! Loading JSON from a local path or a URL (blocking), or the default if that fails.
+
 use reqwest::Url;
 use std::path::Path;
 use std::fs;

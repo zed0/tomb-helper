@@ -1,3 +1,12 @@
+//! The overlay, injected into the game (`tomb_helper_ui.dll`, DirectX 12 through hudhook; built for
+//! i686-pc-windows-msvc it's `tomb_helper_ui32.dll`, DirectX 11, for TR2013). Each frame it reads what the exe sent
+//! (`ui_ipc_data`), shows its window, and draws in the world (clipped at the near plane): the level's collision
+//! triangles (faintly, under everything, without anti-aliasing, skipping back faces, ones off screen, and optionally
+//! ones behind others through a quarter resolution software ID buffer, `OcclusionBuffer`), boxes and names for objects,
+//! triggers, and Lara's collision. It reads the camera from the game itself each frame, at addresses the exe sends, as
+//! the exe's copy lags and made everything judder as the camera turned. It ejects itself when the exe says to, or stops
+//! updating. Opens a console only if `config.overlay.console`.
+
 use imgui::*;
 use hudhook::*;
 // TR2013 is 32-bit and DirectX 11, the others 64-bit and DirectX 12

@@ -4,6 +4,9 @@
 //! the fields from each one on by up to `MAX_SHIFT` either way (growing the group's read sizes to match), scores each
 //! try by that group's checks, and keeps the best. It runs `check` quietly and without the trigger script scan, on the
 //! running game or a snapshot.
+//!
+//! Read sizes (`READ_SIZES`) grow with the fields; values that aren't offsets (`NOT_OFFSETS`, add new ones there) never
+//! move. Panics from bad layouts are caught. It recovered a +8 shift of TR2013's proxy from a snapshot in 23s.
 
 use anyhow::{Context, Result};
 use crate::check::{self, Options};

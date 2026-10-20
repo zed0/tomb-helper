@@ -1,6 +1,11 @@
 //! The per-version offsets, stored as JSON. `offsets.json` in the repo is built into the exe, and a
 //! `tomb-helper-offsets.json` next to the exe replaces it, so offsets can be edited without
 //! rebuilding (and are reloaded while tomb-helper is running).
+//!
+//! `OffsetsFile`/`VersionEntry` are the JSON (`deny_unknown_fields`, to catch typos; offsets are `Hex` strings), with
+//! optional `image_size` (to tell stores apart), `witnesses`, `layout_witnesses`, a `layout` and an ignored
+//! `unverified`. `OffsetsSource` says which file is in use and whether it's `changed()`; `to_json` writes one line per
+//! offset list.
 
 use anyhow::{bail, Context, Result};
 use crate::layout::Layout;

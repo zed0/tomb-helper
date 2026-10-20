@@ -1,5 +1,9 @@
 //! Reading the game's memory: its pointer size (8 bytes, or 4 for 32-bit TR2013), pointers and values read from it, and
 //! little endian values at an offset in bytes copied out of it. Everything reading game pointers goes through these.
+//!
+//! `Handle` is the running game, a recording of it or a snapshot; everything reading the game's structures takes one
+//! (`ProcessHandle` is only for `process_memory`'s own readers). `resolve` follows offsets file chains, `read_pointer`
+//! is None for null; use these and the `*_at` accessors rather than reading pointers by hand.
 
 use crate::pe_image::PeImage;
 use crate::snapshot::{Recording, Snapshot};

@@ -3,6 +3,10 @@
 //! instruction choice and every address change. Instead the code around each reference is described by what survives
 //! a recompile: the strings and imports it uses, its constants and field offsets, and the kinds of instructions it
 //! has. References are matched by how much of that they share, each part weighted by how rare it is.
+//!
+//! The code around each reference is 12 instructions either side (within the function), as tokens without registers,
+//! stack offsets or addresses, plus one for the referencing instruction, compared by idf weighted cosine; candidates
+//! come from an inverted index of rare tokens, and the runner-up is only looked for among references to other statics.
 
 use crate::derive::References;
 use crate::pe_image::{PeImage, Section};

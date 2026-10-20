@@ -1,3 +1,6 @@
+//! An exe in its memory layout (`PeImage`): loaded from a file or a dump, or dumped from a running process's main
+//! module (which works on Denuvo builds), with its `sections` and `imports` (IAT slot -> name).
+
 use crate::find_process;
 use process_memory::{CopyAddress, Pid, TryIntoProcessHandle};
 use std::collections::HashMap;

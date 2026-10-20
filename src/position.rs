@@ -1,3 +1,5 @@
+//! A position in the game's world space, `#[repr(C)]` as it's shared with the overlay (and in the shared memory).
+
 use nalgebra::Vector3;
 use std::fmt;
 

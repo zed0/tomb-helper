@@ -1,3 +1,7 @@
+//! Saving and restoring Lara's position, and flight mode ("active"), which holds her where she is by writing her
+//! position every tick, so the movement actions can move her (relative to the camera, by `CameraSin`/`CameraCos`).
+//! Movement does nothing while it's off.
+
 use crate::action::Action;
 use crate::handler::{Handler, HelperState};
 use crate::process_details::{AddressOffsets, AddressType};

@@ -1,3 +1,9 @@
+//! What an instance is, from its components (`read_kinds`: interactable through its Interactable, Loot or Collectible
+//! component, a trigger through a TriggerComponent, a character or animal through an Npc component or Health and
+//! Corpse), or in a game without a component table (TR2013) its component data and game object; resources by name;
+//! trigger categories by name (`categorise`, `words.trigger_categories`); and trigger shapes (`read_shape`: box, plane,
+//! sphere, polygon volume), as world space outlines and faces (polygon caps are ear clipped, as they can be concave).
+
 use crate::game_memory::{Handle, f32_at, pointer_at, read_pointer, read_u32, u32_at, vector_at};
 use crate::components::{self, Components};
 use crate::layout;

@@ -1,6 +1,8 @@
 //! `tomb-helper check`: tests the overlay's offsets and layout against the running game, by reading things the way
 //! the overlay does and checking the results make sense (RTTI classes, magic numbers, sizes, things being where Lara
 //! is). Run it with Lara standing somewhere ordinary in a level.
+//!
+//! Every check runs for every game, skipping (with the reason) what the layout or offsets say the game doesn't have.
 
 use anyhow::{bail, Result};
 use crate::game::Game;

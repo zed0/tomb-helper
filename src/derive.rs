@@ -11,6 +11,11 @@
 //! `code_trace`), the accesses are aligned, and each aligned pair votes for how an old chain maps to
 //! a new one. Chains are then mapped one level at a time. A level the code never touches directly is
 //! shifted by the same amount as its nearest neighbouring field.
+//!
+//! References are matched by byte windows (`Deriver`), or, where that isn't confident, by `normalised` (sure only if
+//! deriving back lands within 0x400). Chain levels map by `code`, `witness`, `shifted` or `copied`; between compilers
+//! only an unchanged offset or a strong vote counts. On x86 a code position only counts as a reference if an
+//! instruction uses it. `check-matching <a> <b> [n]` round trips n statics to measure how well references are matched.
 
 use anyhow::{anyhow, bail, Context, Result};
 use crate::code_trace::{Access, Tracer};
