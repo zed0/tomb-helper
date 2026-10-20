@@ -49,4 +49,4 @@ lto = "thin"
 
 [patch.'crates-io']
 # imgui = { git = "https://github.com/imgui-rs/imgui-rs", rev = "cb8beeb" }
-hudhook = { path = "../hudhook" }
+hudhook = { git = "https://github.com/zed0/hudhook", branch = "get-process-by-pid" }

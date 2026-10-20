@@ -14,9 +14,11 @@ User docs (hotkeys, config, cutscene timing generation) live in `README.md`.
 - The bin and lib share `src/ui_ipc_data.rs` and `src/position.rs` by each declaring them with `mod` —
   they're compiled into both, so `UiData` must stay `#[repr(C)]` with identical layout on both sides, including in the
   32-bit overlay for TR2013: nothing in the shared memory may be pointer sized (`u64` addresses, `u32` counts).
-- `hudhook` (0.9.x) is patched to a local checkout at `../hudhook` (`[patch.'crates-io']`), which is
-  upstream `main` plus a local `Process::by_pid()` in `src/inject.rs` (not upstream; used by
-  `OverlayHandler`). Builds need that sibling directory. The patch's version must match the
+- `hudhook` (0.9.x) is patched (`[patch.'crates-io']`) to the `get-process-by-pid` branch of
+  github.com/zed0/hudhook, which is upstream `main` plus `Process::by_pid()` in `src/inject.rs` (not upstream; used by
+  `OverlayHandler`); `Cargo.lock` pins its commit (`cargo update -p hudhook` picks up new ones). A local checkout
+  at `H:\hudhook` tracks the same branch; to build against local changes there, add
+  `--config "patch.crates-io.hudhook.path='H:/hudhook'"`. The patch's version must match the
   `hudhook = "..."` requirement or cargo silently ignores it and uses crates.io.
 - CI: `.github/workflows/rust.yml` (build + test on push/PR to master), `main.yml` (release on `v*` tag,
   uploads only `tomb-helper.exe`). Versioning via `cargo-release`.
@@ -417,8 +419,6 @@ again (`derive` plus live checks).
 - The shared memory is backed by a file in `%TEMP%\shared_memory-rs`, which outlives a crashed or killed exe; it's
   named after the `UiData` layout's size so a changed layout gets a new one.
 - A running `tomb-helper.exe` locks the build output, so `cargo build` fails until it's closed.
-- In a `.claude/worktrees/` checkout the `../hudhook` patch doesn't resolve: build with
-  `cargo build --config "patch.crates-io.hudhook.path='H:/hudhook'"`.
 - `tomb-helper.json`'s `overlay.console` turns the injected overlay's console back on for debugging.
 - If the exe ends without setting `should_exit` (e.g. its window is closed), an overlay that stays loaded keeps that
   run's shared memory and draws its last data; injecting again does nothing as the DLL is already loaded, and its file
