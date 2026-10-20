@@ -7,6 +7,7 @@
 //! The overlay is 64-bit only, so for a 32-bit game (TR2013) the RTTI statics, Lara's instance and the probes are
 //! skipped: the version string is found, the rest is derived from `--from`, and the values are printed to check.
 
+use crate::game_memory::Handle;
 use crate::chains;
 use crate::check;
 use crate::components::{self, Components};
@@ -51,7 +52,8 @@ pub fn update_offsets(from: Option<String>, from_version: Option<String>, dry_ru
 
     // How each offset list was found, for the summary
     let mut found: BTreeMap<AddressType, (Vec<usize>, String)> = BTreeMap::new();
-    let statics = if overlay { discover::find_statics(handle, base_address, &image) } else { BTreeMap::new() };
+    let memory = Handle::Live(pid, handle);
+    let statics = if overlay { discover::find_statics(memory, base_address, &image) } else { BTreeMap::new() };
     for (address_type, chain) in statics {
         let how = match template.address_offsets.get(&address_type) {
             Some(previous) if *previous == chain => "RTTI, unchanged",
@@ -65,7 +67,7 @@ pub fn update_offsets(from: Option<String>, from_version: Option<String>, dry_ru
         .get(&AddressType::InstanceArray)
         .map(|(chain, _)| chain.clone())
         .or_else(|| existing.as_ref().and_then(|d| d.address_offsets.get(&AddressType::InstanceArray).cloned()));
-    let lara = array.filter(|_| overlay).and_then(|array| find_lara(handle, base_address, array[0]));
+    let lara = array.filter(|_| overlay).and_then(|array| find_lara(memory, base_address, array[0]));
     let mut targets = vec![];
     match lara {
         None if !overlay => {}
@@ -197,7 +199,7 @@ pub fn update_offsets(from: Option<String>, from_version: Option<String>, dry_ru
     }
     if overlay {
         println!("\nChecking it...");
-        check::run(pid, handle, base_address, details)
+        check::run(Handle::Live(pid, handle), base_address, details)
     } else {
         println!("\nWhat they point to now (check Lara's position, the camera and so on look right):");
         chains::print_values(handle, base_address, &details);
@@ -237,7 +239,7 @@ fn attach(
 }
 
 /// Lara's instance (the one with a PlayerComponent) and where she is
-fn find_lara(handle: ProcessHandle, base_address: usize, array_rva: usize) -> Option<(usize, Position)> {
+fn find_lara(handle: Handle, base_address: usize, array_rva: usize) -> Option<(usize, Position)> {
     let instances = ObjectList::new(base_address + array_rva).instances(handle).ok()?;
     let mut components = Components::new(base_address);
     components.allow_scans(instances.len());

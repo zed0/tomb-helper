@@ -76,6 +76,11 @@ Usage:
   tomb-helper check [--version <version>]
       With the game running and Lara somewhere ordinary in a level, test the overlay's offsets and
       layout against it, e.g. after `discover` or editing the layout for a new version.
+  tomb-helper snapshot [<file>] [--version <version>]
+      Run `check` on the running game and save what it read as a snapshot (to
+      H:/tomb-helper-dumps/snapshots by default), so it can be checked again without the game.
+  tomb-helper check-snapshots [<dir>]
+      Check every snapshot again, and show any whose results have changed since it was taken.
   tomb-helper trace <image> <static address in hex>
       Print the pointer chains the code accesses from each reference to a static address.
   tomb-helper watch <address type>... [--version <version>] [--seconds <n>] [--delay <n>] [--write]
@@ -139,6 +144,10 @@ pub fn run(args: &[String]) -> Result<(), String> {
         ["probe"] => chains::probe(version, watch),
         ["discover"] => crate::discover::discover(version, save),
         ["check"] => crate::check::check(version),
+        ["snapshot"] => crate::snapshot::take(None, version),
+        ["snapshot", out] => crate::snapshot::take(Some(out), version),
+        ["check-snapshots"] => crate::snapshot::check_all(None),
+        ["check-snapshots", dir] => crate::snapshot::check_all(Some(dir)),
         ["update-offsets"] => crate::update_offsets::update_offsets(from, version, dry_run),
         ["trace", image, address] => trace(image, address),
         ["overlay-data"] => crate::overlay_handler::print_overlay_data(version, delay),

@@ -1,10 +1,10 @@
-use crate::game_memory::{f32_at, pointer_at, read_pointer, read_u32, u32_at, vector_at};
+use crate::game_memory::{Handle, f32_at, pointer_at, read_pointer, read_u32, u32_at, vector_at};
 use crate::components::{self, Components};
 use crate::layout;
 use crate::position::Position;
 use crate::ui_ipc_data::TriggerCategory;
 use nalgebra::{Matrix3, Vector3};
-use process_memory::{CopyAddress, ProcessHandle};
+use process_memory::CopyAddress;
 
 // Instances (game objects) are sorted by what they can do through their components, see `components`
 
@@ -81,7 +81,7 @@ const NPC_DATA: [&str; 1] = ["ragdollcomponent"];
 // Components listed at most
 const MAX_COMPONENT_DATA: usize = 64;
 
-pub fn read_kinds(handle: ProcessHandle, components: &mut Components, instance_address: usize) -> Kinds {
+pub fn read_kinds(handle: Handle, components: &mut Components, instance_address: usize) -> Kinds {
     let layout = layout::current();
     if let (None, Some(offset)) = (layout.instance.components, layout.instance.component_data) {
         let names = read_component_names(handle, instance_address + offset);
@@ -101,7 +101,7 @@ pub fn read_kinds(handle: ProcessHandle, components: &mut Components, instance_a
 }
 
 // The names of the components in an instance's component data, in lower case
-fn read_component_names(handle: ProcessHandle, pointer_address: usize) -> Vec<String> {
+fn read_component_names(handle: Handle, pointer_address: usize) -> Vec<String> {
     let layout = &layout::current().component_data;
     let data = match read_pointer(handle, pointer_address) {
         Some(data) => data,
@@ -128,7 +128,7 @@ fn read_component_names(handle: ProcessHandle, pointer_address: usize) -> Vec<St
 
 // Where triggers are game objects (TR2013), the instance's object and whether it's a volume (else a plane), if it's a
 // trigger
-fn trigger_object(handle: ProcessHandle, components: &mut Components, instance_address: usize) -> Option<(usize, bool)> {
+fn trigger_object(handle: Handle, components: &mut Components, instance_address: usize) -> Option<(usize, bool)> {
     let offset = layout::current().instance.game_object?;
     let object = read_pointer(handle, instance_address + offset)?;
     match components.classes.name(handle, object)?.as_str() {
@@ -139,7 +139,7 @@ fn trigger_object(handle: ProcessHandle, components: &mut Components, instance_a
 }
 
 // A trigger's shape from its game object (TR2013)
-fn read_object_shape(handle: ProcessHandle, object: usize, volume: bool) -> Option<Shape> {
+fn read_object_shape(handle: Handle, object: usize, volume: bool) -> Option<Shape> {
     let layout = &layout::current().trigger_object;
     let mut bytes = vec![0u8; layout.volume_size.max(layout.plane_size) + 0xC];
     handle.copy_address(object, &mut bytes).ok()?;
@@ -158,7 +158,7 @@ fn read_object_shape(handle: ProcessHandle, object: usize, volume: bool) -> Opti
 }
 
 // The trigger's shape, in its instance's space
-pub fn read_shape(handle: ProcessHandle, components: &mut Components, instance_address: usize) -> Option<Shape> {
+pub fn read_shape(handle: Handle, components: &mut Components, instance_address: usize) -> Option<Shape> {
     let shape = match trigger_object(handle, components, instance_address) {
         Some((object, volume)) => read_object_shape(handle, object, volume),
         None => read_component_shape(handle, components, instance_address),
@@ -178,7 +178,7 @@ pub fn read_shape(handle: ProcessHandle, components: &mut Components, instance_a
 }
 
 // A trigger's shape from its ShapeComponent (ROTTR, SOTTR)
-fn read_component_shape(handle: ProcessHandle, components: &mut Components, instance_address: usize) -> Option<Shape> {
+fn read_component_shape(handle: Handle, components: &mut Components, instance_address: usize) -> Option<Shape> {
     let layout = &layout::current().trigger_shape;
     let component = components.get(handle, instance_address, components::SHAPE)?;
     let record = read_pointer(handle, component + layout.shape)?;

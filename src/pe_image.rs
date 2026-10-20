@@ -6,6 +6,7 @@ use std::io;
 use std::path::Path;
 
 /// A PE image laid out as it would be in memory, so that offsets into `data` are RVAs.
+#[derive(Clone)]
 pub struct PeImage {
     pub data: Vec<u8>,
     pub is_64: bool,

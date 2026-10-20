@@ -13,11 +13,10 @@
 //! A game without those trigger nodes (TR2013) uses a trigger through an AGInstanceNode (or AGObjectNode) with its id,
 //! like any other instance, whose outputs are its events. Which of them means Lara isn't known, so they're all "script".
 
-use crate::game_memory::{pointer_from, pointer_size, read_pointer, read_u32, read_u64, u16_at};
+use crate::game_memory::{Handle, pointer_from, pointer_size, read_pointer, read_u32, read_u64, u16_at};
 use crate::layout::{self, ScriptLayout};
 use crate::ui_ipc_data::trigger_action_bit;
-use crate::pe_image::PeImage;
-use process_memory::{CopyAddress, Pid, ProcessHandle};
+use process_memory::CopyAddress;
 use std::collections::{HashMap, HashSet};
 use std::convert::TryInto;
 use std::sync::Arc;
@@ -142,13 +141,8 @@ struct Graph {
     links: HashMap<u16, Vec<u16>>,
 }
 
-// The process handle can be used from any thread
-struct SendHandle(ProcessHandle);
-unsafe impl Send for SendHandle {}
-
 pub struct TriggerScripts {
-    pid: Pid,
-    handle: ProcessHandle,
+    handle: Handle,
     base_address: usize,
     classes: Option<Arc<Classes>>,
     running: Option<JoinHandle<Result<(Arc<Classes>, Vec<Node>), String>>>,
@@ -157,8 +151,8 @@ pub struct TriggerScripts {
 }
 
 impl TriggerScripts {
-    pub fn new(pid: Pid, handle: ProcessHandle, base_address: usize) -> TriggerScripts {
-        TriggerScripts { pid, handle, base_address, classes: None, running: None, last_scan: None, known: HashMap::new() }
+    pub fn new(handle: Handle, base_address: usize) -> TriggerScripts {
+        TriggerScripts { handle, base_address, classes: None, running: None, last_scan: None, known: HashMap::new() }
     }
 
     /// What sets the trigger with this id off and what it does, None if it hasn't been looked for yet
@@ -192,12 +186,11 @@ impl TriggerScripts {
         };
         if due {
             self.last_scan = Some(Instant::now());
-            let (pid, handle, base_address, classes) =
-                (self.pid, SendHandle(self.handle), self.base_address, self.classes.clone());
+            let (handle, base_address, classes) = (self.handle, self.base_address, self.classes.clone());
             let layout = layout::current();
             self.running = Some(thread::spawn(move || {
                 let handle = handle;
-                scan(pid, handle.0, base_address, classes, &layout.script)
+                scan(handle, base_address, classes, &layout.script)
             }));
         }
     }
@@ -206,13 +199,12 @@ impl TriggerScripts {
 /// Finds what sets the triggers off and what they do now, rather than in the background (for `check`), and whether
 /// they were found through the nodes for any instance, as the game has no trigger nodes
 pub fn scripts_now(
-    pid: Pid,
-    handle: ProcessHandle,
+    handle: Handle,
     base_address: usize,
     triggers: &[u64],
     names: &HashMap<u64, String>,
 ) -> Result<(HashMap<u64, TriggerScript>, bool), String> {
-    let (classes, nodes) = scan(pid, handle, base_address, None, &layout::current().script)?;
+    let (classes, nodes) = scan(handle, base_address, None, &layout::current().script)?;
     Ok((categorise(&nodes, &triggers.iter().copied().collect(), names), classes.by_reference))
 }
 
@@ -275,8 +267,7 @@ fn short_name(name: &str) -> String {
 
 // Every trigger script node in the game's heap, and what each leads to
 fn scan(
-    pid: Pid,
-    handle: ProcessHandle,
+    handle: Handle,
     base_address: usize,
     classes: Option<Arc<Classes>>,
     layout: &ScriptLayout,
@@ -284,7 +275,7 @@ fn scan(
     let classes = match classes {
         Some(c) => c,
         None => {
-            let image = PeImage::dump(pid).map_err(|e| format!("couldn't read the game: {}", e))?;
+            let image = handle.image().map_err(|e| format!("couldn't read the game: {}", e))?;
             Arc::new(find_classes(&image.data, base_address, layout))
         }
     };
@@ -298,13 +289,14 @@ fn scan(
     let pointer_size = pointer_size();
     let mut nodes = vec![];
     let mut chunk = vec![0u8; CHUNK];
-    for (start, size) in heap_regions(handle) {
+    for (start, size) in handle.regions() {
         if start < image_end && start + size > base_address {
             continue;
         }
         for offset in (0..size).step_by(CHUNK) {
             let length = CHUNK.min(size - offset);
-            if handle.copy_address(start + offset, &mut chunk[..length]).is_err() {
+            // Not kept in a snapshot (it's all of memory), but the nodes read below are
+            if handle.scan_read(start + offset, &mut chunk[..length]).is_err() {
                 continue;
             }
             for (i, word) in chunk[..length].chunks_exact(pointer_size).enumerate() {
@@ -352,7 +344,7 @@ fn scan(
 
 
 
-fn read_graph(handle: ProcessHandle, layout: &ScriptLayout, graph: usize) -> Option<Graph> {
+fn read_graph(handle: Handle, layout: &ScriptLayout, graph: usize) -> Option<Graph> {
     let nodes_at = read_pointer(handle, graph.checked_add(layout.graph_nodes)?)?;
     let header = read_pointer(handle, graph.checked_add(layout.graph_links)?)?;
     let node_count = read_u32(handle, header.checked_add(layout.node_count)?)? as usize;
@@ -428,42 +420,6 @@ fn find_classes(data: &[u8], base_address: usize, layout: &ScriptLayout) -> Clas
         }
     }
     classes
-}
-
-// Committed, readable, private memory (the heaps)
-#[cfg(windows)]
-fn heap_regions(handle: ProcessHandle) -> Vec<(usize, usize)> {
-    use winapi::um::memoryapi::VirtualQueryEx;
-    use winapi::um::winnt::{
-        MEMORY_BASIC_INFORMATION, MEM_COMMIT, MEM_PRIVATE, PAGE_EXECUTE_READWRITE, PAGE_READONLY,
-        PAGE_READWRITE,
-    };
-    let mut regions = vec![];
-    let mut address = 0usize;
-    loop {
-        let mut info: MEMORY_BASIC_INFORMATION = unsafe { std::mem::zeroed() };
-        let written =
-            unsafe { VirtualQueryEx(handle, address as *const _, &mut info, std::mem::size_of::<MEMORY_BASIC_INFORMATION>()) };
-        if written == 0 {
-            break;
-        }
-        // Plain pages only: write combined or uncached ones (graphics memory) are very slow to read, and don't have
-        // script nodes in them
-        let readable = [PAGE_READWRITE, PAGE_READONLY, PAGE_EXECUTE_READWRITE].contains(&info.Protect);
-        if info.State == MEM_COMMIT && info.Type == MEM_PRIVATE && readable {
-            regions.push((info.BaseAddress as usize, info.RegionSize));
-        }
-        match (info.BaseAddress as usize).checked_add(info.RegionSize) {
-            Some(next) if next > address => address = next,
-            _ => break,
-        }
-    }
-    regions
-}
-
-#[cfg(not(windows))]
-fn heap_regions(_handle: ProcessHandle) -> Vec<(usize, usize)> {
-    panic!("tomb-helper is only supported on Windows");
 }
 
 #[cfg(test)]

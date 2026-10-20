@@ -1,10 +1,10 @@
-use crate::game_memory::{f32_at, pointer_at, read_pointer_or_null, read_u32, u32_at, u64_at, vector_at};
+use crate::game_memory::{Handle, f32_at, pointer_at, read_pointer_or_null, read_u32, u32_at, u64_at, vector_at};
 use crate::components::{self, Components};
 use crate::layout;
 use crate::position::Position;
 use crate::ui_ipc_data::{Capsule, Probe};
 use nalgebra::{Quaternion, UnitQuaternion, Vector3};
-use process_memory::{CopyAddress, ProcessHandle};
+use process_memory::CopyAddress;
 use std::io;
 
 // Lara's (and characters') hit capsules ("DefensiveCapsule_head", ...) are listed in their CollideComponent, each
@@ -22,7 +22,7 @@ pub struct CapsuleShape {
 
 // Shapes only change with Lara's model, so these can be read occasionally
 pub fn read_capsule_shapes(
-    handle: ProcessHandle,
+    handle: Handle,
     components: &mut Components,
     instance_address: usize,
 ) -> io::Result<Vec<CapsuleShape>> {
@@ -65,7 +65,7 @@ pub fn read_capsule_shapes(
 
 // The shapes in world space for the current pose
 pub fn place_capsules(
-    handle: ProcessHandle,
+    handle: Handle,
     instance_address: usize,
     shapes: &[CapsuleShape],
 ) -> io::Result<Vec<Capsule>> {
@@ -149,7 +149,7 @@ pub struct ProxyCapsules {
 
 // The shapes of a proxy (Lara's cdc::ProxyComponent) in world space. `standalone` are proxies attached to it that
 // aren't found through its physics body (TR2013's combat proxy).
-pub fn read_proxy(handle: ProcessHandle, proxy: usize, standalone: &[usize]) -> io::Result<ProxyCapsules> {
+pub fn read_proxy(handle: Handle, proxy: usize, standalone: &[usize]) -> io::Result<ProxyCapsules> {
     let layout = &layout::current().proxy;
     let shapes = proxy_shapes(layout);
     let mut bytes = vec![0u8; layout.size];
@@ -225,7 +225,7 @@ pub fn read_proxy(handle: ProcessHandle, proxy: usize, standalone: &[usize]) -> 
 
 /// A proxy attached to Lara's that's found on its own (TR2013's camera): its shape in use, and whether it collides,
 /// from its flags
-pub fn read_attached_proxy(handle: ProcessHandle, proxy: usize) -> io::Result<(Capsule, bool)> {
+pub fn read_attached_proxy(handle: Handle, proxy: usize) -> io::Result<(Capsule, bool)> {
     let layout = &layout::current().proxy;
     let capsule = read_proxy(handle, proxy, &[])?
         .shapes
@@ -248,7 +248,7 @@ pub fn read_attached_proxy(handle: ProcessHandle, proxy: usize) -> io::Result<(C
     Ok((capsule, collides))
 }
 
-fn read_contacts(handle: ProcessHandle, proxy: usize) -> Vec<Vector3<f32>> {
+fn read_contacts(handle: Handle, proxy: usize) -> Vec<Vector3<f32>> {
     let layout = &layout::current().proxy;
     let contacts = match layout.contacts {
         Some(offset) => offset,
@@ -300,7 +300,7 @@ fn segment_distance(a: Vector3<f32>, b: Vector3<f32>, c: Vector3<f32>, d: Vector
 }
 
 // The capsules of bodies attached (directly or not) to `body`, which follow it in the list
-fn read_attached_capsules(handle: ProcessHandle, body: usize) -> Vec<(Capsule, bool)> {
+fn read_attached_capsules(handle: Handle, body: usize) -> Vec<(Capsule, bool)> {
     let layout = &layout::current().body;
     let mut family = vec![body];
     let mut capsules = vec![];
@@ -322,7 +322,7 @@ fn read_attached_capsules(handle: ProcessHandle, body: usize) -> Vec<(Capsule, b
 }
 
 // The capsule, its centre, and whether it's touching something
-fn read_physics_capsule(handle: ProcessHandle, body: usize) -> Option<(Capsule, Vector3<f32>, bool)> {
+fn read_physics_capsule(handle: Handle, body: usize) -> Option<(Capsule, Vector3<f32>, bool)> {
     if body == 0 {
         return None;
     }
@@ -365,7 +365,7 @@ const PROBE_OWNER_DISTANCE: f32 = 300.0;
 // Hits further than this from their probe are left over from an earlier cast
 const PROBE_HIT_TOLERANCE: f32 = 10.0;
 
-pub fn read_probes(handle: ProcessHandle, probes_address: usize) -> io::Result<Vec<Probe>> {
+pub fn read_probes(handle: Handle, probes_address: usize) -> io::Result<Vec<Probe>> {
     let layout = &layout::current().probes;
     let mut bytes = vec![0u8; layout.records + MAX_PROBES * layout.size];
     handle.copy_address(probes_address, &mut bytes)?;

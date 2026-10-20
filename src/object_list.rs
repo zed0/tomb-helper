@@ -1,9 +1,9 @@
-use crate::game_memory::{f32_at, pointer_at, read_pointer, u32_at, u64_at};
+use crate::game_memory::{Handle, f32_at, pointer_at, read_pointer, u32_at, u64_at};
 use crate::components::{self, Components};
 use crate::layout;
 use crate::position::Position;
 use nalgebra::{Rotation3, Vector3};
-use process_memory::{CopyAddress, ProcessHandle};
+use process_memory::CopyAddress;
 use std::collections::HashMap;
 use std::io;
 
@@ -41,7 +41,7 @@ impl ObjectList {
     }
 
     // Every live instance. Placed ones are named after their placement, spawned ones after their object type.
-    pub fn instances(&mut self, handle: ProcessHandle) -> io::Result<Vec<Instance>> {
+    pub fn instances(&mut self, handle: Handle) -> io::Result<Vec<Instance>> {
         let layout = layout::current();
         let (instance, placement_layout) = (&layout.instance, &layout.placement);
         let mut instances = vec![];
@@ -89,7 +89,7 @@ impl ObjectList {
         Ok(instances)
     }
 
-    fn name(&mut self, handle: ProcessHandle, address: usize) -> String {
+    fn name(&mut self, handle: Handle, address: usize) -> String {
         if address == 0 {
             return String::new();
         }
@@ -102,7 +102,7 @@ impl ObjectList {
 
 // The game keeps the instance's own position and rotation up to date, but not always its TransformComponent
 // (Lara's stays where she loaded in), so that's only used for the scale.
-pub fn read_transform(handle: ProcessHandle, instance_address: usize) -> io::Result<[f32; 16]> {
+pub fn read_transform(handle: Handle, instance_address: usize) -> io::Result<[f32; 16]> {
     let layout = layout::current();
     let mut instance = vec![0u8; layout.instance.size];
     handle.copy_address(instance_address, &mut instance)?;
@@ -141,7 +141,7 @@ pub fn read_transform(handle: ProcessHandle, instance_address: usize) -> io::Res
     Ok(matrix)
 }
 
-pub fn read_position(handle: ProcessHandle, instance_address: usize) -> io::Result<Position> {
+pub fn read_position(handle: Handle, instance_address: usize) -> io::Result<Position> {
     let mut bytes = [0u8; 12];
     handle.copy_address(instance_address + layout::current().instance.position, &mut bytes)?;
     Ok(read_position_from(&bytes, 0))
@@ -149,7 +149,7 @@ pub fn read_position(handle: ProcessHandle, instance_address: usize) -> io::Resu
 
 // The bounding box of the instance's render model, None if it isn't drawn
 pub fn read_bounds(
-    handle: ProcessHandle,
+    handle: Handle,
     components: &mut Components,
     instance_address: usize,
 ) -> Option<(Position, Position)> {
@@ -169,7 +169,7 @@ pub fn read_bounds(
 }
 
 // Follows the pointers at each offset in turn
-fn read_chain(handle: ProcessHandle, address: usize, offsets: &[usize]) -> Option<usize> {
+fn read_chain(handle: Handle, address: usize, offsets: &[usize]) -> Option<usize> {
     offsets.iter().try_fold(address, |address, offset| read_pointer(handle, address + offset))
 }
 
@@ -182,7 +182,7 @@ fn read_position_from(bytes: &[u8], offset: usize) -> Position {
     }
 }
 
-fn read_c_string(handle: ProcessHandle, address: usize) -> String {
+fn read_c_string(handle: Handle, address: usize) -> String {
     // A long read can fail if the string is near the end of a page, so fall back to a short one
     for length in [128, 16] {
         let mut bytes = vec![0u8; length];

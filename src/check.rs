@@ -2,7 +2,7 @@
 //! the overlay does and checking the results make sense (RTTI classes, magic numbers, sizes, things being where Lara
 //! is). Run it with Lara standing somewhere ordinary in a level.
 
-use crate::game_memory::{read_floats, read_pointer};
+use crate::game_memory::{Handle, read_floats, read_pointer, resolve};
 use crate::chains;
 use crate::collision;
 use crate::collision_mesh::CollisionMeshes;
@@ -14,7 +14,6 @@ use crate::trigger::{self, Shape};
 use crate::trigger_scripts::SetOffBy;
 use crate::ui_ipc_data::SurfaceKind;
 use nalgebra::{Matrix3, Vector3};
-use process_memory::{Pid, ProcessHandle};
 use std::collections::BTreeSet;
 
 // Things of Lara's should be this close to her
@@ -30,22 +29,29 @@ struct Report {
     passed: usize,
     failed: usize,
     skipped: usize,
+    // Everything printed, for snapshots
+    lines: Vec<String>,
 }
 
 impl Report {
+    fn line(&mut self, line: String) {
+        println!("{}", line);
+        self.lines.push(line);
+    }
+
     fn pass(&mut self, name: &str, detail: String) {
         self.passed += 1;
-        println!("PASS  {}: {}", name, detail);
+        self.line(format!("PASS  {}: {}", name, detail));
     }
 
     fn fail(&mut self, name: &str, detail: String) {
         self.failed += 1;
-        println!("FAIL  {}: {}", name, detail);
+        self.line(format!("FAIL  {}: {}", name, detail));
     }
 
     fn skip(&mut self, name: &str, detail: String) {
         self.skipped += 1;
-        println!("SKIP  {}: {}", name, detail);
+        self.line(format!("SKIP  {}: {}", name, detail));
     }
 
     fn result(&mut self, name: &str, ok: bool, detail: String) {
@@ -58,7 +64,7 @@ impl Report {
 }
 
 struct Game {
-    handle: ProcessHandle,
+    handle: Handle,
     base_address: usize,
     details: ProcessDetails,
 }
@@ -66,12 +72,7 @@ struct Game {
 impl Game {
     // Like `TrackedMemory`: the first offset is from the module, each later one is added to the pointer read
     fn resolve(&self, address_type: AddressType) -> Option<usize> {
-        let offsets = self.details.address_offsets.get(&address_type)?;
-        let mut address = self.base_address + offsets[0];
-        for offset in &offsets[1..] {
-            address = read_pointer(self.handle, address)? + offset;
-        }
-        Some(address)
+        resolve(self.handle, self.base_address, self.details.address_offsets.get(&address_type)?)
     }
 
 }
@@ -79,20 +80,31 @@ impl Game {
 pub fn check(version: Option<String>) -> Result<(), String> {
     let (pid, handle, base_address, details) = chains::connect(version)?;
     println!("Found {} {}", details.name, details.version.version);
-    run(pid, handle, base_address, details)
+    run(Handle::Live(pid, handle), base_address, details)
 }
 
 /// Checks the offsets and layout in `details` against the game
-pub fn run(pid: Pid, handle: ProcessHandle, base_address: usize, details: ProcessDetails) -> Result<(), String> {
+pub fn run(handle: Handle, base_address: usize, details: ProcessDetails) -> Result<(), String> {
+    let (_, result) = run_lines(handle, base_address, details);
+    result
+}
+
+/// `run`, and what it printed
+pub fn run_lines(handle: Handle, base_address: usize, details: ProcessDetails) -> (Vec<String>, Result<(), String>) {
+    let mut report = Report::default();
+    let result = run_report(handle, base_address, details, &mut report);
+    (report.lines, result)
+}
+
+fn run_report(handle: Handle, base_address: usize, details: ProcessDetails, report: &mut Report) -> Result<(), String> {
     crate::layout::set_for(&details);
     let game = Game { handle, base_address, details };
-    let mut report = Report::default();
     let mut components = Components::new(base_address);
     // So that every component type near Lara has its slot learnt
     components.allow_scans(NEARBY * 4);
 
-    let lara_position = check_position(&game, &mut report);
-    let instances = check_instances(&game, &mut report);
+    let lara_position = check_position(&game, report);
+    let instances = check_instances(&game, report);
     let nearby: Vec<Instance> = match (&lara_position, &instances) {
         (Some(lara), Some(instances)) => {
             let mut nearby = instances.clone();
@@ -102,36 +114,36 @@ pub fn run(pid: Pid, handle: ProcessHandle, base_address: usize, details: Proces
         }
         _ => vec![],
     };
-    let lara = lara_position.as_ref().and_then(|p| check_lara(&game, &mut report, &mut components, &nearby, p));
+    let lara = lara_position.as_ref().and_then(|p| check_lara(&game, report, &mut components, &nearby, p));
 
-    check_bounds(&game, &mut report, &mut components, &nearby);
-    check_camera(&game, &mut report);
+    check_bounds(&game, report, &mut components, &nearby);
+    check_camera(&game, report);
     // Each needs something of Lara's (her instance, or offsets the game might not have), and says if it's missing
     match &lara_position {
         Some(position) => {
-            check_probes(&game, &mut report, position);
-            check_proxy(&game, &mut report, &mut components, lara, position);
-            check_combat_proxy(&game, &mut report, position);
-            check_aim_sweep(&game, &mut report, position);
+            check_probes(&game, report, position);
+            check_proxy(&game, report, &mut components, lara, position);
+            check_combat_proxy(&game, report, position);
+            check_aim_sweep(&game, report, position);
             match lara {
-                Some(lara) => check_capsules(&game, &mut report, &mut components, lara, position),
+                Some(lara) => check_capsules(&game, report, &mut components, lara, position),
                 None => report.skip("hit capsules", "Lara wasn't found".to_string()),
             }
-            check_collision_meshes(&game, &mut report, position);
+            check_collision_meshes(&game, report, position);
         }
         None => report.skip("Lara's collision and the level's", "her position couldn't be read".to_string()),
     }
-    check_kinds(&game, &mut report, &mut components, &nearby);
+    check_kinds(&game, report, &mut components, &nearby);
     if let Some(instances) = &instances {
-        check_trigger_scripts(&game, &mut report, &mut components, pid, instances, &nearby);
+        check_trigger_scripts(&game, report, &mut components, instances, &nearby);
     }
 
     let mut slots: Vec<_> = components.known_slots().iter().collect();
     slots.sort_by_key(|(_, slot)| **slot);
-    println!();
-    println!("Component slots found: {}", slots.iter().map(|(c, s)| format!("{} {}", s, c)).collect::<Vec<_>>().join(", "));
-    println!();
-    println!("{} passed, {} failed, {} skipped", report.passed, report.failed, report.skipped);
+    report.line(String::new());
+    report.line(format!("Component slots found: {}", slots.iter().map(|(c, s)| format!("{} {}", s, c)).collect::<Vec<_>>().join(", ")));
+    report.line(String::new());
+    report.line(format!("{} passed, {} failed, {} skipped", report.passed, report.failed, report.skipped));
     if report.failed > 0 {
         return Err(format!("{} checks failed", report.failed));
     }
@@ -503,16 +515,16 @@ fn check_kinds(game: &Game, report: &mut Report, components: &mut Components, ne
             }
         }
     }
-    println!(
+    report.line(format!(
         "INFO  of the nearest {} instances: {} interactable, {} characters/animals, {} triggers",
         nearby.len(),
         interactables,
         npcs,
         triggers
-    );
+    ));
     let examples = |names: &BTreeSet<String>| names.iter().cloned().collect::<Vec<_>>().join(", ");
-    println!("      interactable e.g. {}", examples(&interactable_names));
-    println!("      characters/animals e.g. {}", examples(&npc_names));
+    report.line(format!("      interactable e.g. {}", examples(&interactable_names)));
+    report.line(format!("      characters/animals e.g. {}", examples(&npc_names)));
     if triggers == 0 {
         report.skip("trigger shapes", "no triggers near Lara".to_string());
     } else {
@@ -528,7 +540,6 @@ fn check_trigger_scripts(
     game: &Game,
     report: &mut Report,
     components: &mut Components,
-    pid: Pid,
     instances: &[Instance],
     nearby: &[Instance],
 ) {
@@ -541,7 +552,7 @@ fn check_trigger_scripts(
         return report.skip("trigger scripts", "no triggers near Lara".to_string());
     }
     let names = instances.iter().map(|i| (i.id, i.name.clone())).collect();
-    match crate::trigger_scripts::scripts_now(pid, game.handle, game.base_address, &triggers, &names) {
+    match crate::trigger_scripts::scripts_now(game.handle, game.base_address, &triggers, &names) {
         Ok((found, by_reference)) => {
             let mut counts: std::collections::BTreeMap<String, usize> = Default::default();
             let mut does: std::collections::BTreeMap<String, usize> = Default::default();

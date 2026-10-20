@@ -151,10 +151,7 @@ pub fn close_handle(_handle: process_memory::ProcessHandle) {
     panic!("tomb-helper is only supported on Windows");
 }
 
-pub fn get_image_size(
-    handle: process_memory::ProcessHandle,
-    base_addr: usize,
-) -> Result<usize, std::io::Error> {
+pub fn get_image_size(handle: impl CopyAddress, base_addr: usize) -> Result<usize, std::io::Error> {
     let mut image_optional_header_offset_bytes = [0_u8; 4];
     handle.copy_address(base_addr + 0x3C, &mut image_optional_header_offset_bytes)?;
     let image_optional_header_offset = u32::from_le_bytes(image_optional_header_offset_bytes) as usize;

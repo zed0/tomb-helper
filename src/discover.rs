@@ -1,6 +1,7 @@
 //! `tomb-helper discover`: finds the overlay's static addresses in the running game through the RTTI class names of
 //! what they point to, which are the same between versions (and in SOTTR). Uses the layout for the offsets within.
 
+use crate::game_memory::Handle;
 use crate::chains;
 use crate::components;
 use crate::rtti::Classes;
@@ -9,7 +10,7 @@ use crate::layout;
 use crate::offsets_file::{to_json, Hex, OffsetsFile, OffsetsSource, VersionEntry};
 use crate::pe_image::PeImage;
 use crate::process_details::AddressType;
-use process_memory::{CopyAddress, ProcessHandle};
+use process_memory::CopyAddress;
 use std::collections::{BTreeMap, HashMap};
 use std::convert::TryInto;
 
@@ -29,7 +30,7 @@ pub fn discover(version: Option<String>, save: bool) -> Result<(), String> {
     println!("Found {} {}", details.name, details.version.version);
     println!("Dumping the game...");
     let image = PeImage::dump(pid).map_err(|e| format!("Could not dump the game: {}", e))?;
-    let found = find_statics(handle, base_address, &image);
+    let found = find_statics(Handle::Live(pid, handle), base_address, &image);
 
     println!();
     for (address_type, chain) in &found {
@@ -51,7 +52,7 @@ pub fn discover(version: Option<String>, save: bool) -> Result<(), String> {
 }
 
 /// The statics found through the RTTI classes of what they point to, for the game whose image this is
-pub fn find_statics(handle: ProcessHandle, base_address: usize, image: &PeImage) -> BTreeMap<AddressType, Vec<usize>> {
+pub fn find_statics(handle: Handle, base_address: usize, image: &PeImage) -> BTreeMap<AddressType, Vec<usize>> {
     let references = References::new(image);
     let mut classes = Classes::new(base_address);
 
@@ -110,7 +111,7 @@ pub fn find_statics(handle: ProcessHandle, base_address: usize, image: &PeImage)
 }
 
 // The offset in the object of a pointer to an object of the class
-fn field_of_class(handle: ProcessHandle, classes: &mut Classes, object: usize, class: &str) -> Option<usize> {
+fn field_of_class(handle: Handle, classes: &mut Classes, object: usize, class: &str) -> Option<usize> {
     let mut bytes = vec![0u8; MULTIBODY_CLIENT_SIZE];
     handle.copy_address(object, &mut bytes).ok()?;
     (0..MULTIBODY_CLIENT_SIZE).step_by(8).find(|&offset| {
@@ -121,7 +122,7 @@ fn field_of_class(handle: ProcessHandle, classes: &mut Classes, object: usize, c
 
 // The longest run of instance slots with the same nonzero header, if their transforms are TransformComponents
 fn find_instance_array(
-    handle: ProcessHandle,
+    handle: Handle,
     classes: &mut Classes,
     image: &PeImage,
     base_address: usize,
@@ -150,7 +151,7 @@ fn find_instance_array(
 }
 
 fn has_transforms(
-    handle: ProcessHandle,
+    handle: Handle,
     classes: &mut Classes,
     image: &PeImage,
     base_address: usize,
