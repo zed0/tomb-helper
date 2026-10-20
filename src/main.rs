@@ -23,6 +23,7 @@ mod cutscene_handler;
 mod cutscene_timing_generator_handler;
 mod chains;
 mod check;
+mod cli;
 mod collision;
 mod collision_mesh;
 mod components;
@@ -66,9 +67,8 @@ mod ui_ipc_data;
 extern crate winapi;
 
 fn main() {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    if !args.is_empty() {
-        if let Err(e) = derive::run(&args) {
+    if std::env::args().len() > 1 {
+        if let Err(e) = cli::run() {
             eprintln!("{:#}", e);
             std::process::exit(1);
         }
