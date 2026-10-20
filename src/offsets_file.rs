@@ -2,6 +2,7 @@
 //! `tomb-helper-offsets.json` next to the exe replaces it, so offsets can be edited without
 //! rebuilding (and are reloaded while tomb-helper is running).
 
+use anyhow::{bail, Context, Result};
 use crate::layout::Layout;
 use crate::words::Words;
 use crate::process_details::{AddressType, ProcessDetails, VersionIdentifier};
@@ -145,14 +146,14 @@ impl VersionEntry {
         }
     }
 
-    pub fn to_details(&self) -> Result<ProcessDetails, String> {
+    pub fn to_details(&self) -> Result<ProcessDetails> {
         let arch = match self.bits {
             64 => Architecture::Arch64Bit,
             32 => Architecture::Arch32Bit,
-            other => return Err(format!("{}: bits should be 32 or 64, not {}", self.version, other)),
+            other => bail!("{}: bits should be 32 or 64, not {}", self.version, other),
         };
         if let Some((address_type, _)) = self.offsets.iter().find(|(_, o)| o.is_empty()) {
-            return Err(format!("{}: {:?} has no offsets", self.version, address_type));
+            bail!("{}: {:?} has no offsets", self.version, address_type);
         }
         Ok(ProcessDetails {
             name: self.game.clone(),
@@ -171,8 +172,8 @@ impl VersionEntry {
     }
 }
 
-pub fn parse(json: &str) -> Result<Vec<ProcessDetails>, String> {
-    let file: OffsetsFile = serde_json::from_str(json).map_err(|e| e.to_string())?;
+pub fn parse(json: &str) -> Result<Vec<ProcessDetails>> {
+    let file: OffsetsFile = serde_json::from_str(json)?;
     file.words.validate()?;
     crate::words::set(file.words.clone());
     file.versions.iter().map(VersionEntry::to_details).collect()
@@ -227,13 +228,13 @@ impl OffsetsSource {
         }
     }
 
-    pub fn load(&mut self) -> Result<Vec<ProcessDetails>, String> {
+    pub fn load(&mut self) -> Result<Vec<ProcessDetails>> {
         self.modified = modified(&self.path);
         if self.modified.is_none() {
-            return parse(BUILT_IN).map_err(|e| format!("Built in offsets are invalid: {}", e));
+            return parse(BUILT_IN).context("Built in offsets are invalid");
         }
-        let json = fs::read_to_string(&self.path).map_err(|e| format!("Could not read {:?}: {}", self.path, e))?;
-        parse(&json).map_err(|e| format!("Could not load {:?}: {}", self.path, e))
+        let json = fs::read_to_string(&self.path).with_context(|| format!("Could not read {:?}", self.path))?;
+        parse(&json).with_context(|| format!("Could not load {:?}", self.path))
     }
 
     pub fn describe(&self) -> String {
@@ -253,7 +254,7 @@ impl OffsetsSource {
 /// The known versions, for the command line tools. Exits on an invalid offsets file.
 pub fn known_process_details() -> Vec<ProcessDetails> {
     OffsetsSource::new().load().unwrap_or_else(|e| {
-        eprintln!("{}", e);
+        eprintln!("{:#}", e);
         std::process::exit(1)
     })
 }

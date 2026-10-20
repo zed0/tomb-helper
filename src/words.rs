@@ -2,6 +2,7 @@
 //! defaults to these. They're the same for every game; a new game's words can be added to the section of the offsets
 //! file next to the exe (`tomb-helper export-offsets`) rather than to the code.
 
+use anyhow::{bail, Result};
 use crate::ui_ipc_data::{TriggerCategory, TRIGGER_ACTIONS};
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, RwLock};
@@ -122,16 +123,16 @@ impl Words {
     }
 
     /// Whether every category and action named is a real one
-    pub fn validate(&self) -> Result<(), String> {
+    pub fn validate(&self) -> Result<()> {
         for (category, _) in &self.trigger_categories {
             if category_named(category).is_none() {
                 let known: Vec<&str> = TriggerCategory::ALL.iter().map(|c| c.name()).collect();
-                return Err(format!("words: no trigger category {} (they're {})", category, known.join(", ")));
+                bail!("words: no trigger category {} (they're {})", category, known.join(", "));
             }
         }
         for (_, action) in &self.script_actions {
             if !TRIGGER_ACTIONS.contains(&action.as_str()) {
-                return Err(format!("words: no trigger action {} (they're {})", action, TRIGGER_ACTIONS.join(", ")));
+                bail!("words: no trigger action {} (they're {})", action, TRIGGER_ACTIONS.join(", "));
             }
         }
         Ok(())

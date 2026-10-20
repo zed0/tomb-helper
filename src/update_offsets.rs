@@ -7,6 +7,7 @@
 //! The same works for 32-bit games (TR2013), whose Lara is found through her proxy (a static there) rather than a
 //! PlayerComponent. Statics with nothing to find them by (TR2013's inventory and type pools) come from `--from`.
 
+use anyhow::{anyhow, Context, Result};
 use crate::game_memory::Handle;
 use crate::chains;
 use crate::check;
@@ -30,7 +31,7 @@ const MAX_PROBES: usize = 64;
 // Longest version string to read
 const VERSION_LENGTH: usize = 64;
 
-pub fn update_offsets(from: Option<String>, from_version: Option<String>, dry_run: bool) -> Result<(), String> {
+pub fn update_offsets(from: Option<String>, from_version: Option<String>, dry_run: bool) -> Result<()> {
     let known = known_process_details();
     let (pid, handle, base_address, existing, template) = attach(&known)?;
     layout::set_for(&template);
@@ -42,7 +43,7 @@ pub fn update_offsets(from: Option<String>, from_version: Option<String>, dry_ru
         ),
     }
     println!("Dumping the game...");
-    let image = PeImage::dump(pid).map_err(|e| format!("Could not dump the game: {}", e))?;
+    let image = PeImage::dump(pid).context("Could not dump the game")?;
 
     let pointer_size = crate::game_memory::pointer_size();
 
@@ -155,7 +156,7 @@ pub fn update_offsets(from: Option<String>, from_version: Option<String>, dry_ru
                         layout = changed;
                         layout_notes.push(format!("{:<34} {:#X} -> {:#X} ({})", change.name, change.old, offset, how));
                     }
-                    Err(e) => layout_notes.push(format!("{:<34} couldn't be set: {}", change.name, e)),
+                    Err(e) => layout_notes.push(format!("{:<34} couldn't be set: {:#}", change.name, e)),
                 },
                 Some(_) => layout_notes.push(format!("{:<34} unchanged ({})", change.name, how)),
                 None => layout_notes.push(format!("{:<34} UNSURE, kept {:#X} ({})", change.name, change.old, how)),
@@ -248,7 +249,7 @@ pub fn update_offsets(from: Option<String>, from_version: Option<String>, dry_ru
 /// the known ones, or the last known build of the same executable
 fn attach(
     known: &[ProcessDetails],
-) -> Result<(Pid, ProcessHandle, usize, Option<ProcessDetails>, ProcessDetails), String> {
+) -> Result<(Pid, ProcessHandle, usize, Option<ProcessDetails>, ProcessDetails)> {
     let mut executables: Vec<&str> = known.iter().map(|d| d.executable_name.as_str()).collect();
     executables.dedup();
     for executable in executables {
@@ -256,7 +257,7 @@ fn attach(
             Some(pid) => pid,
             None => continue,
         };
-        let handle = pid.try_into_process_handle().map_err(|e| format!("Could not open {}: {}", executable, e))?;
+        let handle = pid.try_into_process_handle().with_context(|| format!("Could not open {}", executable))?;
         let base_address = find_process::get_base_address(pid) as usize;
         let same_executable: Vec<ProcessDetails> =
             known.iter().filter(|d| d.executable_name == executable).cloned().collect();
@@ -272,7 +273,7 @@ fn attach(
         }
         return Ok((pid, handle, base_address, existing, template));
     }
-    Err(format!("None of the known games ({}) is running", known.iter().map(|d| d.executable_name.clone()).collect::<HashSet<_>>().into_iter().collect::<Vec<_>>().join(", ")))
+    Err(anyhow!("None of the known games ({}) is running", known.iter().map(|d| d.executable_name.clone()).collect::<HashSet<_>>().into_iter().collect::<Vec<_>>().join(", ")))
 }
 
 /// Lara's instance (the one with a PlayerComponent) and where she is

@@ -1,6 +1,7 @@
 //! Live tools that need the game running: finding the pointer chains the game's own code uses to
 //! reach each known value, and printing the current values.
 
+use anyhow::{bail, Context, Result};
 use crate::code_trace::{Access, CallResolver, Tracer};
 use crate::derive::{format_offsets, print_entry, References};
 use crate::find_process;
@@ -14,10 +15,9 @@ use std::{thread, time};
 
 const CANDIDATES_SHOWN: usize = 5;
 
-pub fn connect(version: Option<String>) -> Result<(Pid, ProcessHandle, usize, ProcessDetails), String> {
-    let connected = find_process::find_process(known_process_details(), version).ok_or_else(|| {
-        "No known game version is running (pass --version to force one from process_details.rs)".to_string()
-    })?;
+pub fn connect(version: Option<String>) -> Result<(Pid, ProcessHandle, usize, ProcessDetails)> {
+    let connected = find_process::find_process(known_process_details(), version)
+        .context("No known game version is running (pass --version to force one from the offsets file)")?;
     crate::layout::set_for(&connected.3);
     Ok(connected)
 }
@@ -236,7 +236,7 @@ pub fn best_code_chains(
         .collect()
 }
 
-pub fn find_code_chains(version: Option<String>) -> Result<(), String> {
+pub fn find_code_chains(version: Option<String>) -> Result<()> {
     let (pid, handle, base_addr, details) = connect(version)?;
     println!("Found {} {}", details.name, details.version.version);
     let mut memory = Memory::new(handle, base_addr, details.arch);
@@ -258,11 +258,11 @@ pub fn find_code_chains(version: Option<String>) -> Result<(), String> {
         }
     }
     if targets.iter().all(|(_, a)| a.is_none()) {
-        return Err("None of the current chains resolve. Load into a level and try again.".to_string());
+        bail!("None of the current chains resolve. Load into a level and try again.");
     }
 
     println!("Dumping the game...");
-    let image = PeImage::dump(pid).map_err(|e| format!("Could not dump the game: {}", e))?;
+    let image = PeImage::dump(pid).context("Could not dump the game")?;
     let known: Vec<(AddressType, usize)> = targets.iter().filter_map(|(t, a)| a.map(|a| (*t, a))).collect();
     let mut candidates = candidate_chains(&image, handle, base_addr, details.arch, &known);
 
@@ -341,7 +341,7 @@ pub fn print_values(handle: ProcessHandle, base_addr: usize, details: &ProcessDe
     }
 }
 
-pub fn probe(version: Option<String>, watch: bool) -> Result<(), String> {
+pub fn probe(version: Option<String>, watch: bool) -> Result<()> {
     let (pid, handle, base_addr, details) = connect(version)?;
     println!("Found {} {}", details.name, details.version.version);
     loop {

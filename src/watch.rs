@@ -3,6 +3,7 @@
 //! e.g. fields read through objects found in lists. `derive` then matches these instructions in a
 //! new build to find where the field moved to.
 
+use anyhow::{bail, Context as _, Result};
 use crate::derive::format_offsets;
 use crate::find_process;
 use crate::offsets_file::{known_process_details, to_json, Hex};
@@ -332,8 +333,8 @@ pub struct Dump {
 const MAX_DUMPS: usize = 3;
 
 impl Dump {
-    pub fn parse(text: &str) -> Result<Dump, String> {
-        let (name, length) = text.split_once(':').ok_or("--dump takes <register>:<length in hex>")?;
+    pub fn parse(text: &str) -> Result<Dump> {
+        let (name, length) = text.split_once(':').context("--dump takes <register>:<length in hex>")?;
         let register = match name.to_ascii_lowercase().as_str() {
             "eax" => Register::EAX,
             "ebx" => Register::EBX,
@@ -353,7 +354,7 @@ impl Dump {
             "rsp" => Register::RSP,
             "r8" => Register::R8,
             "r9" => Register::R9,
-            _ => return Err(format!("Unknown register {}", name)),
+            _ => bail!("Unknown register {}", name),
         };
         Ok(Dump { register, length: parse_hex(length)? })
     }
@@ -410,10 +411,10 @@ pub fn record(
     kind: Breakpoint,
     code_range: Option<(usize, usize)>,
     dump: Option<Dump>,
-) -> Result<Vec<BTreeMap<usize, Hit>>, String> {
+) -> Result<Vec<BTreeMap<usize, Hit>>> {
     let wow64 = is_wow64(handle);
     if unsafe { DebugActiveProcess(pid) } == FALSE {
-        return Err(format!("Could not attach as a debugger (error {})", unsafe { GetLastError() }));
+        bail!("Could not attach as a debugger (error {})", unsafe { GetLastError() });
     }
     // Never take the game down with us
     unsafe { DebugSetProcessKillOnExit(FALSE) };
@@ -567,12 +568,12 @@ pub fn record(
     Ok(hits)
 }
 
-fn parse_hex(text: &str) -> Result<usize, String> {
-    usize::from_str_radix(text.trim_start_matches("0x"), 16).map_err(|e| format!("{}: {}", text, e))
+fn parse_hex(text: &str) -> Result<usize> {
+    usize::from_str_radix(text.trim_start_matches("0x"), 16).with_context(|| format!("{}", text))
 }
 
 // An absolute address in hex, or one relative to the main module with a leading `+`
-fn parse_address(text: &str, base_addr: usize) -> Result<usize, String> {
+fn parse_address(text: &str, base_addr: usize) -> Result<usize> {
     match text.strip_prefix('+') {
         Some(rva) => Ok(base_addr + parse_hex(rva)?),
         None => parse_hex(text),
@@ -582,15 +583,15 @@ fn parse_address(text: &str, base_addr: usize) -> Result<usize, String> {
 /// `watch-raw <pid> <address>[,<address>...]`: record what accesses (or writes, or with `Breakpoint::Execute` runs) any address in a
 /// process, and for the main module's code which functions it was called from (and for an instruction run, the
 /// registers then). Addresses are printed relative to the main module.
-pub fn watch_raw(pid: &str, address: &str, seconds: u64, delay: u64, kind: Breakpoint, dump: Option<Dump>) -> Result<(), String> {
-    let pid: Pid = pid.parse().map_err(|_| "Bad PID")?;
-    let handle = pid.try_into_process_handle().map_err(|e| e.to_string())?;
+pub fn watch_raw(pid: &str, address: &str, seconds: u64, delay: u64, kind: Breakpoint, dump: Option<Dump>) -> Result<()> {
+    let pid: Pid = pid.parse().context("Bad PID")?;
+    let handle = pid.try_into_process_handle()?;
     let base_addr = find_process::get_base_address(pid) as usize;
-    let image_size = find_process::get_image_size(handle, base_addr).map_err(|e| e.to_string())?;
+    let image_size = find_process::get_image_size(handle, base_addr)?;
     // Up to 4, separated by commas
     let addresses: Vec<usize> = address.split(',').map(|a| parse_address(a, base_addr)).collect::<Result<_, _>>()?;
     if addresses.is_empty() || addresses.len() > MAX_WATCHES {
-        return Err(format!("Give between 1 and {} addresses", MAX_WATCHES));
+        bail!("Give between 1 and {} addresses", MAX_WATCHES);
     }
     if delay > 0 {
         println!("Starting in {} seconds...", delay);
@@ -635,14 +636,14 @@ fn print_callers(hit: &Hit) {
 }
 
 /// `disasm <pid> <address> [count]`: print instructions from a running process's memory
-pub fn disasm(pid: &str, address: &str, count: &str) -> Result<(), String> {
-    let pid: Pid = pid.parse().map_err(|_| "Bad PID")?;
-    let handle = pid.try_into_process_handle().map_err(|e| e.to_string())?;
+pub fn disasm(pid: &str, address: &str, count: &str) -> Result<()> {
+    let pid: Pid = pid.parse().context("Bad PID")?;
+    let handle = pid.try_into_process_handle()?;
     let base_addr = find_process::get_base_address(pid) as usize;
     let address = parse_address(address, base_addr)?;
-    let count: usize = count.parse().map_err(|_| "Bad instruction count")?;
+    let count: usize = count.parse().context("Bad instruction count")?;
     let mut bytes = vec![0_u8; count * MAX_INSTRUCTION_LENGTH];
-    handle.copy_address(address, &mut bytes).map_err(|e| e.to_string())?;
+    handle.copy_address(address, &mut bytes)?;
     let bitness = if is_wow64(handle) { 32 } else { 64 };
     let mut decoder = Decoder::with_ip(bitness, &bytes, address as u64, DecoderOptions::NONE);
     let mut formatter = IntelFormatter::new();
@@ -655,14 +656,14 @@ pub fn disasm(pid: &str, address: &str, count: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub fn watch(names: &[&str], version: Option<String>, seconds: u64, delay: u64, write_only: bool) -> Result<(), String> {
+pub fn watch(names: &[&str], version: Option<String>, seconds: u64, delay: u64, write_only: bool) -> Result<()> {
     let kind = if write_only { Breakpoint::Write } else { Breakpoint::Access };
     if delay > 0 {
         println!("Starting in {} seconds...", delay);
         std::thread::sleep(Duration::from_secs(delay));
     }
     let (pid, handle, base_addr, details) = find_process::find_process(known_process_details(), version)
-        .ok_or("No known game version is running (pass --version to force one from process_details.rs)")?;
+        .context("No known game version is running (pass --version to force one from process_details.rs)")?;
     println!("Found {} {}", details.name, details.version.version);
 
     let all: BTreeMap<String, AddressType> = details
@@ -674,22 +675,22 @@ pub fn watch(names: &[&str], version: Option<String>, seconds: u64, delay: u64, 
     for name in names {
         let address_type = *all
             .get(*name)
-            .ok_or(format!("Unknown address type {}. Known: {:?}", name, all.keys().collect::<Vec<_>>()))?;
+            .with_context(|| format!("Unknown address type {}. Known: {:?}", name, all.keys().collect::<Vec<_>>()))?;
         let offsets = &details.address_offsets[&address_type];
         let mut with_base = offsets.clone();
         with_base[0] += base_addr;
         let address = DataMember::<u8>::new_offset(handle, with_base)
             .set_arch(details.arch)
             .get_offset()
-            .map_err(|e| format!("{:?} {} doesn't resolve: {}", address_type, format_offsets(offsets), e))?;
+            .with_context(|| format!("{:?} {} doesn't resolve", address_type, format_offsets(offsets)))?;
         watched.push((address_type, address));
     }
     if watched.is_empty() || watched.len() > MAX_WATCHES {
-        return Err(format!("Give between 1 and {} address types to watch", MAX_WATCHES));
+        bail!("Give between 1 and {} address types to watch", MAX_WATCHES);
     }
     let addresses: Vec<usize> = watched.iter().map(|(_, a)| *a).collect();
 
-    let image_size = find_process::get_image_size(handle, base_addr).map_err(|e| e.to_string())?;
+    let image_size = find_process::get_image_size(handle, base_addr)?;
     let hits = record(pid, handle, base_addr, &addresses, seconds, kind, Some((base_addr, base_addr + image_size)), None)?;
 
     let mut witnesses: BTreeMap<AddressType, Vec<Hex>> = BTreeMap::new();

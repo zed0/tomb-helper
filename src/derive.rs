@@ -12,6 +12,7 @@
 //! a new one. Chains are then mapped one level at a time. A level the code never touches directly is
 //! shifted by the same amount as its nearest neighbouring field.
 
+use anyhow::{anyhow, bail, Context, Result};
 use crate::chains;
 use crate::code_trace::{Access, Tracer};
 use crate::find_process;
@@ -98,7 +99,7 @@ Usage:
       for a few seconds (default 5), optionally after a delay so the game can be focused.
       These let `derive` find where a field moved to.";
 
-pub fn run(args: &[String]) -> Result<(), String> {
+pub fn run(args: &[String]) -> Result<()> {
     let mut positional = vec![];
     let mut version = None;
     let mut watch = false;
@@ -115,22 +116,22 @@ pub fn run(args: &[String]) -> Result<(), String> {
     while let Some(arg) = rest.next() {
         match arg.as_str() {
             "--from-version" | "--version" => {
-                version = Some(rest.next().ok_or(format!("{} needs a value", arg))?.clone())
+                version = Some(rest.next().with_context(|| format!("{} needs a value", arg))?.clone())
             }
             "--watch" => watch = true,
             "--write" => write_only = true,
             "--exec" => execute = true,
-            "--dump" => dump_at = Some(crate::watch::Dump::parse(rest.next().ok_or("--dump needs <register>:<length>")?)?),
+            "--dump" => dump_at = Some(crate::watch::Dump::parse(rest.next().context("--dump needs <register>:<length>")?)?),
             "--save" => save = true,
-            "--snapshot" => snapshot = Some(rest.next().ok_or("--snapshot needs a file")?.clone()),
+            "--snapshot" => snapshot = Some(rest.next().context("--snapshot needs a file")?.clone()),
             "--dry-run" => dry_run = true,
-            "--from" => from = Some(rest.next().ok_or("--from needs a path")?.clone()),
-            "--delay" => delay = rest.next().and_then(|s| s.parse().ok()).ok_or("--delay needs a number")?,
+            "--from" => from = Some(rest.next().context("--from needs a path")?.clone()),
+            "--delay" => delay = rest.next().and_then(|s| s.parse().ok()).context("--delay needs a number")?,
             "--seconds" => {
                 seconds = rest
                     .next()
                     .and_then(|s| s.parse().ok())
-                    .ok_or("--seconds needs a number")?
+                    .context("--seconds needs a number")?
             }
             _ => positional.push(arg.as_str()),
         }
@@ -168,29 +169,29 @@ pub fn run(args: &[String]) -> Result<(), String> {
         ["trace", image, address] => trace(image, address),
         ["overlay-data"] => crate::overlay_handler::print_overlay_data(version, delay),
         ["check-matching", a, b] => check_matching(a, b, 200),
-        ["check-matching", a, b, count] => check_matching(a, b, count.parse().map_err(|_| "Bad count")?),
-        _ => Err(USAGE.to_string()),
+        ["check-matching", a, b, count] => check_matching(a, b, count.parse().context("Bad count")?),
+        _ => bail!("{}", USAGE),
     }
 }
 
-fn export_offsets(out: Option<&str>) -> Result<(), String> {
+fn export_offsets(out: Option<&str>) -> Result<()> {
     let path = match out {
         Some(out) => Path::new(out).to_path_buf(),
         None => OffsetsSource::new().path,
     };
     if path.exists() {
-        return Err(format!("{:?} already exists, not overwriting it", path));
+        bail!("{:?} already exists, not overwriting it", path);
     }
     let file = OffsetsFile {
         versions: known_process_details().iter().map(VersionEntry::from_details).collect(),
         words: crate::words::current().as_ref().clone(),
     };
-    std::fs::write(&path, to_json(&file) + "\n").map_err(|e| format!("Could not write {:?}: {}", path, e))?;
+    std::fs::write(&path, to_json(&file) + "\n").with_context(|| format!("Could not write {:?}", path))?;
     println!("Wrote {} versions to {:?}", file.versions.len(), path);
     Ok(())
 }
 
-fn running_game() -> Result<(PeImage, String), String> {
+fn running_game() -> Result<(PeImage, String)> {
     let mut executables: Vec<String> = known_process_details()
         .into_iter()
         .map(|d| d.executable_name)
@@ -199,34 +200,34 @@ fn running_game() -> Result<(PeImage, String), String> {
     for exe in executables {
         if let Some(pid) = find_process::get_pid(&exe) {
             println!("Dumping {} (PID {})...", exe, pid);
-            let image = PeImage::dump(pid).map_err(|e| format!("Could not dump {}: {}", exe, e))?;
+            let image = PeImage::dump(pid).with_context(|| format!("Could not dump {}", exe))?;
             return Ok((image, exe));
         }
     }
-    Err("No known game is running".to_string())
+    Err(anyhow!("No known game is running"))
 }
 
-pub fn load(source: &str) -> Result<PeImage, String> {
+pub fn load(source: &str) -> Result<PeImage> {
     if source == "running" {
         return running_game().map(|(image, _)| image);
     }
     println!("Loading {}...", source);
-    PeImage::load(Path::new(source)).map_err(|e| format!("Could not load {}: {}", source, e))
+    PeImage::load(Path::new(source)).with_context(|| format!("Could not load {}", source))
 }
 
-fn dump(out: Option<&str>) -> Result<(), String> {
+fn dump(out: Option<&str>) -> Result<()> {
     let (image, exe) = running_game()?;
     let out = out.map(String::from).unwrap_or_else(|| {
         format!("{}-{}.bin", exe.trim_end_matches(".exe"), image.size_of_image())
     });
-    std::fs::write(&out, &image.data).map_err(|e| format!("Could not write {}: {}", out, e))?;
+    std::fs::write(&out, &image.data).with_context(|| format!("Could not write {}", out))?;
     println!("Wrote {} bytes to {}", image.data.len(), out);
     Ok(())
 }
 
-fn trace(image: &str, address: &str) -> Result<(), String> {
+fn trace(image: &str, address: &str) -> Result<()> {
     let image = load(image)?;
-    let address = usize::from_str_radix(address.trim_start_matches("0x"), 16).map_err(|e| e.to_string())?;
+    let address = usize::from_str_radix(address.trim_start_matches("0x"), 16)?;
     let references = References::new(&image);
     let tracer = Tracer::new(&image);
     for &(target, position) in references.between(address, address) {
@@ -248,7 +249,7 @@ fn trace(image: &str, address: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub fn reference_details(image: &PeImage, from_version: Option<&str>) -> Result<ProcessDetails, String> {
+pub fn reference_details(image: &PeImage, from_version: Option<&str>) -> Result<ProcessDetails> {
     let known = known_process_details();
     let found = match from_version {
         Some(version) => known.iter().find(|d| d.version.version == version),
@@ -256,7 +257,7 @@ pub fn reference_details(image: &PeImage, from_version: Option<&str>) -> Result<
             .iter()
             .find(|d| d.version.image_size == Some(image.size_of_image())),
     };
-    let details = found.cloned().ok_or_else(|| {
+    let details = found.cloned().with_context(|| {
         let versions: Vec<String> = known
             .iter()
             .map(|d| format!("  {} \"{}\"", d.name, d.version.version))
@@ -268,7 +269,7 @@ pub fn reference_details(image: &PeImage, from_version: Option<&str>) -> Result<
         )
     })?;
     if matches!(details.arch, Architecture::Arch64Bit) != image.is_64 {
-        return Err(format!("{} doesn't match the architecture of <from>", details.version.version));
+        bail!("{} doesn't match the architecture of <from>", details.version.version);
     }
     Ok(details)
 }
@@ -588,7 +589,7 @@ impl<'a, 'r> Deriver<'a, 'r> {
 /// `check-matching <a> <b> [count]`: how well statics can be matched between two builds, without knowing any of
 /// them: up to `count` statics of `a` (globals with a few references) are derived in `b` and back again, and a static
 /// that comes back where it started was very likely matched right
-fn check_matching(a: &str, b: &str, count: usize) -> Result<(), String> {
+fn check_matching(a: &str, b: &str, count: usize) -> Result<()> {
     let (a, b) = (load(a)?, load(b)?);
     let (a_refs, b_refs) = (References::new(&a), References::new(&b));
     let writable: Vec<_> = a.sections().into_iter().filter(|s| s.writable && !s.executable).collect();
@@ -1006,7 +1007,7 @@ pub fn derive_lines(
         .collect()
 }
 
-fn derive(from: &str, to: &str, from_version: Option<&str>) -> Result<(), String> {
+fn derive(from: &str, to: &str, from_version: Option<&str>) -> Result<()> {
     let old = load(from)?;
     // A running game can be identified the same way the main tool does, including by version string
     let running = match (from, from_version) {
@@ -1019,7 +1020,7 @@ fn derive(from: &str, to: &str, from_version: Option<&str>) -> Result<(), String
     };
     let new = load(to)?;
     if old.is_64 != new.is_64 {
-        return Err("<from> and <to> have different architectures".to_string());
+        bail!("<from> and <to> have different architectures");
     }
 
     let lines = derive_lines(&old, &details, &new);

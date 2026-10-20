@@ -2,6 +2,7 @@
 //! the overlay does and checking the results make sense (RTTI classes, magic numbers, sizes, things being where Lara
 //! is). Run it with Lara standing somewhere ordinary in a level.
 
+use anyhow::{bail, Result};
 use crate::game::Game;
 use crate::game_memory::{Handle, read_floats, read_pointer};
 use crate::chains;
@@ -83,31 +84,31 @@ impl Report {
 }
 
 
-pub fn check(version: Option<String>) -> Result<(), String> {
+pub fn check(version: Option<String>) -> Result<()> {
     let (pid, handle, base_address, details) = chains::connect(version)?;
     println!("Found {} {}", details.name, details.version.version);
     run(Handle::Live(pid, handle), base_address, details)
 }
 
 /// Checks the offsets and layout in `details` against the game
-pub fn run(handle: Handle, base_address: usize, details: ProcessDetails) -> Result<(), String> {
+pub fn run(handle: Handle, base_address: usize, details: ProcessDetails) -> Result<()> {
     let (_, result) = run_lines(handle, base_address, details);
     result
 }
 
 /// `run`, and what it printed
-pub fn run_lines(handle: Handle, base_address: usize, details: ProcessDetails) -> (Vec<String>, Result<(), String>) {
+pub fn run_lines(handle: Handle, base_address: usize, details: ProcessDetails) -> (Vec<String>, Result<()>) {
     run_with(handle, base_address, details, Options::default())
 }
 
 /// `run_lines`, choosing what it does
-pub fn run_with(handle: Handle, base_address: usize, details: ProcessDetails, options: Options) -> (Vec<String>, Result<(), String>) {
+pub fn run_with(handle: Handle, base_address: usize, details: ProcessDetails, options: Options) -> (Vec<String>, Result<()>) {
     let mut report = Report { options, ..Default::default() };
     let result = run_report(handle, base_address, details, &mut report);
     (report.lines, result)
 }
 
-fn run_report(handle: Handle, base_address: usize, details: ProcessDetails, report: &mut Report) -> Result<(), String> {
+fn run_report(handle: Handle, base_address: usize, details: ProcessDetails, report: &mut Report) -> Result<()> {
     crate::layout::set_for(&details);
     let game = Game::new(handle, base_address, &details.address_offsets);
     let mut components = Components::new(base_address);
@@ -158,7 +159,7 @@ fn run_report(handle: Handle, base_address: usize, details: ProcessDetails, repo
     report.line(String::new());
     report.line(format!("{} passed, {} failed, {} skipped", report.passed, report.failed, report.skipped));
     if report.failed > 0 {
-        return Err(format!("{} checks failed", report.failed));
+        bail!("{} checks failed", report.failed);
     }
     Ok(())
 }
@@ -594,7 +595,7 @@ fn check_trigger_scripts(
                 format!("{}/{} triggers near Lara do something that's known: {:?}", described, with_script, does),
             );
         }
-        Err(e) => report.fail("trigger scripts", e),
+        Err(e) => report.fail("trigger scripts", format!("{:#}", e)),
     }
 }
 

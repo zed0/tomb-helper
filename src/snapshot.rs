@@ -7,6 +7,7 @@
 //! Scans through all of the game's memory (the trigger script scan) aren't kept, but what's read after them is, and
 //! the snapshot's regions are scanned instead when it's replayed, so they find the same things.
 
+use anyhow::{bail, Context, Result};
 use crate::game_memory::Handle;
 use crate::offsets_file::known_process_details;
 use crate::pe_image::PeImage;
@@ -105,11 +106,11 @@ impl Snapshot {
     }
 
     /// The offsets file's entry for the snapshot's game version (as it is now)
-    pub fn details(&self) -> Result<ProcessDetails, String> {
+    pub fn details(&self) -> Result<ProcessDetails> {
         known_process_details()
             .into_iter()
             .find(|d| d.name == self.header.game && d.version.version == self.header.version)
-            .ok_or_else(|| format!("no offsets for {} {}", self.header.game, self.header.version))
+            .with_context(|| format!("no offsets for {} {}", self.header.game, self.header.version))
     }
 
     /// Saves it with this header (its report filled in)
@@ -169,14 +170,14 @@ fn read_bytes(input: &mut impl Read) -> io::Result<Vec<u8>> {
 
 /// `snapshot [<file>]`: checks the running game while recording what's read, and saves that as a snapshot (in
 /// `SNAPSHOT_DIR` by default)
-pub fn take(out: Option<&str>, version: Option<String>) -> Result<(), String> {
+pub fn take(out: Option<&str>, version: Option<String>) -> Result<()> {
     let (pid, process, base_address, details) = crate::chains::connect(version)?;
     println!("Found {} {}", details.name, details.version.version);
     let recording: &'static Recording = Box::leak(Box::default());
     let handle = Handle::Recording(pid, process, recording);
     // Failing checks are still worth a snapshot
     let _ = crate::check::run(handle, base_address, details.clone());
-    let image = handle.image().map_err(|e| format!("couldn't dump the game: {}", e))?;
+    let image = handle.image().context("couldn't dump the game")?;
     let regions = recording.regions();
     let header = Header {
         game: details.name.clone(),
@@ -194,11 +195,11 @@ pub fn take(out: Option<&str>, version: Option<String>) -> Result<(), String> {
     let path = match out {
         Some(path) => PathBuf::from(path),
         None => {
-            std::fs::create_dir_all(SNAPSHOT_DIR).map_err(|e| e.to_string())?;
+            std::fs::create_dir_all(SNAPSHOT_DIR)?;
             Path::new(SNAPSHOT_DIR).join(format!("{} {}.snap", file_name(&header), timestamp()))
         }
     };
-    snapshot.save(&path, &header).map_err(|e| format!("couldn't save {}: {}", path.display(), e))?;
+    snapshot.save(&path, &header).with_context(|| format!("couldn't save {}", path.display()))?;
     let size: usize = snapshot.regions.iter().map(|(_, b)| b.len()).sum();
     println!("Saved {} ({} regions, {} KB besides the image)", path.display(), snapshot.regions.len(), size / 1024);
     Ok(())
@@ -216,8 +217,8 @@ fn timestamp() -> String {
 
 /// Checks a snapshot again: the lines of its report that are gone (-) and new (+) since it was taken. With `accept`,
 /// the new report is saved as the one to expect from now on.
-pub fn replay(path: &Path, accept: bool) -> Result<Vec<String>, String> {
-    let snapshot = Snapshot::load(path).map_err(|e| format!("couldn't load {}: {}", path.display(), e))?;
+pub fn replay(path: &Path, accept: bool) -> Result<Vec<String>> {
+    let snapshot = Snapshot::load(path).with_context(|| format!("couldn't load {}", path.display()))?;
     // It stays in memory (handles are `Copy`, so they borrow it for good); there are only a few
     let snapshot: &'static Snapshot = Box::leak(Box::new(snapshot));
     let details = snapshot.details()?;
@@ -228,23 +229,23 @@ pub fn replay(path: &Path, accept: bool) -> Result<Vec<String>, String> {
     let changes: Vec<String> = gone.chain(new).collect();
     if accept && !changes.is_empty() {
         let header = Header { report: lines, ..snapshot.header.clone() };
-        snapshot.save(path, &header).map_err(|e| format!("couldn't save {}: {}", path.display(), e))?;
+        snapshot.save(path, &header).with_context(|| format!("couldn't save {}", path.display()))?;
     }
     Ok(changes)
 }
 
 /// `check-snapshots [<dir>]`: replays every snapshot in the directory (`SNAPSHOT_DIR` by default). `accept-snapshots`
 /// (`accept`) also saves what each reports now as what it should report, after a change that's meant to change it.
-pub fn check_all(dir: Option<&str>, accept: bool) -> Result<(), String> {
+pub fn check_all(dir: Option<&str>, accept: bool) -> Result<()> {
     let dir = dir.unwrap_or(SNAPSHOT_DIR);
     let mut paths: Vec<PathBuf> = std::fs::read_dir(dir)
-        .map_err(|e| format!("couldn't read {}: {}", dir, e))?
+        .with_context(|| format!("couldn't read {}", dir))?
         .filter_map(|e| e.ok().map(|e| e.path()))
         .filter(|p| p.extension().map_or(false, |e| e == "snap"))
         .collect();
     paths.sort();
     if paths.is_empty() {
-        return Err(format!("no snapshots in {}", dir));
+        bail!("no snapshots in {}", dir);
     }
     let mut changed = 0;
     for path in &paths {
@@ -265,7 +266,7 @@ pub fn check_all(dir: Option<&str>, accept: bool) -> Result<(), String> {
         return Ok(());
     }
     if changed > 0 {
-        return Err(format!("{} of {} snapshots check differently (accept-snapshots saves them)", changed, paths.len()));
+        bail!("{} of {} snapshots check differently (accept-snapshots saves them)", changed, paths.len());
     }
     println!("All {} snapshots check the same", paths.len());
     Ok(())
