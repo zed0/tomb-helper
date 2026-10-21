@@ -153,6 +153,12 @@
       "witnesses": {
         "XPosition": ["0x5B68A1", "0x84BF7C", "0x84C113", "0x113C61", "0x3DEDFC", "0x622FEB", "0x84B38D", "0x44C23E"],
         "CameraSin": ["0x2927FC", "0x87B864", "0x480153", "0x2979DA", "0x297B83", "0x47FCEB", "0x87B806"]
+      },
+      "layout_witnesses": {
+        "camera.view": ["0x87AD69"],
+        "collision_mesh.triangles": ["0x191D1D"],
+        "instance.position": ["0x5B68A1", "0x565D19", "0x84B38D", "0x3DEDFC", "0x113C61", "0x84C113", "0x84BF7C", "0x581B09"],
+        "proxy.in_use_size": ["0x1DD0D2", "0x1DD105"]
       }
     },
     {
