@@ -28,6 +28,7 @@ use crate::process_details::{AddressType, ProcessDetails};
 use process_memory::{CopyAddress, Pid, ProcessHandle, TryIntoProcessHandle};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::convert::TryInto;
+use std::path::PathBuf;
 
 // Probes starting this close to Lara are hers
 const PROBE_DISTANCE: f32 = 300.0;
@@ -147,9 +148,15 @@ pub fn update_offsets(from: Option<String>, from_version: Option<String>, dry_ru
     }
 
     let mut unverified: BTreeMap<AddressType, Vec<usize>> = BTreeMap::new();
-    if let Some(from) = &from {
-        let old = derive::load(from)?;
-        let old_details = derive::reference_details(&old, from_version.as_deref())?;
+    let previous = match &from {
+        Some(from) => {
+            let old = derive::load(from)?;
+            let old_details = derive::reference_details(&old, from_version.as_deref())?;
+            Some((old, old_details))
+        }
+        None => previous_build(&template, &image),
+    };
+    if let Some((old, old_details)) = &previous {
         println!("Deriving the rest from {} {}...", old_details.name, old_details.version.version);
         // Layout fields the old build has witnesses for, where they match into this one
         for change in crate::layout_witness::derive_layout(&old, &old_details, &image) {
@@ -262,6 +269,41 @@ fn save_dump(details: &ProcessDetails, image: &PeImage) {
         Ok(()) => println!("Saved a dump of this build for the next one's --from: {}", path.display()),
         Err(e) => eprintln!("Couldn't save a dump of this build to {}: {}", path.display(), e),
     }
+}
+
+/// Without `--from`: the newest dump of another known build of the same game in the data folder (`save_dump`'s, or
+/// named after the exe as `debug dump` does), if there's one
+fn previous_build(template: &ProcessDetails, image: &PeImage) -> Option<(PeImage, ProcessDetails)> {
+    let prefixes = [
+        crate::snapshot::file_name(&template.name, ""),
+        template.executable_name.trim_end_matches(".exe").to_string() + "-",
+    ];
+    let mut dumps: Vec<(std::time::SystemTime, PathBuf)> = std::fs::read_dir(crate::snapshot::dump_dir())
+        .ok()?
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            let name = e.file_name().to_string_lossy().to_string();
+            name.ends_with(".bin") && prefixes.iter().any(|p| name.starts_with(p.as_str()))
+        })
+        // This build's own dump is the same size as its image
+        .filter(|e| e.metadata().map_or(false, |m| m.len() != image.data.len() as u64))
+        .filter_map(|e| Some((e.metadata().ok()?.modified().ok()?, e.path())))
+        .collect();
+    dumps.sort();
+    for (_, path) in dumps.iter().rev() {
+        let old = match PeImage::load(path) {
+            Ok(old) => old,
+            Err(_) => continue,
+        };
+        if let Ok(details) = derive::reference_details(&old, None) {
+            println!("Using the dump of {} as --from: {}", details.version.version, path.display());
+            return Some((old, details));
+        }
+    }
+    if !dumps.is_empty() {
+        println!("None of the dumps of {} in {} is of a known build, so not deriving from one", template.name, crate::snapshot::dump_dir().display());
+    }
+    None
 }
 
 /// The running game (a known executable), its known details if this build is known, and the details to start from:
