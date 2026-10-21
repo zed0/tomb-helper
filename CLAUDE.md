@@ -48,7 +48,7 @@ Each module's `//!` doc says what's in it and how it works; this is where to loo
 | File | What's there |
 |---|---|
 | `src/main.rs` | Entry: process polling, handler construction, hotkeys, the action/tick loop; hands CLI args to `cli` |
-| `src/cli.rs` | The command line tools as `clap` subcommands (some hidden), `export-offsets`, `dump` |
+| `src/cli.rs` | The command line tools: `update-offsets`, `check` (`--fit`, `--snapshot`, `--replay`), `watch`, and the rest under the hidden `debug` |
 | `src/config.rs` | `tomb-helper.json`: hotkeys, cutscene files, the overlay's starting settings |
 | `src/action.rs` | `Action`: everything a hotkey can be bound to |
 | `src/handler.rs` | The `Handler` trait every feature implements |
@@ -67,7 +67,7 @@ Each module's `//!` doc says what's in it and how it works; this is where to loo
 | `src/aim_sweep.rs` | TR2013's aim sweep (weapon rod) through her inventory to the weapon's tuning |
 | `src/trigger.rs` | What an instance is (interactable, trigger, NPC), trigger categories and shapes |
 | `src/trigger_scripts.rs` | What sets triggers off and what they do, from a background scan for script nodes |
-| `src/overlay_handler.rs` | Injects the overlay and sends it what to draw each tick; `overlay-data` |
+| `src/overlay_handler.rs` | Injects the overlay and sends it what to draw each tick; `debug overlay-data` |
 | `src/inject32.rs` | Injecting the 32-bit overlay into a 32-bit game |
 | `src/ui_ipc_data.rs` | The shared memory: `UiData`, `UiSettings`, double buffering (shared with the DLL) |
 | `src/lib.rs` | The injected overlay (DLL): its window and drawing |
@@ -78,32 +78,32 @@ Each module's `//!` doc says what's in it and how it works; this is where to loo
 | `src/cutscene_timing_info.rs`, `src/cutscene_timing_generator_handler.rs` | The cutscene timing file, and recording it with LiveSplit |
 | `src/readable_from_path.rs` | JSON from a path or URL |
 | `src/check.rs` | `check`: reads what the overlay does and checks it makes sense |
-| `src/snapshot.rs` | `snapshot`/`check-snapshots`/`accept-snapshots`: `check` without the game |
-| `src/discover.rs` | `discover`: the overlay's statics through RTTI |
+| `src/snapshot.rs` | `check --snapshot`/`--replay [--accept]`: `check` without the game; where dumps are kept |
+| `src/discover.rs` | The overlay's statics through RTTI (for `update-offsets`; `debug discover`) |
 | `src/update_offsets.rs` | `update-offsets`: the one command for a new build |
-| `src/fit_layout.rs` | `fit-layout`: searching for layout offsets `check` passes with |
-| `src/derive.rs` | `derive`: offsets for a new build by matching code references, `trace`, `check-matching` |
+| `src/fit_layout.rs` | `check --fit`: searching for layout offsets `check` passes with |
+| `src/derive.rs` | Offsets for a new build by matching code references (`update-offsets --from`; `debug derive`, `trace`, `check-matching`) |
 | `src/normalised.rs`, `src/witness.rs` | Matching references between compilers, and witness instructions between builds |
 | `src/code_trace.rs` | Tracing how code uses a static: the pointer chains it accesses |
-| `src/chains.rs` | `chains` and `probe`, live |
-| `src/watch.rs` | `watch` (and hidden `watch-raw`, `disasm`): hardware breakpoints for the instructions accessing values |
-| `src/layout_witness.rs` | `watch-layout`: witnesses for layout fields, matched into new builds |
+| `src/chains.rs` | `debug chains` and `debug probe`, live |
+| `src/watch.rs` | `watch` (and `debug watch-raw`, `debug disasm`): hardware breakpoints for the instructions accessing values |
+| `src/layout_witness.rs` | `watch <group.field>`: witnesses for layout fields, matched into new builds |
 | `src/pe_image.rs` | `PeImage`: an exe or dump in memory layout, or dumped from a process |
 
 ## Common changes
 
-- **After changing code that reads the game, or the offsets file:** `tomb-helper check-snapshots` (snapshots of each
-  game in `H:\tomb-helper-dumps\snapshots`, taken with `tomb-helper snapshot`) shows any game whose `check` report changed.
+- **After changing code that reads the game, or the offsets file:** `tomb-helper check --replay` (snapshots of each
+  game in `H:\tomb-helper-dumps\snapshots`, taken with `tomb-helper check --snapshot`) shows any game whose `check` report
+  changed.
 - **Differences between games:** put them in the `layout` (an `Option` that's `null` for what a game doesn't have),
   or detect them from the game itself (e.g. which RTTI classes its image has), rather than checking the pointer size
   or which game it is; read memory through `game_memory` and RTTI through `rtti`, which handle 32 and 64-bit.
-- **New patch / game:** `update-offsets` (plus `--from` the old exe for cutscene offsets), then fix that version's
-  `layout` until `check` passes (README "Porting the overlay"). New fields read from the game go in `Layout` (with
-  ROTTR's value as the default), not constants.
-- **Support a new game version:** run `tomb-helper derive <known exe> running` to get most of the entry, then add it to
-  `offsets.json` (test it first in `tomb-helper-offsets.json` next to the exe, which hot reloads). Use `image_size`
-  when the version string is shared between stores. Only include the `AddressType`s you've found — handlers
-  needing missing ones won't load.
+- **New patch / game:** `update-offsets` (plus `--from` the previous build's exe, or the dump it kept of it in
+  `H:\tomb-helper-dumps`, for the cutscene offsets), then fix that version's `layout` until `check` passes (`check --fit`
+  helps; README "Porting the overlay"). It saves to `tomb-helper-offsets.json` next to the exe, which hot reloads; copy
+  the entry into `offsets.json` once it works. Use `image_size` when the version string is shared between stores. Only
+  include the `AddressType`s you've found — handlers needing missing ones won't load. New fields read from the game go in
+  `Layout` (with ROTTR's value as the default), not constants.
 - **Add a new memory value:** add an `AddressType` variant, add offsets per version in `offsets.json`, read it with
   `Game` (`read_floats`, `require` and `game_memory`'s readers), or `TrackedMemory` in a handler that writes it.
 - **Add a hotkey action:** add a variant to `Action` (`src/action.rs`), handle it in the relevant
@@ -406,6 +406,10 @@ again (`derive` plus live checks).
 ## Gotchas
 
 - Windows-only; non-Windows stubs in `find_process.rs` just panic.
+- The investigation tools the notes above name (`chains`, `probe`, `derive`, `discover`, `trace`, `watch-raw`, `disasm`,
+  `check-matching`, `overlay-data`, `dump`, `export-offsets`) are `tomb-helper debug <tool>`; `fit-layout` is `check
+  --fit`, `snapshot`/`check-snapshots`/`accept-snapshots` are `check --snapshot`/`--replay`/`--replay --accept`, and
+  `watch-layout` is `watch` with `group.field` names.
 - `PositionHandler` "active" mode writes the cached position every tick, which is what lets Lara be
   moved/frozen — movement actions are no-ops while inactive.
 - `CutsceneHandler::skip` deliberately returns `Ok` when not in a cutscene (Space is also jump).
@@ -419,5 +423,5 @@ again (`derive` plus live checks).
 - If the exe ends without setting `should_exit` (e.g. its window is closed), an overlay that stays loaded keeps that
   run's shared memory and draws its last data; injecting again does nothing as the DLL is already loaded, and its file
   can't be replaced. The overlay now ejects itself after 5s without an update (`EXE_GONE`); check the game's modules
-  (32-bit ones for TR2013) if changes to the overlay don't show. `overlay-data [--delay N]` (hidden) prints what the exe
+  (32-bit ones for TR2013) if changes to the overlay don't show. `debug overlay-data [--delay N]` prints what the exe
   would send without injecting; it owns the shared memory, so not while tomb-helper runs.

@@ -28,6 +28,7 @@ use crate::process_details::{AddressType, ProcessDetails};
 use process_memory::{CopyAddress, Pid, ProcessHandle, TryIntoProcessHandle};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::convert::TryInto;
+use std::path::Path;
 
 // Probes starting this close to Lara are hers
 const PROBE_DISTANCE: f32 = 300.0;
@@ -236,7 +237,7 @@ pub fn update_offsets(from: Option<String>, from_version: Option<String>, dry_ru
     }
     if !unverified.is_empty() {
         println!("  (Offsets marked unverified are kept in the file to look at; pass --from with the previous build's");
-        println!("  exe or a dump of it to derive them, or check them with `tomb-helper probe` and move them over.)");
+        println!("  exe or a dump of it to derive them, or check them with `tomb-helper debug probe` and move them over.)");
     }
 
     let details = entry.to_details()?;
@@ -244,9 +245,24 @@ pub fn update_offsets(from: Option<String>, from_version: Option<String>, dry_ru
         println!("\n--dry-run, so not saved");
     } else {
         discover::save_entry(entry)?;
+        save_dump(&details, &image);
     }
     println!("\nChecking it...");
     check::run(Handle::Live(pid, handle), base_address, details)
+}
+
+/// Keeps the build's image for the next build's `--from` (a Denuvo build's exe can't be read from disk), unless there's
+/// one already. Not being able to is only a warning.
+fn save_dump(details: &ProcessDetails, image: &PeImage) {
+    let name = crate::snapshot::file_name(&details.name, &details.version.version);
+    let path = Path::new(crate::snapshot::DUMP_DIR).join(format!("{}.bin", name));
+    if path.exists() {
+        return;
+    }
+    match std::fs::create_dir_all(crate::snapshot::DUMP_DIR).and_then(|_| std::fs::write(&path, &image.data)) {
+        Ok(()) => println!("Saved a dump of this build for the next one's --from: {}", path.display()),
+        Err(e) => eprintln!("Couldn't save a dump of this build to {}: {}", path.display(), e),
+    }
 }
 
 /// The running game (a known executable), its known details if this build is known, and the details to start from:

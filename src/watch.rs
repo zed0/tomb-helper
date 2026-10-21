@@ -6,10 +6,10 @@
 //! It sets DR0-3 on up to 4 values (resolved after `--delay`) and records each accessing instruction with its callers
 //! (return addresses scanned off the stack); `--write` breaks on writes only. In a 32-bit game the debug registers are
 //! in the native context and the registers the code sees in the WOW64 one (`Context`); an access by a `call [mem]` is
-//! found at the return address. Hidden `watch-raw <pid> <addr or +rva>[,...]` does the same for any addresses (`--exec`
+//! found at the return address. `debug watch-raw <pid> <addr or +rva>[,...]` does the same for any addresses (`--exec`
 //! breaks on running the instruction there and records the registers; `--dump <register>:<hex length>` also copies the
 //! memory a register points at, the first 3 times per instruction, e.g. `esp:40` for a function's arguments), and
-//! `disasm` prints instructions with their RVAs.
+//! `debug disasm` prints instructions with their RVAs.
 
 use anyhow::{bail, Context as _, Result};
 use crate::derive::format_offsets;
@@ -39,7 +39,7 @@ use winapi::um::wow64apiset::IsWow64Process;
 
 // EFLAGS.RF
 const RESUME_FLAG: u32 = 0x1_0000;
-// Register sets printed per instruction by `watch-raw --exec`
+// Register sets printed per instruction by `debug watch-raw --exec`
 const MAX_REGISTER_SETS: usize = 5;
 // x86 has 4 debug address registers
 pub const MAX_WATCHES: usize = 4;
@@ -55,7 +55,7 @@ const MAX_WITNESSES: usize = 8;
 // How much of the stack to search for return addresses, and how many callers to keep
 const STACK_SCAN_SIZE: usize = 0x1000;
 const MAX_CALLERS: usize = 8;
-// Caller chains printed per instruction by `watch-raw`
+// Caller chains printed per instruction by `debug watch-raw`
 const MAX_CALLER_CHAINS: usize = 3;
 
 #[repr(C, align(16))]
@@ -330,7 +330,7 @@ pub struct Hit {
     dumps: Vec<(u64, Vec<u8>)>,
 }
 
-/// `watch-raw --exec --dump <register>:<length>`: copy the memory a register points at when the breakpoint is hit
+/// `debug watch-raw --exec --dump <register>:<length>`: copy the memory a register points at when the breakpoint is hit
 #[derive(Clone, Copy)]
 pub struct Dump {
     register: Register,
@@ -588,7 +588,7 @@ fn parse_address(text: &str, base_addr: usize) -> Result<usize> {
     }
 }
 
-/// `watch-raw <pid> <address>[,<address>...]`: record what accesses (or writes, or with `Breakpoint::Execute` runs) any address in a
+/// `debug watch-raw <pid> <address>[,<address>...]`: record what accesses (or writes, or with `Breakpoint::Execute` runs) any address in a
 /// process, and for the main module's code which functions it was called from (and for an instruction run, the
 /// registers then). Addresses are printed relative to the main module.
 pub fn watch_raw(pid: &str, address: &str, seconds: u64, delay: u64, kind: Breakpoint, dump: Option<Dump>) -> Result<()> {
@@ -643,7 +643,7 @@ fn print_callers(hit: &Hit) {
     }
 }
 
-/// `disasm <pid> <address> [count]`: print instructions from a running process's memory
+/// `debug disasm <pid> <address> [count]`: print instructions from a running process's memory
 pub fn disasm(pid: &str, address: &str, count: &str) -> Result<()> {
     let pid: Pid = pid.parse().context("Bad PID")?;
     let handle = pid.try_into_process_handle()?;

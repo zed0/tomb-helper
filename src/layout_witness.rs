@@ -1,5 +1,5 @@
 //! Layout witnesses: instructions in the game that read or write a field of its structures (`layout`), found with
-//! `watch-layout` and kept in the version's `layout_witnesses`, matched into a new build (`update-offsets --from`) to
+//! `watch <group.field>...` and kept in the version's `layout_witnesses`, matched into a new build (`update-offsets --from`) to
 //! see where the field went, the way `witnesses` do for the offsets file's last offsets. Fields are named
 //! `group.field` as in the offsets file's layout section, e.g. `proxy.in_use_size`.
 //!
@@ -98,7 +98,7 @@ fn lara_instance(game: &Game, components: &mut Components) -> Option<usize> {
     game.find_lara(components, &addresses)
 }
 
-/// `watch-layout <group.field>... [--seconds <n>] [--delay <n>] [--save]`: records the instructions that access up to 4
+/// `watch <group.field>... [--seconds <n>] [--delay <n>] [--save]`: records the instructions that access up to 4
 /// layout fields in the running game, and with `save` keeps them as the version's layout witnesses
 pub fn watch_layout(names: &[&str], version: Option<String>, seconds: u64, delay: u64, save: bool) -> Result<()> {
     if names.is_empty() || names.len() > watch::MAX_WATCHES {

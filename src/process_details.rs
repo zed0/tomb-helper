@@ -72,7 +72,7 @@ pub struct ProcessDetails {
     // RVAs of instructions that access each value, found with `tomb-helper watch`. Only used to
     // derive offsets for new versions.
     pub witnesses: HashMap<AddressType, Vec<usize>>,
-    // The same for layout fields (`group.field`), found with `tomb-helper watch-layout`
+    // The same for layout fields (`group.field`), found with `tomb-helper watch <group.field>`
     pub layout_witnesses: HashMap<String, Vec<usize>>,
     // Offsets a tool found but couldn't confirm, kept in the file for review but not used
     pub unverified: HashMap<AddressType, Vec<usize>>,

@@ -1,4 +1,4 @@
-//! `tomb-helper fit-layout [<group>...] [--snapshot <file>] [--save]`: searches for layout offsets that `check` passes
+//! `tomb-helper check --fit [<group>...] [--from <snapshot>] [--save]`: searches for layout offsets that `check` passes
 //! with, for a build whose structures have changed. Fields usually move because something was added before them, which
 //! moves every field after it by as much, so for each group of a failing check (or the groups named) it tries moving
 //! the fields from each one on by up to `MAX_SHIFT` either way (growing the group's read sizes to match), scores each
@@ -197,7 +197,7 @@ fn fit_group(target: &Target, layout: &Layout, group: &str, current: (i64, i64))
     best
 }
 
-/// `fit-layout`: finds what to change in the version's layout for its checks to pass
+/// `check --fit`: finds what to change in the version's layout for its checks to pass
 pub fn fit_layout(groups: &[&str], snapshot: Option<&str>, version: Option<String>, save: bool) -> Result<()> {
     let target = match snapshot {
         Some(path) => {

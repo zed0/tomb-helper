@@ -1,6 +1,6 @@
 //! Words the tools go by to tell what things are and do, from the offsets file's "words" section (`OffsetsFile`), which
 //! defaults to these. They're the same for every game; a new game's words can be added to the section of the offsets
-//! file next to the exe (`tomb-helper export-offsets`) rather than to the code.
+//! file next to the exe (which `update-offsets` writes, or `debug export-offsets`) rather than to the code.
 //!
 //! They're validated against `TriggerCategory` and `TRIGGER_ACTIONS` when the file is parsed: trigger categories by
 //! name, script actions by node class name (`trigger_scripts`), names that aren't interactable, TR2013's component data

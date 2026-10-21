@@ -96,7 +96,7 @@ pub struct VersionEntry {
     // RVAs of instructions that access each value (`tomb-helper watch`), only used by `derive`
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub witnesses: BTreeMap<AddressType, Vec<Hex>>,
-    // RVAs of instructions that access each layout field (`group.field`, `tomb-helper watch-layout`), only used by
+    // RVAs of instructions that access each layout field (`group.field`, `tomb-helper watch <group.field>`), only used by
     // `update-offsets --from` to work out where fields went in a new build
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub layout_witnesses: BTreeMap<String, Vec<Hex>>,

@@ -300,7 +300,7 @@ pub fn find_code_chains(version: Option<String>) -> Result<()> {
 
     println!(
         "\n// Code chains for {} {}, to replace its entry in the offsets file. Check them with\n\
-         // `tomb-helper probe` after restarting the game.",
+         // `tomb-helper debug probe` after restarting the game.",
         details.name, details.version.version
     );
     print_entry(&details, &image, &details.version.version, &lines, &details.witnesses);
