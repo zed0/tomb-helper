@@ -307,4 +307,7 @@ pub struct Config {
     // Where dumps and snapshots go (`data_dir()`)
     #[serde(default)]
     pub data_dir: Option<String>,
+    // Also print errors that are expected while the game loads a level or exits, like pointer chains that don't resolve
+    #[serde(default)]
+    pub debug_logging: bool,
 }

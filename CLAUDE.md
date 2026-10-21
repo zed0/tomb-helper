@@ -38,7 +38,9 @@ User docs (hotkeys, config, cutscene timing generation) live in `README.md`.
 3. Registers hotkeys with `livesplit_hotkey::Hook`; keys are grouped so one key can trigger several
    `Action`s, sent over an mpsc channel.
 4. Busy loop: dispatch any received `Action` to every handler's `handle_action`, then call `handle_tick`
-   on all. Exits on game process exit (`is_process_running`) or SIGINT. Errors are just `eprintln!`ed.
+   on all. Exits on game process exit (`is_process_running`) or SIGINT. Errors are `eprintln!`ed (`report`), except the game
+   being unreadable (`game_memory::is_unreadable`: `Unreadable`, or Windows refusing a read), which is expected during
+   loading screens and exiting, so only shown with `debug_logging`. Make errors for reads that fail with `unreadable`.
 5. Every 500ms it checks the offsets file; if the running version's offsets changed the handlers are recreated
    (losing their state), and if the game no longer matches any version it disconnects.
 

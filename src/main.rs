@@ -282,13 +282,13 @@ fn connect(
         }
 
         if let Ok(action) = rx.try_recv() {
-            dispatch(&mut handlers, action);
+            dispatch(&mut handlers, action, config.debug_logging);
         }
 
         for handler in &mut handlers {
-            handler
-                .handle_tick()
-                .unwrap_or_else(|msg| eprintln!("Error: {}", msg));
+            if let Err(e) = handler.handle_tick() {
+                report(&*e, config.debug_logging);
+            }
         }
 
         // The overlay shows the other handlers' state, and its buttons ask for actions
@@ -302,16 +302,26 @@ fn connect(
             requested.extend(handler.take_actions());
         }
         for action in requested {
-            dispatch(&mut handlers, action);
+            dispatch(&mut handlers, action, config.debug_logging);
         }
     }
 }
 
-fn dispatch(handlers: &mut Vec<Box<dyn Handler>>, action: Action) {
+fn dispatch(handlers: &mut Vec<Box<dyn Handler>>, action: Action, debug_logging: bool) {
     for handler in handlers {
-        handler
-            .handle_action(action)
-            .unwrap_or_else(|msg| eprintln!("Error: {}", msg));
+        if let Err(e) = handler.handle_action(action) {
+            report(&*e, debug_logging);
+        }
+    }
+}
+
+// A handler's error. The game being unreadable (pointer chains that don't resolve, reads that fail) is expected while it
+// loads a level or exits, so that's only shown with `debug_logging`.
+fn report(error: &(dyn std::error::Error + 'static), debug_logging: bool) {
+    if !game_memory::is_unreadable(error) {
+        eprintln!("Error: {}", error);
+    } else if debug_logging {
+        eprintln!("Debug: {}", error);
     }
 }
 
