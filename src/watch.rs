@@ -664,14 +664,14 @@ pub fn disasm(pid: &str, address: &str, count: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn watch(names: &[&str], version: Option<String>, seconds: u64, delay: u64, write_only: bool) -> Result<()> {
+pub fn watch(names: &[&str], version: Option<String>, seconds: u64, delay: u64, write_only: bool, save: bool) -> Result<()> {
     let kind = if write_only { Breakpoint::Write } else { Breakpoint::Access };
     if delay > 0 {
         println!("Starting in {} seconds...", delay);
         std::thread::sleep(Duration::from_secs(delay));
     }
     let (pid, handle, base_addr, details) = find_process::find_process(known_process_details(), version)
-        .context("No known game version is running (pass --version to force one from process_details.rs)")?;
+        .context("No known game version is running (pass --version to force one from the offsets file)")?;
     println!("Found {} {}", details.name, details.version.version);
 
     let all: BTreeMap<String, AddressType> = details
@@ -727,10 +727,17 @@ pub fn watch(names: &[&str], version: Option<String>, seconds: u64, delay: u64, 
             witnesses.insert(*address_type, best.iter().map(|(rva, _)| Hex(**rva)).collect());
         }
     }
-    if !witnesses.is_empty() {
+    if witnesses.is_empty() {
+        return Ok(());
+    }
+    if save {
+        let mut entry = crate::offsets_file::VersionEntry::from_details(&details);
+        entry.witnesses.extend(witnesses);
+        crate::discover::save_entry(entry)?;
+    } else {
         println!(
-            "\n// Instructions that access each value, for `derive` to match in new versions. Add these to\n\
-             // the \"witnesses\" of {} in the offsets file:",
+            "\n// Instructions that access each value, for `update-offsets --from` to match in new versions. Add these\n\
+             // to the \"witnesses\" of {} in the offsets file (or watch again with --save):",
             details.version.version
         );
         println!("\"witnesses\": {}", to_json(&witnesses));

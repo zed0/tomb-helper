@@ -70,8 +70,8 @@ enum Command {
     /// proxy.in_use_size)
     ///
     /// Attaches as a debugger for a few seconds. `update-offsets --from` matches these instructions in a new build to
-    /// find where an offset or a field went: values' are printed to add to the offsets file's witnesses, and layout
-    /// fields' kept there with --save.
+    /// find where an offset or a field went. --save keeps them in the version's entry in the offsets file (witnesses
+    /// for values, layout_witnesses for fields); otherwise they're printed.
     Watch {
         #[arg(required = true, num_args = 1..=4, value_name = "VALUE OR GROUP.FIELD")]
         targets: Vec<String>,
@@ -85,7 +85,7 @@ enum Command {
         /// Only writes (of values)
         #[arg(long)]
         write: bool,
-        /// Keep layout fields' instructions as the version's layout_witnesses in the offsets file next to the exe
+        /// Keep the instructions in the version's entry in the offsets file next to the exe
         #[arg(long)]
         save: bool,
     },
@@ -199,10 +199,7 @@ pub fn run() -> Result<()> {
                 }
                 crate::layout_witness::watch_layout(&strs(&targets), version, seconds, delay, save)
             } else if fields == 0 {
-                if save {
-                    bail!("--save is for layout fields (group.field); values' instructions are printed to add by hand");
-                }
-                crate::watch::watch(&strs(&targets), version, seconds, delay, write)
+                crate::watch::watch(&strs(&targets), version, seconds, delay, write, save)
             } else {
                 bail!("Watch values (e.g. CutscenePrompt) or layout fields (e.g. proxy.in_use_size), not both at once")
             }
