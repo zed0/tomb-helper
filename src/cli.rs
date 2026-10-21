@@ -26,7 +26,8 @@ enum Command {
     /// file it writes (tomb-helper-offsets.json) can be edited, e.g. to fix the layout, and is reloaded while
     /// tomb-helper runs.
     UpdateOffsets {
-        /// The previous build's exe or a dump of it, to derive the rest of the offsets from
+        /// The previous build's exe or a dump of it, to derive the rest of the offsets from (by default the newest dump
+        /// of another known build of the game in the data folder)
         #[arg(long)]
         from: Option<String>,
         /// Which known version --from is (otherwise it's matched by image size)
