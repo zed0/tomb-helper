@@ -3,7 +3,7 @@
 //! (with a projection made from `CameraLens`), boxes round objects (rescanned every second), triggers, the level's
 //! collision near her, and her own collision (with a 150ms hold on "pushing", as contacts are often caught mid update).
 //! Without the camera or instance array the overlay only shows its window. It sets `should_exit` to make the overlay
-//! eject itself when toggled off or dropped. `overlay-data` prints what it would send without injecting.
+//! eject itself when toggled off or dropped. `debug overlay-data` prints what it would send without injecting.
 
 use anyhow::{anyhow, Context, Result};
 use crate::game::Game;
@@ -744,7 +744,7 @@ impl Handler for OverlayHandler {
     }
 }
 
-/// `overlay-data`: what the overlay would be sent now, from one update with collision on, without injecting it
+/// `debug overlay-data`: what the overlay would be sent now, from one update with collision on, without injecting it
 pub fn print_overlay_data(version: Option<String>, delay: u64) -> Result<()> {
     if delay > 0 {
         println!("Starting in {} seconds...", delay);

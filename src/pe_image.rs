@@ -100,7 +100,7 @@ impl PeImage {
         }
     }
 
-    /// Loads either an exe from disk (mapping its sections to their RVAs) or a dump written by `dump`.
+    /// Loads either an exe from disk (mapping its sections to their RVAs) or a dump (`update-offsets` keeps one of each build, or `debug dump`).
     pub fn load(path: &Path) -> io::Result<PeImage> {
         let file = fs::read(path)?;
         let headers = parse_headers(&file)?;

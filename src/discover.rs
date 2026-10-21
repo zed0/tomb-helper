@@ -1,4 +1,4 @@
-//! `tomb-helper discover`: finds the overlay's static addresses in the running game through the RTTI class names of
+//! `tomb-helper debug discover` (and `update-offsets`): finds the overlay's static addresses in the running game through the RTTI class names of
 //! what they point to, which are the same between versions (and in SOTTR). Uses the layout for the offsets within,
 //! and for what has no RTTI (TR2013's collision scene, its proxies). Works for 32 and 64-bit games.
 //!

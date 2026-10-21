@@ -15,7 +15,7 @@
 //! References are matched by byte windows (`Deriver`), or, where that isn't confident, by `normalised` (sure only if
 //! deriving back lands within 0x400). Chain levels map by `code`, `witness`, `shifted` or `copied`; between compilers
 //! only an unchanged offset or a strong vote counts. On x86 a code position only counts as a reference if an
-//! instruction uses it. `check-matching <a> <b> [n]` round trips n statics to measure how well references are matched.
+//! instruction uses it. `debug check-matching <a> <b> [n]` round trips n statics to measure how well references are matched.
 
 use anyhow::{anyhow, bail, Context, Result};
 use crate::code_trace::{Access, Tracer};
@@ -436,7 +436,7 @@ impl<'a, 'r> Deriver<'a, 'r> {
     }
 }
 
-/// `check-matching <a> <b> [count]`: how well statics can be matched between two builds, without knowing any of
+/// `debug check-matching <a> <b> [count]`: how well statics can be matched between two builds, without knowing any of
 /// them: up to `count` statics of `a` (globals with a few references) are derived in `b` and back again, and a static
 /// that comes back where it started was very likely matched right
 pub fn check_matching(a: &str, b: &str, count: usize) -> Result<()> {
@@ -879,7 +879,7 @@ pub fn derive(from: &str, to: &str, from_version: Option<&str>) -> Result<()> {
          // levels moved like a neighbouring field, `witness` levels came from matching instructions\n\
          // seen accessing the value, and `copied` levels had no evidence.\n\
          // Add this to the offsets file, fill in the version string, and check the values in game\n\
-         // with `tomb-helper probe`.",
+         // with `tomb-helper debug probe`.",
         details.name, details.version.version
     );
     // Layout fields the old build has witnesses for, moved where those match

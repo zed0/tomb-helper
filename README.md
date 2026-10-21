@@ -74,13 +74,13 @@ The available keys are listed in the [livesplit_hotkey library documentation](ht
 
 ## Offsets file
 
-The memory offsets for each supported game version are built into tomb-helper (from [`offsets.json`](./offsets.json)). To change them or add a new version without rebuilding, run
+The memory offsets for each supported game version are built into tomb-helper (from [`offsets.json`](./offsets.json)). `tomb-helper update-offsets` (below) saves a new version's to `tomb-helper-offsets.json` next to `tomb-helper.exe`; to change the others without rebuilding, write that file with
 
 ```
-tomb-helper export-offsets
+tomb-helper debug export-offsets
 ```
 
-which writes them to `tomb-helper-offsets.json` next to `tomb-helper.exe`. While that file exists tomb-helper uses it instead, and reloads it whenever it changes, even while connected to a game, so you can edit offsets and test them straight away. If the file has a mistake in it the error is printed and the previous offsets are kept until it's fixed. Delete the file to go back to the built in offsets.
+While that file exists tomb-helper uses it instead, and reloads it whenever it changes, even while connected to a game, so you can edit offsets and test them straight away. If the file has a mistake in it the error is printed and the previous offsets are kept until it's fixed. Delete the file to go back to the built in offsets.
 
 Each version looks like:
 
@@ -198,23 +198,23 @@ It works out the offsets for the running build and saves them to the [offsets fi
 - Lara's position, by finding her instance (the one with a `PlayerComponent`) and the pointer chain the game's code uses to reach it
 - the ground probes, by their contents, and the version string
 
-Anything that was right for the previous build is kept as it was. The rest, like the cutscene offsets, needs the previous build to compare against: pass its exe, or a dump of it (see below), with `--from <exe or dump>`. Without it, they're kept in the entry as `unverified` (and so not used) for you to look at. `--dry-run` shows what it found without saving it.
+Anything that was right for the previous build is kept as it was. The rest, like the cutscene offsets, needs the previous build to compare against: pass its exe, or a dump of it (see below), with `--from <exe or dump>`. Without it, they're kept in the entry as `unverified` (and so not used) for you to look at. `--dry-run` shows what it found without saving it. When it saves, it also keeps a dump of the build in `H:\tomb-helper-dumps` (unless there's one already), ready to pass as the next build's `--from`.
 
-The commands below do parts of this, and are useful for investigating when something isn't found.
+Porting needs three commands: `update-offsets`, `check` (see [Porting the overlay](#porting-the-overlay)) and `watch` (below). The rest, for investigating when something isn't found, are under `tomb-helper debug` (`tomb-helper debug --help` lists them); the ones below are what `update-offsets` does in parts.
 
 tomb-helper can work out most of the memory offsets for a new version of a game from a version it already supports:
 
 ```
-tomb-helper derive <from> <to> [--from-version <version>]
+tomb-helper debug derive <from> <to> [--from-version <version>]
 ```
 
-`<from>` and `<to>` are paths to the game's exe, or `running` to use the game that is currently running. Games protected by Denuvo (e.g. Shadow of the Tomb Raider v1.0 build 234.1) are encrypted on disk, so for those launch the game, wait for the main menu, and use `running`, or save a copy with `tomb-helper dump [<out.bin>]` and pass that file instead.
+`<from>` and `<to>` are paths to the game's exe, or `running` to use the game that is currently running. Games protected by Denuvo (e.g. Shadow of the Tomb Raider v1.0 build 234.1) are encrypted on disk, so for those launch the game, wait for the main menu, and use `running`, or pass the dump `update-offsets` kept of it (or save one with `tomb-helper debug dump [<out.bin>]`).
 
 The version of `<from>` is detected from its image size where possible, otherwise pass `--from-version` with a version from the [offsets file](#offsets-file), e.g.
 
 ```
-tomb-helper derive "C:\Games\Shadow of the Tomb Raider 492.0\SOTTR.exe" running
-tomb-helper derive sottr-234.1.bin "C:\Games\Shadow of the Tomb Raider\SOTTR.exe" --from-version "v1.0 build 234.1_64"
+tomb-helper debug derive "C:\Games\Shadow of the Tomb Raider 492.0\SOTTR.exe" running
+tomb-helper debug derive sottr-234.1.bin "C:\Games\Shadow of the Tomb Raider\SOTTR.exe" --from-version "v1.0 build 234.1_64"
 ```
 
 It prints a version entry to add to the [offsets file](#offsets-file), with a note per offset list saying where each level came from:
@@ -223,12 +223,12 @@ It prints a version entry to add to the [offsets file](#offsets-file), with a no
 - `shifted`: the code doesn't use this offset directly, but a neighbouring field moved by this much
 - `copied`: no evidence, kept as it was in `<from>`
 
-Offsets marked `UNSURE` had conflicting matches or a copied level, and are put under `unverified` for you to check. The version string needs filling in by hand. Check the result in game with `tomb-helper probe [--watch]`, which prints the current value of every offset.
+Offsets marked `UNSURE` had conflicting matches or a copied level, and are put under `unverified` for you to check. The version string needs filling in by hand. Check the result in game with `tomb-helper debug probe [--watch]`, which prints the current value of every offset.
 
 Derivation works best when the offsets in `<from>` follow the same pointer chains as the game's own code. Pointer scanners tend to find arbitrary chains instead, which can't be matched up between versions. To find the chains the code uses, load into a level (and start a cutscene for the cutscene values) with a known version running, then run:
 
 ```
-tomb-helper chains
+tomb-helper debug chains
 ```
 
 For each value it lists the chains the game's code uses to reach the same address, and prints an entry using the best of them. Some values (e.g. most SOTTR cutscene values) are only read by code that finds the object some other way, so have no code chain and keep their current offsets.
@@ -239,16 +239,16 @@ For those, record which instructions access the value:
 tomb-helper watch CutscenePrompt CutsceneStatus CutsceneLength --delay 15 --seconds 8
 ```
 
-This attaches to the game as a debugger and puts hardware breakpoints on up to 4 values, then detaches. The game pauses when it isn't focused, so use `--delay` to give yourself time to switch back to it (and get the values in use, e.g. start a cutscene). It prints a `"witnesses"` block to add to that version's entry in the offsets file; `derive` matches those instructions in the new build to find where each field moved to (`witness` in its output).
+This attaches to the game as a debugger and puts hardware breakpoints on up to 4 values, then detaches. The game pauses when it isn't focused, so use `--delay` to give yourself time to switch back to it (and get the values in use, e.g. start a cutscene). It prints a `"witnesses"` block to add to that version's entry in the offsets file; `update-offsets --from` (and `debug derive`) matches those instructions in the new build to find where each field moved to (`witness` in its output).
 
-`tomb-helper trace <exe> <static address>` prints the chains the code accesses from every reference to a static address, which helps when investigating by hand.
+`tomb-helper debug trace <exe> <static address>` prints the chains the code accesses from every reference to a static address, which helps when investigating by hand.
 
 ### Tomb Raider 2013 (32-bit)
 
 All of the above works for TR2013 too, with a few differences:
 
-- Its later builds (e.g. the current Steam one) were made with a newer compiler than the original release, so their code isn't alike byte for byte. When `derive` can't match a static that way, it matches by what the code around each reference does instead (the strings and imports it uses, its constants and field offsets), and says `(by what the code does)`. A match is only sure if deriving it back leads to where it started, or near it. Pointer chain levels are copied rather than matched between such builds, since a recompile doesn't change how structs are laid out, so they're always `UNSURE`: check them with `probe`.
-- Lara's position isn't in a static the code uses directly in any build, and the array it's in changed between builds, so find it with `chains` with the game running, rather than with `derive`.
+- Its later builds (e.g. the current Steam one) were made with a newer compiler than the original release, so their code isn't alike byte for byte. When `derive` can't match a static that way, it matches by what the code around each reference does instead (the strings and imports it uses, its constants and field offsets), and says `(by what the code does)`. A match is only sure if deriving it back leads to where it started, or near it. Pointer chain levels are copied rather than matched between such builds, since a recompile doesn't change how structs are laid out, so they're always `UNSURE`: check them with `debug probe`.
+- Lara's position isn't in a static the code uses directly in any build, and the array it's in changed between builds, so find it with `debug chains` with the game running, rather than with `derive`.
 - The original release (v1.01.748.0) has the overlay offsets too. Steam starts its own install if you start that one directly, which a `steam_appid.txt` containing `203160` next to its exe stops.
 - `update-offsets` finds the overlay's offsets as for the other games, with Lara found through her movement proxy (a static in TR2013) rather than a component. The inventory and type pools the aim sweep uses can only be derived from a known build with `--from`.
 - The newer builds don't inline small getters (like the one for the camera), so `trace` and `chains` follow what a getter returns into the code calling it.
@@ -257,17 +257,17 @@ All of the above works for TR2013 too, with a few differences:
 
 Most of what the overlay reads is found through the game's RTTI class names (e.g. `InteractableComponent`, `cdc::CollisionSceneClient`), which are the same between patches and in Shadow of the Tomb Raider, so there's less to port than for the other offsets:
 
-1. Load into a level, with Lara standing somewhere ordinary, then run `tomb-helper update-offsets` (see [Finding offsets for a new game version](#finding-offsets-for-a-new-game-version)). It finds the offsets and saves them, then runs `check` on them. A build with no layout yet (e.g. an older patch of the same game) starts with the layout of the newest build of that game that has one, which is usually all it needs. (`tomb-helper discover --save` does just the camera, instance array and collision scene.)
+1. Load into a level, with Lara standing somewhere ordinary, then run `tomb-helper update-offsets` (see [Finding offsets for a new game version](#finding-offsets-for-a-new-game-version)). It finds the offsets and saves them, then runs `check` on them. A build with no layout yet (e.g. an older patch of the same game) starts with the layout of the newest build of that game that has one, which is usually all it needs. (`tomb-helper debug discover --save` does just the camera, instance array and collision scene.)
 2. `tomb-helper check` can also be run on its own. It reads everything the way the overlay does and checks the results make sense, e.g. that instances' transforms are TransformComponents, there's a collision floor under Lara, her capsules are her size and on her. Each check that fails points at a group of the `layout`.
-3. Fix the failing groups in that version's `layout` (the file is reloaded, rerun `check`) until everything passes. `tomb-helper disasm <pid> <address>` and the notes in `CLAUDE.md` on how each structure was found help with finding a field that moved.
+3. Fix the failing groups in that version's `layout` (the file is reloaded, rerun `check`) until everything passes. `tomb-helper debug disasm <pid> <address>` and the notes in `CLAUDE.md` on how each structure was found help with finding a field that moved.
 
 Components are found by class too, so their slots never need porting: each type's slot is learnt from the first component table it's seen in.
 
-`tomb-helper fit-layout` can also search for them: for each group of a failing check (or the groups you name, e.g. `fit-layout proxy`) it tries moving the group's fields from each field on by up to 0x40 either way, which is how fields usually move when something is added to a structure, and keeps whatever makes most of that group's checks pass. It prints what it changed, and `--save` writes it to the offsets file. It takes about 20 seconds a group, on the running game or a snapshot (`--snapshot <file>`).
+`tomb-helper check --fit` can also search for them: for each group of a failing check (or the groups you name, e.g. `check --fit proxy`) it tries moving the group's fields from each field on by up to 0x40 either way, which is how fields usually move when something is added to a structure, and keeps whatever makes most of that group's checks pass. It prints what it changed, and `--save` writes it to the offsets file. It takes about 20 seconds a group, on the running game or a snapshot (`--from <snapshot>`).
 
-Fields that moved can be found from the game's code, like the offsets with `witnesses`: with a build whose layout is right, run `tomb-helper watch-layout <group.field>... --delay 10 --save` (up to 4 fields, e.g. `proxy.in_use_size camera.view`) and play while it watches, which keeps the instructions that read each field as that version's `layout_witnesses`. `update-offsets --from <that build>` on a new build then finds those instructions in it and moves each field to the offset they use there, listing what it changed under "Layout".
+Fields that moved can be found from the game's code, like the offsets with `witnesses`: with a build whose layout is right, run `tomb-helper watch <group.field>... --delay 10 --save` (up to 4 fields, e.g. `proxy.in_use_size camera.view`) and play while it watches, which keeps the instructions that read each field as that version's `layout_witnesses`. `update-offsets --from <that build>` on a new build then finds those instructions in it and moves each field to the offset they use there, listing what it changed under "Layout".
 
 ### Snapshots
 
-`tomb-helper snapshot` runs `check` on the running game while saving everything it reads, to `H:\tomb-helper-dumps\snapshots` (or a file you name), along with what `check` reported. `tomb-helper check-snapshots [<dir>]` checks every snapshot again without the games, and shows the lines of any report that have changed, so take one of each game (in an ordinary spot in a level) and run it after changing the code or the offsets file: `SAME` means it reads that game as before. A snapshot is the game's image (tens of MB) plus a few MB of what was read. `cargo test --release --bin tomb-helper -- --ignored snapshots` does the same as a test. After a change that's meant to change what `check` reports, `tomb-helper accept-snapshots` saves the new reports as what to expect.
+`tomb-helper check --snapshot` runs `check` on the running game while saving everything it reads, to `H:\tomb-helper-dumps\snapshots` (or a file you name), along with what `check` reported. `tomb-helper check --replay [<dir>]` checks every snapshot again without the games, and shows the lines of any report that have changed, so take one of each game (in an ordinary spot in a level) and run it after changing the code or the offsets file: `SAME` means it reads that game as before. A snapshot is the game's image (tens of MB) plus a few MB of what was read. `cargo test --release --bin tomb-helper -- --ignored snapshots` does the same as a test. After a change that's meant to change what `check` reports, `tomb-helper check --replay --accept` saves the new reports as what to expect.
 

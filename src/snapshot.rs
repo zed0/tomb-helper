@@ -1,6 +1,6 @@
 //! Snapshots of what `check` reads from a running game, to test the code reading the game's structures without the game.
-//! `snapshot [<file>]` runs `check` while recording every read (`game_memory::Handle::Recording`), then saves the main
-//! module, the memory read and the report `check` gives from the snapshot. `check-snapshots [<dir>]` checks each saved
+//! `check --snapshot [<file>]` runs `check` while recording every read (`game_memory::Handle::Recording`), then saves the main
+//! module, the memory read and the report `check` gives from the snapshot. `check --replay [<dir>]` checks each saved
 //! snapshot again and reports any whose results have changed, e.g. after a refactor or a change to the offsets file.
 //! Snapshots are big (the image is tens of MB), so they live in `SNAPSHOT_DIR`, not the repo.
 //!
@@ -21,6 +21,8 @@ use std::sync::Mutex;
 
 /// Where snapshots are kept by default
 pub const SNAPSHOT_DIR: &str = r"H:\tomb-helper-dumps\snapshots";
+/// Where `update-offsets` keeps a dump of each build it ports, for the next build's `--from`
+pub const DUMP_DIR: &str = r"H:\tomb-helper-dumps";
 const MAGIC: &[u8; 8] = b"THSNAP1\0";
 
 /// The reads made through a recording handle, and the image if it was dumped
@@ -168,7 +170,7 @@ fn read_bytes(input: &mut impl Read) -> io::Result<Vec<u8>> {
     Ok(bytes)
 }
 
-/// `snapshot [<file>]`: checks the running game while recording what's read, and saves that as a snapshot (in
+/// `check --snapshot [<file>]`: checks the running game while recording what's read, and saves that as a snapshot (in
 /// `SNAPSHOT_DIR` by default)
 pub fn take(out: Option<&str>, version: Option<String>) -> Result<()> {
     let (pid, process, base_address, details) = crate::chains::connect(version)?;
@@ -196,7 +198,7 @@ pub fn take(out: Option<&str>, version: Option<String>) -> Result<()> {
         Some(path) => PathBuf::from(path),
         None => {
             std::fs::create_dir_all(SNAPSHOT_DIR)?;
-            Path::new(SNAPSHOT_DIR).join(format!("{} {}.snap", file_name(&header), timestamp()))
+            Path::new(SNAPSHOT_DIR).join(format!("{} {}.snap", file_name(&header.game, &header.version), timestamp()))
         }
     };
     snapshot.save(&path, &header).with_context(|| format!("couldn't save {}", path.display()))?;
@@ -205,8 +207,9 @@ pub fn take(out: Option<&str>, version: Option<String>) -> Result<()> {
     Ok(())
 }
 
-fn file_name(header: &Header) -> String {
-    let name = format!("{} {}", header.game, header.version);
+/// A game version as a file name
+pub fn file_name(game: &str, version: &str) -> String {
+    let name = format!("{} {}", game, version);
     name.chars().map(|c| if c.is_alphanumeric() || c == '.' { c } else { '_' }).collect()
 }
 
@@ -234,7 +237,7 @@ pub fn replay(path: &Path, accept: bool) -> Result<Vec<String>> {
     Ok(changes)
 }
 
-/// `check-snapshots [<dir>]`: replays every snapshot in the directory (`SNAPSHOT_DIR` by default). `accept-snapshots`
+/// `check --replay [<dir>]`: replays every snapshot in the directory (`SNAPSHOT_DIR` by default). With `--accept`
 /// (`accept`) also saves what each reports now as what it should report, after a change that's meant to change it.
 pub fn check_all(dir: Option<&str>, accept: bool) -> Result<()> {
     let dir = dir.unwrap_or(SNAPSHOT_DIR);
@@ -266,7 +269,7 @@ pub fn check_all(dir: Option<&str>, accept: bool) -> Result<()> {
         return Ok(());
     }
     if changed > 0 {
-        bail!("{} of {} snapshots check differently (accept-snapshots saves them)", changed, paths.len());
+        bail!("{} of {} snapshots check differently (check --replay --accept saves them)", changed, paths.len());
     }
     println!("All {} snapshots check the same", paths.len());
     Ok(())
