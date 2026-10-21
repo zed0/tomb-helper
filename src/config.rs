@@ -9,28 +9,42 @@ use std::{env, fs};
 
 use crate::action::Action;
 
+fn exe_dir() -> PathBuf {
+    env::current_exe().unwrap().parent().unwrap().to_path_buf()
+}
+
 fn default_config_path() -> PathBuf {
-    env::current_exe()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .join("tomb-helper.json")
+    exe_dir().join("tomb-helper.json")
 }
 
 pub fn get_config() -> Config {
+    read_config(true)
+}
+
+fn read_config(announce: bool) -> Config {
     let config_path = default_config_path();
     let config;
     if config_path.is_file() {
-        println!("Found config at {:?}", config_path.as_os_str());
+        if announce {
+            println!("Found config at {:?}", config_path.as_os_str());
+        }
         config = fs::read_to_string(config_path).expect("Unable to read config file.");
     } else {
-        println!(
-            "No config found, using defaults. To use a different config create {:?}",
-            config_path
-        );
+        if announce {
+            println!(
+                "No config found, using defaults. To use a different config create {:?}",
+                config_path
+            );
+        }
         config = String::from("{}");
     }
     serde_json::from_str(&config).unwrap()
+}
+
+/// Where the tools keep dumps of game builds and snapshots: `data_dir` in the config, else `tomb-helper-data` next to
+/// the exe
+pub fn data_dir() -> PathBuf {
+    read_config(false).data_dir.map(PathBuf::from).unwrap_or_else(|| exe_dir().join("tomb-helper-data"))
 }
 
 fn default_hotkeys() -> Vec<Hotkey> {
@@ -290,4 +304,7 @@ pub struct Config {
     pub force_version: Option<String>,
     #[serde(default)]
     pub overlay: OverlayConfig,
+    // Where dumps and snapshots go (`data_dir()`)
+    #[serde(default)]
+    pub data_dir: Option<String>,
 }
