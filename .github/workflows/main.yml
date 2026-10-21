@@ -16,13 +16,11 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      # TR2013 is 32-bit, so its overlay is built for i686
+      # TR2013 is 32-bit, so its overlay is built for i686 too (build.rs), as tomb_helper_ui32.dll
       - name: Add the 32-bit target
         run: rustup target add i686-pc-windows-msvc
       - name: Build
         run: cargo build --verbose --release
-      - name: Build the 32-bit overlay
-        run: cargo build --verbose --release --lib --target i686-pc-windows-msvc
       # The overlay DLLs go next to the exe, which injects them; the zip has all three
       - name: Package
         shell: pwsh
@@ -30,7 +28,7 @@ jobs:
           New-Item -ItemType Directory -Force release | Out-Null
           Copy-Item target/release/tomb-helper.exe release/
           Copy-Item target/release/tomb_helper_ui.dll release/
-          Copy-Item target/i686-pc-windows-msvc/release/tomb_helper_ui.dll release/tomb_helper_ui32.dll
+          Copy-Item target/release/tomb_helper_ui32.dll release/
           Compress-Archive -Path release/tomb-helper.exe, release/tomb_helper_ui.dll, release/tomb_helper_ui32.dll -DestinationPath release/tomb-helper.zip
       - name: Upload binaries to release
         uses: svenstaro/upload-release-action@v2

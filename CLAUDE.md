@@ -9,7 +9,7 @@ User docs (hotkeys, config, cutscene timing generation) live in `README.md`.
 | Target | Entry | Output | Purpose |
 |---|---|---|---|
 | bin `tomb-helper` | `src/main.rs` | `tomb-helper.exe` | Main external process: finds game, runs handlers, listens to hotkeys |
-| lib `tomb_helper_ui` (cdylib) | `src/lib.rs` | `tomb_helper_ui.dll` | ImGui overlay injected *into* the game (DX12 via `hudhook`; built for `i686-pc-windows-msvc` it's DX11 for TR2013, copied next to the exe as `tomb_helper_ui32.dll`) |
+| lib `tomb_helper_ui` (cdylib) | `src/lib.rs` | `tomb_helper_ui.dll` | ImGui overlay injected *into* the game (DX12 via `hudhook`; built for `i686-pc-windows-msvc` it's DX11 for TR2013, `tomb_helper_ui32.dll`, which `build.rs` builds with a second cargo and copies next to the exe; `TOMB_HELPER_SKIP_TR2013` skips it) |
 
 - The bin and lib share `src/ui_ipc_data.rs` and `src/position.rs` by each declaring them with `mod` —
   they're compiled into both, so `UiData` must stay `#[repr(C)]` with identical layout on both sides, including in the
@@ -49,6 +49,7 @@ Each module's `//!` doc says what's in it and how it works; this is where to loo
 | File | What's there |
 |---|---|
 | `src/main.rs` | Entry: process polling, handler construction, hotkeys, the action/tick loop; hands CLI args to `cli` |
+| `build.rs` | Builds the 32-bit overlay with a second cargo (its own target folder) and copies it next to the exe |
 | `src/cli.rs` | The command line tools: `port`, `update-offsets`, `check` (`--fit`, `--snapshot`, `--replay`), `watch`, and the rest under the hidden `debug` |
 | `src/port.rs` | `port`: adding a patch or game step by step, with prompts (the other commands' steps in order) |
 | `src/config.rs` | `tomb-helper.json`: hotkeys, cutscene files, the overlay's starting settings |
