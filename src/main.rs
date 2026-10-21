@@ -175,6 +175,7 @@ fn create_handlers(
         &handle,
         &pid,
         &config.overlay,
+        &config.hotkeys,
     ) {
         Some(h) => handlers.push(Box::new(h)),
         None => {},

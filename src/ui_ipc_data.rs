@@ -1,6 +1,6 @@
-//! What the exe sends the overlay, in shared memory (`shared_memory`), which both build: `UiData` (the camera, object
-//! boxes, triggers, capsules, probes and collision triangles) and `UiSettings` (the overlay window's settings, which
-//! its checkboxes and the exe's hotkeys change). `UiData` is ~7MB, so it's double buffered and changed and read in
+//! What the exe sends the overlay, in shared memory (`shared_memory`), which both build: `UiData` (the camera, the keys
+//! bound to the window's controls (`HotkeyLabel`), object boxes, triggers, capsules, probes and collision triangles) and
+//! `UiSettings` (the overlay window's settings, which its checkboxes and the exe's hotkeys change). `UiData` is ~7MB, so it's double buffered and changed and read in
 //! place, with a sequence count per buffer (`UiDoubleBuffer`): the exe never waits, and the overlay keeps its last good
 //! copy when a read catches a write. The mapping is named after `UiDoubleBuffer`'s size, so one left from another
 //! layout is never opened. Nothing in it may be pointer sized, as the 32-bit overlay reads it too.
@@ -26,6 +26,28 @@ pub const REQUEST_RESTORE_POSITION: u32 = 2;
 pub const REQUEST_TOGGLE_FLYING: u32 = 4;
 pub const MAX_TRIGGER_LINES: usize = 16384;
 pub const MAX_TRIGGER_FACES: usize = 32768;
+// The keys bound to a control, e.g. "F5, NumPad5"
+pub const HOTKEY_LABEL_LENGTH: usize = 32;
+
+/// The overlay window's controls a hotkey can be bound to, which show its key (`UiData::hotkeys`, by this index)
+#[repr(u32)]
+#[derive(Copy, Clone, Debug)]
+pub enum HotkeyLabel {
+    Flight,
+    SavePosition,
+    RestorePosition,
+    Window,
+    Overlay,
+    Collision,
+    LaraCollision,
+    CoarseMeshes,
+    DetailedMeshes,
+    Interactables,
+    Triggers,
+    Npcs,
+}
+
+pub const HOTKEY_LABELS: usize = 12;
 
 #[repr(u32)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -223,6 +245,11 @@ pub fn text_bytes<const N: usize>(text: &str) -> [u8; N] {
     bytes
 }
 
+/// The keys bound to one of the window's controls, e.g. "F5", or "" if none
+pub fn hotkey(data: &UiData, control: HotkeyLabel) -> &str {
+    name_from(&data.hotkeys[control as usize])
+}
+
 fn name_from(bytes: &[u8]) -> &str {
     let end = bytes.iter().position(|&c| c == 0).unwrap_or(bytes.len());
     // A name cut short can end part way through a character
@@ -284,6 +311,8 @@ pub struct UiData {
     pub has_saved_position: bool,
     pub saved_position: Position,
     pub flying: bool,
+    // The keys bound to each of the window's controls (`HotkeyLabel`), nul padded, empty if none
+    pub hotkeys: [[u8; HOTKEY_LABEL_LENGTH]; HOTKEY_LABELS],
     // Where the collision meshes are drawn round (Lara, or where she's aiming), and whether she's aiming at it
     pub mesh_centre: Position,
     pub aiming: bool,
@@ -383,6 +412,8 @@ pub struct UiSettings {
     pub show_window: BoolSetting,
     // `REQUEST_*` bits for actions the window's buttons ask for, which the exe takes
     pub requests: AtomicU32,
+    // Everything drawn in the world (`ToggleOverlay`), whatever the settings below; the window stays
+    pub overlay: BoolSetting,
     // Everything to do with collision (Lara's and the meshes), whatever the settings below
     pub collision: BoolSetting,
     // Lara's capsules and probes

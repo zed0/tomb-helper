@@ -54,7 +54,7 @@ fn default_hotkeys() -> Vec<Hotkey> {
         Hotkey::new(KeyCode::F7, Action::RestorePosition {}),
         Hotkey::new(KeyCode::F8, Action::ResetSkipCutsceneTracker {}),
         Hotkey::new(KeyCode::F9, Action::ToggleUI {}),
-        Hotkey::new(KeyCode::F10, Action::ToggleCollision {}),
+        Hotkey::new(KeyCode::F10, Action::ToggleOverlay {}),
         Hotkey::new(KeyCode::F11, Action::ToggleSettingsWindow {}),
         Hotkey::new(KeyCode::Space, Action::SkipCutscene {}),
         Hotkey::new(KeyCode::W, Action::Forward { distance: 100.0 }),
