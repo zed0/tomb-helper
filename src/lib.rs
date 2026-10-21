@@ -14,7 +14,7 @@ use hudhook::*;
 use hudhook::hooks::dx11::ImguiDx11Hooks as GameHooks;
 #[cfg(not(target_arch = "x86"))]
 use hudhook::hooks::dx12::ImguiDx12Hooks as GameHooks;
-use crate::ui_ipc_data::{projection_from_lens, BoolSetting, BoxKind, Capsule, F32Setting, ObjectBox, ObjectCategory, Probe, SharedMemoryManager, SurfaceKind, Triangle, TriggerCategory, U32Setting, UiData, UiSettings, REQUEST_RESTORE_POSITION, REQUEST_STORE_POSITION, REQUEST_TOGGLE_FLYING, TRIGGER_ACTIONS};
+use crate::ui_ipc_data::{hotkey, projection_from_lens, BoolSetting, BoxKind, HotkeyLabel, Capsule, F32Setting, ObjectBox, ObjectCategory, Probe, SharedMemoryManager, SurfaceKind, Triangle, TriggerCategory, U32Setting, UiData, UiSettings, REQUEST_RESTORE_POSITION, REQUEST_STORE_POSITION, REQUEST_TOGGLE_FLYING, TRIGGER_ACTIONS};
 use crate::position::Position;
 use crate::tracing::{error, warn};
 
@@ -565,7 +565,7 @@ impl ImguiRenderLoop for TombHelperHud {
             let triangle_count = count(ui_data.triangle_count, ui_data.triangles.len());
             self.settings_window(ui, ui_data, settings, screen[0], object_count, triangle_count);
         }
-        if ui_data.camera_view_address != 0 {
+        if ui_data.camera_view_address != 0 && settings.overlay.get() {
             let projector = projector(ui_data, screen);
             let draw_list = ui.get_background_draw_list();
             draw_meshes(&draw_list, &projector, ui_data, settings, &mut self.occlusion);
@@ -789,7 +789,7 @@ impl TombHelperHud {
         object_count: usize,
         triangle_count: usize,
     ) {
-        ui.window("tomb-helper")
+        ui.window(format!("{}###tomb-helper", keyed("tomb-helper", hotkey(ui_data, HotkeyLabel::Window))))
             .position_pivot([1., 0.])
             .position([screen_width, 0.], Condition::Once)
             .size([400., 650.], Condition::Once)
@@ -801,20 +801,21 @@ impl TombHelperHud {
                     position_tools(ui, ui_data, settings);
                 }
                 if ui.collapsing_header("Overlay", TreeNodeFlags::DEFAULT_OPEN) {
+                    checkbox(ui, &keyed("On", hotkey(ui_data, HotkeyLabel::Overlay)), &settings.overlay);
                     ui.text(format!("{} objects", object_count));
-                    for (label, setting) in [
-                        ("Interactable objects", &settings.interactables),
-                        ("Characters and animals", &settings.npcs),
-                        ("Trigger volumes", &settings.triggers),
+                    for (label, control, setting) in [
+                        ("Interactable objects", HotkeyLabel::Interactables, &settings.interactables),
+                        ("Characters and animals", HotkeyLabel::Npcs, &settings.npcs),
+                        ("Trigger volumes", HotkeyLabel::Triggers, &settings.triggers),
                     ] {
-                        checkbox(ui, label, setting);
+                        checkbox(ui, &keyed(label, hotkey(ui_data, control)), setting);
                     }
                     if settings.triggers.get() {
                         ui.indent();
                         trigger_settings(ui, settings);
                         ui.unindent();
                     }
-                    checkbox(ui, "Collision meshes (F10)", &settings.collision);
+                    checkbox(ui, &keyed("Collision meshes", hotkey(ui_data, HotkeyLabel::Collision)), &settings.collision);
                     if settings.collision.get() {
                         ui.indent();
                         ui.text(format!(
@@ -826,6 +827,15 @@ impl TombHelperHud {
                     }
                 }
             });
+    }
+}
+
+// A control's label with the keys bound to it, e.g. "Flight mode (F5)"
+fn keyed(label: &str, keys: &str) -> String {
+    if keys.is_empty() {
+        label.to_string()
+    } else {
+        format!("{} ({})", label, keys)
     }
 }
 
@@ -841,18 +851,18 @@ fn position_tools(ui: &Ui, ui_data: &UiData, settings: &UiSettings) {
         settings.requests.fetch_or(bit, std::sync::atomic::Ordering::SeqCst);
     };
     let mut flying = ui_data.flying;
-    if ui.checkbox("Flight mode", &mut flying) {
+    if ui.checkbox(keyed("Flight mode", hotkey(ui_data, HotkeyLabel::Flight)), &mut flying) {
         request(REQUEST_TOGGLE_FLYING);
     }
     if ui.is_item_hovered() {
         ui.tooltip_text("Holds Lara where she is; the movement hotkeys (W/A/S/D, Space and C by default) move her");
     }
-    if ui.button("Save position") {
+    if ui.button(keyed("Save position", hotkey(ui_data, HotkeyLabel::SavePosition))) {
         request(REQUEST_STORE_POSITION);
     }
     if ui_data.has_saved_position {
         ui.same_line();
-        if ui.button("Restore position") {
+        if ui.button(keyed("Restore position", hotkey(ui_data, HotkeyLabel::RestorePosition))) {
             request(REQUEST_RESTORE_POSITION);
         }
         ui.text("Saved:");
@@ -904,10 +914,10 @@ fn trigger_settings(ui: &Ui, settings: &UiSettings) {
 
 // Lara's collision, and which of the level's collision meshes are drawn and how
 fn collision_settings(ui: &Ui, ui_data: &UiData, settings: &UiSettings) {
-    checkbox(ui, "Lara's collision", &settings.lara_collision);
-    checkbox(ui, "Movement collision (Lara's, 0x2)", &settings.coarse_meshes);
+    checkbox(ui, &keyed("Lara's collision", hotkey(ui_data, HotkeyLabel::LaraCollision)), &settings.lara_collision);
+    checkbox(ui, &keyed("Movement collision (Lara's, 0x2)", hotkey(ui_data, HotkeyLabel::CoarseMeshes)), &settings.coarse_meshes);
     slider(ui, "Radius##coarse", 0.0, MAX_MESH_RADIUS, "%.0f", &settings.coarse_radius);
-    checkbox(ui, "Other collision", &settings.detailed_meshes);
+    checkbox(ui, &keyed("Other collision", hotkey(ui_data, HotkeyLabel::DetailedMeshes)), &settings.detailed_meshes);
     slider(ui, "Radius##detailed", 0.0, MAX_MESH_RADIUS, "%.0f", &settings.detailed_radius);
     if settings.detailed_meshes.get() {
         // Which kinds of collision (bits of the meshes' filters), and how many meshes in the level have each; what

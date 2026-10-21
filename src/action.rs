@@ -47,6 +47,8 @@ pub enum Action {
     ToggleNpcs {},
     // Everything to do with collision at once
     ToggleCollision {},
+    // Everything the overlay draws in the world at once (its window stays)
+    ToggleOverlay {},
     // The overlay's settings window (what it draws stays)
     ToggleSettingsWindow {},
 }

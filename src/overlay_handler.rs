@@ -11,7 +11,7 @@ use crate::game_memory::Handle;
 use crate::collision::{self, AttachedProxy, CapsuleShape, ProxyCapsules};
 use crate::collision_mesh::CollisionMeshes;
 use crate::components::Components;
-use crate::config::OverlayConfig;
+use crate::config::{Hotkey, OverlayConfig};
 use crate::object_list::{self, Instance, ObjectList};
 use crate::position::Position;
 use crate::action::Action;
@@ -27,7 +27,7 @@ use process_memory::{Architecture, Pid, ProcessHandle};
 use crate::trigger::{self, Shape};
 use crate::trigger_scripts::{SetOffBy, TriggerScript, TriggerScripts};
 use crate::handler::HelperState;
-use crate::ui_ipc_data::{REQUEST_RESTORE_POSITION, REQUEST_STORE_POSITION, REQUEST_TOGGLE_FLYING, name_bytes, text_bytes, trigger_action_bit, trigger_action_mask, projection_from_lens, BoxKind, Capsule, Line, ObjectBox, ObjectCategory, SharedMemoryManager, TriggerCategory, TriggerFace, TriggerLabel, UiSettings, MAX_ATTACHED, MAX_OBJECTS, MAX_TRIANGLES, MAX_TRIGGERS};
+use crate::ui_ipc_data::{REQUEST_RESTORE_POSITION, REQUEST_STORE_POSITION, REQUEST_TOGGLE_FLYING, name_bytes, text_bytes, trigger_action_bit, trigger_action_mask, projection_from_lens, BoxKind, Capsule, HotkeyLabel, Line, ObjectBox, ObjectCategory, SharedMemoryManager, TriggerCategory, TriggerFace, TriggerLabel, UiSettings, HOTKEY_LABELS, HOTKEY_LABEL_LENGTH, MAX_ATTACHED, MAX_OBJECTS, MAX_TRIANGLES, MAX_TRIGGERS};
 
 // How far the camera's ray is followed to find where Lara's aiming
 const MAX_AIM_DISTANCE: f32 = 20000.0;
@@ -98,9 +98,10 @@ struct TickSettings {
 }
 
 impl TickSettings {
-    // "Collision meshes" turns all the collision off at once
+    // Hiding the overlay turns everything off at once, and "Collision meshes" all the collision
     fn read(settings: &UiSettings) -> TickSettings {
-        let collision = settings.collision.get();
+        let shown = settings.overlay.get();
+        let collision = shown && settings.collision.get();
         let meshes = MeshSettings {
             coarse: collision && settings.coarse_meshes.get(),
             detailed: collision && settings.detailed_meshes.get(),
@@ -108,10 +109,10 @@ impl TickSettings {
         };
         TickSettings {
             objects: ObjectSettings {
-                interactables: settings.interactables.get(),
-                triggers: settings.triggers.get(),
+                interactables: shown && settings.interactables.get(),
+                triggers: shown && settings.triggers.get(),
                 trigger_categories: settings.trigger_categories.get(),
-                npcs: settings.npcs.get(),
+                npcs: shown && settings.npcs.get(),
                 triggers_by_action: settings.triggers_by_action.get(),
                 trigger_actions: settings.trigger_actions.get(),
             },
@@ -179,6 +180,8 @@ pub struct OverlayHandler {
     lara: Option<(usize, Vec<CapsuleShape>)>,
     last_object_refresh: Option<time::Instant>,
     ui_memory_manager: SharedMemoryManager,
+    // The keys bound to the window's controls, for it to show
+    hotkeys: [[u8; HOTKEY_LABEL_LENGTH]; HOTKEY_LABELS],
 }
 
 impl OverlayHandler {
@@ -189,6 +192,7 @@ impl OverlayHandler {
         handle: &ProcessHandle,
         pid: &Pid,
         config: &OverlayConfig,
+        hotkeys: &[Hotkey],
     ) -> Option<OverlayHandler> {
         println!("Loading overlay handler...");
         let game = Game::new(Handle::Live(*pid, *handle), *base_addr, address_offsets);
@@ -235,6 +239,7 @@ impl OverlayHandler {
             proxy_last_touching: None,
             attached_last_touching: [None; MAX_ATTACHED],
             ui_memory_manager,
+            hotkeys: hotkey_labels(hotkeys),
         })
     }
 
@@ -533,8 +538,37 @@ fn trigger_label(name: &str, script: Option<&TriggerScript>) -> String {
     }
 }
 
+// The keys bound to each of the window's controls, e.g. "F5", or "F5, NumPad5"
+fn hotkey_labels(hotkeys: &[Hotkey]) -> [[u8; HOTKEY_LABEL_LENGTH]; HOTKEY_LABELS] {
+    let mut keys: Vec<Vec<String>> = vec![vec![]; HOTKEY_LABELS];
+    for hotkey in hotkeys {
+        let control = match hotkey.action {
+            Action::ToggleActive {} => HotkeyLabel::Flight,
+            Action::StorePosition {} => HotkeyLabel::SavePosition,
+            Action::RestorePosition {} => HotkeyLabel::RestorePosition,
+            Action::ToggleSettingsWindow {} => HotkeyLabel::Window,
+            Action::ToggleOverlay {} => HotkeyLabel::Overlay,
+            Action::ToggleCollision {} => HotkeyLabel::Collision,
+            Action::ToggleLaraCollision {} => HotkeyLabel::LaraCollision,
+            Action::ToggleCoarseCollision {} => HotkeyLabel::CoarseMeshes,
+            Action::ToggleDetailedCollision {} => HotkeyLabel::DetailedMeshes,
+            Action::ToggleInteractables {} => HotkeyLabel::Interactables,
+            Action::ToggleTriggers {} => HotkeyLabel::Triggers,
+            Action::ToggleNpcs {} => HotkeyLabel::Npcs,
+            _ => continue,
+        };
+        keys[control as usize].push(format!("{:?}", hotkey.key));
+    }
+    let mut labels = [[0; HOTKEY_LABEL_LENGTH]; HOTKEY_LABELS];
+    for (label, keys) in labels.iter_mut().zip(keys) {
+        *label = text_bytes(&keys.join(", "));
+    }
+    labels
+}
+
 // The window's settings start as the config says
 fn initialise_settings(settings: &UiSettings, config: &OverlayConfig) {
+    settings.overlay.set(true);
     settings.collision.set(config.collision);
     settings.lara_collision.set(true);
     settings.coarse_meshes.set(config.collision_meshes);
@@ -663,11 +697,13 @@ impl Handler for OverlayHandler {
         let camera_lens_address = address(AddressType::CameraLens)?;
         let kind_counts = self.collision_meshes.kind_counts;
         let helper_state = self.helper_state.clone();
+        let hotkeys = self.hotkeys;
         self.ui_memory_manager.get_mut().update(|val| {
             val.position_tools = helper_state.position_tools;
             val.has_saved_position = helper_state.saved_position.is_some();
             val.saved_position = helper_state.saved_position.unwrap_or_default();
             val.flying = helper_state.flying;
+            val.hotkeys = hotkeys;
             val.mesh_centre = mesh_centre;
             val.aiming = aim_point.is_some();
             val.position = position;
@@ -737,6 +773,7 @@ impl Handler for OverlayHandler {
             Action::ToggleTriggers {} => self.ui_memory_manager.get().settings.triggers.toggle(),
             Action::ToggleNpcs {} => self.ui_memory_manager.get().settings.npcs.toggle(),
             Action::ToggleCollision {} => self.ui_memory_manager.get().settings.collision.toggle(),
+            Action::ToggleOverlay {} => self.ui_memory_manager.get().settings.overlay.toggle(),
             Action::ToggleSettingsWindow {} => self.ui_memory_manager.get().settings.show_window.toggle(),
             _ => (),
         }
@@ -754,7 +791,7 @@ pub fn print_overlay_data(version: Option<String>, delay: u64) -> Result<()> {
     println!("Found {} {}", details.name, details.version.version);
     let config = crate::config::get_config();
     let mut handler =
-        OverlayHandler::new_overlay_handler(&details.address_offsets, &details.arch, &base_addr, &handle, &pid, &config.overlay)
+        OverlayHandler::new_overlay_handler(&details.address_offsets, &details.arch, &base_addr, &handle, &pid, &config.overlay, &config.hotkeys)
             .context("This version has no overlay")?;
     handler.ui_memory_manager.get().settings.collision.set(true);
     handler.active = true;
@@ -806,6 +843,27 @@ impl Drop for OverlayHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn label(labels: &[[u8; HOTKEY_LABEL_LENGTH]; HOTKEY_LABELS], control: HotkeyLabel) -> String {
+        let bytes = &labels[control as usize];
+        String::from_utf8_lossy(&bytes[..bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len())]).to_string()
+    }
+
+    #[test]
+    fn controls_show_their_keys() {
+        let config: crate::config::Config = serde_json::from_str("{}").unwrap();
+        let labels = hotkey_labels(&config.hotkeys);
+        assert_eq!(label(&labels, HotkeyLabel::Flight), "F5");
+        assert_eq!(label(&labels, HotkeyLabel::Overlay), "F10");
+        assert_eq!(label(&labels, HotkeyLabel::Window), "F11");
+        assert_eq!(label(&labels, HotkeyLabel::Collision), "");
+
+        let hotkeys: Vec<Hotkey> = serde_json::from_str(
+            r#"[{"key": "F5", "action": {"ToggleActive": {}}}, {"key": "NumPad5", "action": {"ToggleActive": {}}}]"#,
+        )
+        .unwrap();
+        assert_eq!(label(&hotkey_labels(&hotkeys), HotkeyLabel::Flight), "F5, NumPad5");
+    }
 
     #[test]
     fn labels_go_at_the_middle_of_the_top() {
