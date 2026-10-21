@@ -63,12 +63,15 @@ The default configuration is:
 		{"key": "C", "action": {"Down": {"distance": 100.0}}}
 	],
 	"force_version": null,
+	"debug_logging": false,
 	"cutscene_blacklist_file": "https://gist.githubusercontent.com/Atorizil/734a7649471f0fa0a2a9f92a167e294b/raw/Blacklist.json",
 	"cutscene_timing_file": "https://gist.githubusercontent.com/zed0/762a5790501af95189344834bc210616/raw/tomb-helper-timing-info.json",
 	"record_cutscene_timing": {"Off": {}},
 	"overlay": {"object_filters": [], "interactables": true, "npcs": true, "triggers": false, "collision": false, "object_radius": 5000.0, "object_box_size": 50.0, "lara_capsules": false, "lara_probes": true, "lara_proxy": true, "console": false}
 }
 ```
+
+`debug_logging` also prints the errors that are expected while the game loads a level or exits, such as pointer chains that don't resolve or Lara's position not being readable, which are hidden otherwise.
 
 ## Hotkeys
 

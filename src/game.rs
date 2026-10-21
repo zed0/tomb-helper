@@ -40,14 +40,14 @@ impl Game {
     /// The same, as an error if they don't resolve (or there are none)
     pub fn require(&self, address_type: AddressType) -> io::Result<usize> {
         self.resolve(address_type).ok_or_else(|| {
-            io::Error::new(io::ErrorKind::NotFound, format!("{:?}'s pointer chain doesn't resolve", address_type))
+            crate::game_memory::unreadable(format!("{:?}'s pointer chain doesn't resolve", address_type))
         })
     }
 
     /// `N` floats where the offsets for this lead, read at once (so e.g. a matrix isn't a mix of two game frames)
     pub fn read_floats<const N: usize>(&self, address_type: AddressType) -> io::Result<[f32; N]> {
         read_floats(self.handle, self.require(address_type)?)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, format!("{:?} couldn't be read", address_type)))
+            .ok_or_else(|| crate::game_memory::unreadable(format!("{:?} couldn't be read", address_type)))
     }
 
     /// Lara's position, from the position offsets

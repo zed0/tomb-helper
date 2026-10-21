@@ -255,7 +255,7 @@ pub fn read_attached_proxy(handle: Handle, proxy: usize) -> io::Result<(Capsule,
     let collides = match layout.flags {
         Some(offset) => {
             let flags = read_u32(handle, proxy + offset)
-                .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "unreadable proxy flags"))?;
+                .ok_or_else(|| crate::game_memory::unreadable("unreadable proxy flags"))?;
             flags as usize & layout.collides != 0
         }
         None => false,

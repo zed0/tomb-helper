@@ -104,7 +104,7 @@ impl CollisionMeshes {
                     let filter = pointer_at(&bytes, offset);
                     if !filters.contains_key(&filter) {
                         let kinds = read_u32(handle, filter + instance.filter_kinds)
-                            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "unreadable collision filter"))?;
+                            .ok_or_else(|| crate::game_memory::unreadable("unreadable collision filter"))?;
                         filters.insert(filter, kinds as usize);
                     }
                     filters[&filter]

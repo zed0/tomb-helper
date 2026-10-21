@@ -72,6 +72,38 @@ pub fn read_u32(handle: impl CopyAddress, address: usize) -> Option<u32> {
 }
 
 /// `N` floats
+/// Something in the game that couldn't be read, e.g. a pointer chain that doesn't resolve: expected while it loads a
+/// level or exits, so only shown when debugging (`is_unreadable`)
+#[derive(Debug)]
+pub struct Unreadable(pub String);
+
+impl std::fmt::Display for Unreadable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for Unreadable {}
+
+pub fn unreadable(message: impl Into<String>) -> io::Error {
+    io::Error::new(io::ErrorKind::Other, Unreadable(message.into()))
+}
+
+// Windows' errors for reading memory that isn't there: ERROR_INVALID_HANDLE (once the game has gone),
+// ERROR_PARTIAL_COPY, ERROR_INVALID_ADDRESS, ERROR_NOACCESS
+const UNREADABLE_OS_ERRORS: [i32; 4] = [6, 299, 487, 998];
+
+/// Whether an error is the game being unreadable (`Unreadable`, or Windows refusing a read), rather than something wrong
+pub fn is_unreadable(error: &(dyn std::error::Error + 'static)) -> bool {
+    match error.downcast_ref::<io::Error>() {
+        Some(e) => {
+            e.get_ref().map_or(false, |inner| inner.is::<Unreadable>())
+                || e.raw_os_error().map_or(false, |code| UNREADABLE_OS_ERRORS.contains(&code))
+        }
+        None => error.is::<Unreadable>(),
+    }
+}
+
 pub fn read_floats<const N: usize>(handle: impl CopyAddress, address: usize) -> Option<[f32; N]> {
     let mut bytes = vec![0u8; N * 4];
     handle.copy_address(address, &mut bytes).ok()?;
@@ -206,4 +238,21 @@ fn private_regions(handle: ProcessHandle) -> Vec<(usize, usize)> {
 #[cfg(not(windows))]
 fn private_regions(_handle: ProcessHandle) -> Vec<(usize, usize)> {
     vec![]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use process_memory::TryIntoProcessHandle;
+
+    #[test]
+    fn unreadable_game_errors_are_recognised() {
+        assert!(is_unreadable(&unreadable("CameraView's pointer chain doesn't resolve")));
+        assert!(!is_unreadable(&io::Error::new(io::ErrorKind::Other, "something else")));
+        assert!(!is_unreadable(&io::Error::from(io::ErrorKind::PermissionDenied)));
+        // A read where nothing's mapped, as when a chain leads nowhere during a loading screen
+        let handle = (std::process::id() as Pid).try_into_process_handle().unwrap();
+        let error = handle.copy_address(0x10, &mut [0u8; 8]).unwrap_err();
+        assert!(is_unreadable(&error), "{:?}", error);
+    }
 }

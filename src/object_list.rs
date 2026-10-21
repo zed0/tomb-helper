@@ -118,7 +118,7 @@ pub fn read_transform(handle: Handle, instance_address: usize) -> io::Result<[f3
         Some(offset) => {
             let transform = pointer_at(&instance, offset);
             if transform == 0 {
-                return Err(io::Error::new(io::ErrorKind::NotFound, "instance has no transform"));
+                return Err(crate::game_memory::unreadable("instance has no transform"));
             }
             handle.copy_address(transform + layout.transform.matrix, &mut axes)?;
         }
