@@ -36,6 +36,12 @@ enum Command {
         /// Don't save
         #[arg(long)]
         dry_run: bool,
+        /// A game that isn't in the offsets file yet, by its exe's name (e.g. Game.exe): start an entry for it
+        #[arg(long, value_name = "EXE")]
+        exe: Option<String>,
+        /// With --exe: the game's name (the exe's name by default)
+        #[arg(long, requires = "exe")]
+        name: Option<String>,
     },
     /// Test the overlay's offsets and layout against the running game (or fit the layout, or check snapshots)
     ///
@@ -177,8 +183,8 @@ enum Debug {
 /// Runs the command given on the command line (clap prints the help and exits for a bad one)
 pub fn run() -> Result<()> {
     match Cli::parse().command {
-        Command::UpdateOffsets { from, from_version, dry_run } => {
-            crate::update_offsets::update_offsets(from, from_version, dry_run)
+        Command::UpdateOffsets { from, from_version, dry_run, exe, name } => {
+            crate::update_offsets::update_offsets(from, from_version, dry_run, new_game(exe, name))
         }
         Command::Check { version, fit, from, save, snapshot, replay, accept } => {
             if let Some(groups) = fit {
@@ -231,6 +237,14 @@ fn run_debug(tool: Debug) -> Result<()> {
         Debug::CheckMatching { a, b, count } => crate::derive::check_matching(&a, &b, count),
         Debug::OverlayData { version, delay } => crate::overlay_handler::print_overlay_data(version, delay),
     }
+}
+
+fn new_game(exe: Option<String>, name: Option<String>) -> Option<crate::update_offsets::NewGame> {
+    exe.map(|executable| crate::update_offsets::NewGame {
+        name: name.unwrap_or_else(|| executable.trim_end_matches(".exe").to_string()),
+        executable,
+        version: None,
+    })
 }
 
 fn strs(strings: &[String]) -> Vec<&str> {

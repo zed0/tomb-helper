@@ -182,6 +182,13 @@ impl PeImage {
         panic!("tomb-helper is only supported on Windows");
     }
 
+    /// Whether a running process's main module (at `base_address`) is 64-bit, from its headers
+    pub fn process_is_64(handle: impl CopyAddress, base_address: usize) -> io::Result<bool> {
+        let mut headers = vec![0_u8; 0x1000];
+        handle.copy_address(base_address, &mut headers)?;
+        Ok(parse_headers(&headers)?.is_64)
+    }
+
     pub fn size_of_image(&self) -> usize {
         self.data.len()
     }
