@@ -48,7 +48,8 @@ Each module's `//!` doc says what's in it and how it works; this is where to loo
 | File | What's there |
 |---|---|
 | `src/main.rs` | Entry: process polling, handler construction, hotkeys, the action/tick loop; hands CLI args to `cli` |
-| `src/cli.rs` | The command line tools: `update-offsets`, `check` (`--fit`, `--snapshot`, `--replay`), `watch`, and the rest under the hidden `debug` |
+| `src/cli.rs` | The command line tools: `port`, `update-offsets`, `check` (`--fit`, `--snapshot`, `--replay`), `watch`, and the rest under the hidden `debug` |
+| `src/port.rs` | `port`: adding a patch or game step by step, with prompts (the other commands' steps in order) |
 | `src/config.rs` | `tomb-helper.json`: hotkeys, cutscene files, the overlay's starting settings |
 | `src/action.rs` | `Action`: everything a hotkey can be bound to |
 | `src/handler.rs` | The `Handler` trait every feature implements |
@@ -80,7 +81,7 @@ Each module's `//!` doc says what's in it and how it works; this is where to loo
 | `src/check.rs` | `check`: reads what the overlay does and checks it makes sense |
 | `src/snapshot.rs` | `check --snapshot`/`--replay [--accept]`: `check` without the game; where dumps are kept |
 | `src/discover.rs` | The overlay's statics through RTTI (for `update-offsets`; `debug discover`) |
-| `src/update_offsets.rs` | `update-offsets`: the one command for a new build |
+| `src/update_offsets.rs` | `update-offsets`: finding a build's offsets (`--exe` for a new game; derives from the last build's dump) |
 | `src/fit_layout.rs` | `check --fit`: searching for layout offsets `check` passes with |
 | `src/derive.rs` | Offsets for a new build by matching code references (`update-offsets --from`; `debug derive`, `trace`, `check-matching`) |
 | `src/normalised.rs`, `src/witness.rs` | Matching references between compilers, and witness instructions between builds |
@@ -93,14 +94,14 @@ Each module's `//!` doc says what's in it and how it works; this is where to loo
 ## Common changes
 
 - **After changing code that reads the game, or the offsets file:** `tomb-helper check --replay` (snapshots of each
-  game in `H:\tomb-helper-dumps\snapshots`, taken with `tomb-helper check --snapshot`) shows any game whose `check` report
+  game in the data folder's `snapshots`, taken with `tomb-helper check --snapshot`) shows any game whose `check` report
   changed.
 - **Differences between games:** put them in the `layout` (an `Option` that's `null` for what a game doesn't have),
   or detect them from the game itself (e.g. which RTTI classes its image has), rather than checking the pointer size
   or which game it is; read memory through `game_memory` and RTTI through `rtti`, which handle 32 and 64-bit.
-- **New patch / game:** `update-offsets` (plus `--from` the previous build's exe, or the dump it kept of it in
-  `H:\tomb-helper-dumps`, for the cutscene offsets), then fix that version's `layout` until `check` passes (`check --fit`
-  helps; README "Porting the overlay"). It saves to `tomb-helper-offsets.json` next to the exe, which hot reloads; copy
+- **New patch / game:** `tomb-helper port` (`--exe Game.exe` for a new game) does all of it with prompts: `update-offsets`
+  (deriving from the newest dump of the game's last build), `check --fit` if needed, a snapshot, `watch --save`. Fix what's
+  left of that version's `layout` by hand until `check` passes (README "Porting the overlay"). It saves to `tomb-helper-offsets.json` next to the exe, which hot reloads; copy
   the entry into `offsets.json` once it works. Use `image_size` when the version string is shared between stores. Only
   include the `AddressType`s you've found — handlers needing missing ones won't load. New fields read from the game go in
   `Layout` (with ROTTR's value as the default), not constants.
@@ -406,6 +407,8 @@ again (`derive` plus live checks).
 ## Gotchas
 
 - Windows-only; non-Windows stubs in `find_process.rs` just panic.
+- Dumps of each build and snapshots go in the data folder: `data_dir` in `tomb-helper.json`, else `tomb-helper-data`
+  next to the exe (`config::data_dir`). Here it's `H:/tomb-helper-dumps`, set in `target/release/tomb-helper.json`.
 - The investigation tools the notes above name (`chains`, `probe`, `derive`, `discover`, `trace`, `watch-raw`, `disasm`,
   `check-matching`, `overlay-data`, `dump`, `export-offsets`) are `tomb-helper debug <tool>`; `fit-layout` is `check
   --fit`, `snapshot`/`check-snapshots`/`accept-snapshots` are `check --snapshot`/`--replay`/`--replay --accept`, and

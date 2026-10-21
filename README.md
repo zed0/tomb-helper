@@ -184,6 +184,39 @@ Generating a cutscene timing file can be done using tomb-helper:
 - Change your `"cutscene_timing_file"` configuration option to the location you saved the created file
 - Change your `"record_cutscene_timing"` back to `{"Off": {}}`
 
+# Adding a new patch or game
+
+Start the game, then run:
+
+```
+tomb-helper port
+```
+
+and follow what it asks. It takes a few minutes:
+
+1. It asks you to load into a level and stand Lara somewhere ordinary, then finds the offsets for the build and saves them
+   to `tomb-helper-offsets.json` next to `tomb-helper.exe`, which tomb-helper uses from then on (and reloads while it's
+   running). For a patch it starts from the game's last build, using the dump it kept of it if there is one.
+2. If any of its checks fail, it searches for where the game's structures' fields moved to, shows what it would change,
+   and asks whether to save it.
+3. It takes a snapshot, for testing changes to tomb-helper against this build without the game.
+4. It records the game code that uses each value, so the next patch can be ported from this one: it tells you when to
+   switch back to the game (it pauses while alt-tabbed) and what to do there, e.g. start a cutscene, or move Lara around.
+   Any of these can be skipped.
+
+At the end it says whether everything works and what, if anything, it couldn't find. To share the new version, send its
+entry from `tomb-helper-offsets.json`, or add it to [`offsets.json`](./offsets.json) and make a pull request.
+
+For a game tomb-helper doesn't know yet, name its exe: `tomb-helper port --exe Game.exe`. It starts an entry for it with
+Rise of the Tomb Raider's layout, which other games on the same engine mostly share; what doesn't match has to be found
+by hand (see [Porting the overlay](#porting-the-overlay)).
+
+Dumps of each build and snapshots are kept in `tomb-helper-data` next to `tomb-helper.exe`, or wherever `data_dir` in the
+config says (e.g. `"data_dir": "D:/tomb-helper-data"`). They're tens of MB each.
+
+The sections below are the steps `port` runs, as separate commands (`update-offsets`, `check` and `watch`), and what to
+do when something isn't found.
+
 # Finding offsets for a new game version
 
 After a patch, launch the game, load into a level, and run:
@@ -198,7 +231,7 @@ It works out the offsets for the running build and saves them to the [offsets fi
 - Lara's position, by finding her instance (the one with a `PlayerComponent`) and the pointer chain the game's code uses to reach it
 - the ground probes, by their contents, and the version string
 
-Anything that was right for the previous build is kept as it was. The rest, like the cutscene offsets, needs the previous build to compare against: pass its exe, or a dump of it (see below), with `--from <exe or dump>`. Without it, they're kept in the entry as `unverified` (and so not used) for you to look at. `--dry-run` shows what it found without saving it. When it saves, it also keeps a dump of the build in `H:\tomb-helper-dumps` (unless there's one already), ready to pass as the next build's `--from`.
+Anything that was right for the previous build is kept as it was. The rest, like the cutscene offsets, needs the previous build to compare against: by default it uses the newest dump of another build of the game in the data folder (as `update-offsets` keeps), or pass the previous build's exe, or a dump of it, with `--from <exe or dump>`. Without it, they're kept in the entry as `unverified` (and so not used) for you to look at. `--dry-run` shows what it found without saving it. When it saves, it also keeps a dump of the build in the data folder (unless there's one already), for the next build.
 
 Porting needs three commands: `update-offsets`, `check` (see [Porting the overlay](#porting-the-overlay)) and `watch` (below). The rest, for investigating when something isn't found, are under `tomb-helper debug` (`tomb-helper debug --help` lists them); the ones below are what `update-offsets` does in parts.
 
@@ -239,7 +272,7 @@ For those, record which instructions access the value:
 tomb-helper watch CutscenePrompt CutsceneStatus CutsceneLength --delay 15 --seconds 8
 ```
 
-This attaches to the game as a debugger and puts hardware breakpoints on up to 4 values, then detaches. The game pauses when it isn't focused, so use `--delay` to give yourself time to switch back to it (and get the values in use, e.g. start a cutscene). It prints a `"witnesses"` block to add to that version's entry in the offsets file; `update-offsets --from` (and `debug derive`) matches those instructions in the new build to find where each field moved to (`witness` in its output).
+This attaches to the game as a debugger and puts hardware breakpoints on up to 4 values, then detaches. The game pauses when it isn't focused, so use `--delay` to give yourself time to switch back to it (and get the values in use, e.g. start a cutscene). It prints a `"witnesses"` block to add to that version's entry in the offsets file (`--save` adds it for you); `update-offsets --from` (and `debug derive`) matches those instructions in the new build to find where each field moved to (`witness` in its output).
 
 `tomb-helper debug trace <exe> <static address>` prints the chains the code accesses from every reference to a static address, which helps when investigating by hand.
 
@@ -269,5 +302,5 @@ Fields that moved can be found from the game's code, like the offsets with `witn
 
 ### Snapshots
 
-`tomb-helper check --snapshot` runs `check` on the running game while saving everything it reads, to `H:\tomb-helper-dumps\snapshots` (or a file you name), along with what `check` reported. `tomb-helper check --replay [<dir>]` checks every snapshot again without the games, and shows the lines of any report that have changed, so take one of each game (in an ordinary spot in a level) and run it after changing the code or the offsets file: `SAME` means it reads that game as before. A snapshot is the game's image (tens of MB) plus a few MB of what was read. `cargo test --release --bin tomb-helper -- --ignored snapshots` does the same as a test. After a change that's meant to change what `check` reports, `tomb-helper check --replay --accept` saves the new reports as what to expect.
+`tomb-helper check --snapshot` runs `check` on the running game while saving everything it reads, to the data folder's `snapshots` (or a file you name), along with what `check` reported. `tomb-helper check --replay [<dir>]` checks every snapshot again without the games, and shows the lines of any report that have changed, so take one of each game (in an ordinary spot in a level) and run it after changing the code or the offsets file: `SAME` means it reads that game as before. A snapshot is the game's image (tens of MB) plus a few MB of what was read. `cargo test --release --bin tomb-helper -- --ignored snapshots` does the same as a test. After a change that's meant to change what `check` reports, `tomb-helper check --replay --accept` saves the new reports as what to expect.
 
