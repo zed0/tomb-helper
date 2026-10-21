@@ -18,6 +18,16 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Add a new patch of a game, or a new game, step by step (start here)
+    ///
+    /// Asks for what it needs from the game as it goes: finds and saves the offsets, fixes the layout if checks fail,
+    /// takes a snapshot, and records what the next patch will need. The other commands are its steps, for doing them
+    /// separately.
+    Port {
+        /// A game that isn't in the offsets file yet, by its exe's name (e.g. Game.exe)
+        #[arg(long, value_name = "EXE")]
+        exe: Option<String>,
+    },
     /// Get the offsets for the running game, e.g. after a patch, and save them to the offsets file next to the exe
     ///
     /// Load into a level first. It finds the overlay's offsets, Lara's position, the ground probes and the version
@@ -183,11 +193,13 @@ enum Debug {
 /// Runs the command given on the command line (clap prints the help and exits for a bad one)
 pub fn run() -> Result<()> {
     match Cli::parse().command {
+        Command::Port { exe } => crate::port::port(exe),
         Command::UpdateOffsets { from, from_version, dry_run, exe, name } => {
             crate::update_offsets::update_offsets(from, from_version, dry_run, new_game(exe, name))
         }
         Command::Check { version, fit, from, save, snapshot, replay, accept } => {
             if let Some(groups) = fit {
+                let save = if save { crate::fit_layout::Save::Yes } else { crate::fit_layout::Save::No };
                 crate::fit_layout::fit_layout(&strs(&groups), from.as_deref(), version, save)
             } else if let Some(out) = snapshot {
                 crate::snapshot::take(out.as_deref(), version)
@@ -308,6 +320,14 @@ mod tests {
         assert!(parse(&["check", "--accept"]).is_err());
         assert!(parse(&["check", "--save"]).is_err());
         assert!(parse(&["check", "--from", "x.snap"]).is_err());
+    }
+
+    #[test]
+    fn port_and_new_games() {
+        assert!(matches!(parse(&["port"]), Ok(Command::Port { exe: None })));
+        assert!(matches!(parse(&["port", "--exe", "Game.exe"]), Ok(Command::Port { exe: Some(ref e) }) if e == "Game.exe"));
+        assert!(matches!(parse(&["update-offsets", "--exe", "Game.exe", "--name", "Game"]), Ok(Command::UpdateOffsets { .. })));
+        assert!(parse(&["update-offsets", "--name", "Game"]).is_err());
     }
 
     #[test]

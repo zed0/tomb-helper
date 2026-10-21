@@ -197,8 +197,17 @@ fn fit_group(target: &Target, layout: &Layout, group: &str, current: (i64, i64))
     best
 }
 
+/// Whether `fit_layout` saves what it finds
+#[derive(Clone, Copy, PartialEq)]
+pub enum Save {
+    No,
+    Yes,
+    // Asks first (`tomb-helper port`)
+    Ask,
+}
+
 /// `check --fit`: finds what to change in the version's layout for its checks to pass
-pub fn fit_layout(groups: &[&str], snapshot: Option<&str>, version: Option<String>, save: bool) -> Result<()> {
+pub fn fit_layout(groups: &[&str], snapshot: Option<&str>, version: Option<String>, save: Save) -> Result<()> {
     let target = match snapshot {
         Some(path) => {
             let snapshot = Snapshot::load(Path::new(path)).with_context(|| format!("couldn't load {}", path))?;
@@ -260,7 +269,7 @@ pub fn fit_layout(groups: &[&str], snapshot: Option<&str>, version: Option<Strin
     }
     let results = target.check(&layout);
     println!("{} checks pass with it", results.iter().filter(|r| r.1).count());
-    if save {
+    if save == Save::Yes || (save == Save::Ask && crate::port::confirm("Save these changes to the layout?")) {
         discover::save_entry(entry)?;
     }
     Ok(())
