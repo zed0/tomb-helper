@@ -8,14 +8,36 @@ Current features:
 - Save and restore positions
 - Move Lara directly
 - Skip cutscenes and record how much time was saved (in Shadow)
-- Supports Tomb Raider 2013, Rise of the Tomb Raider, and Shadow of the Tomb Raider
+- An overlay in the game showing Lara's collision, the level's collision, interactable objects, characters and trigger
+  volumes (in some versions, see [Supported versions](#supported-versions))
+- Supports Tomb Raider 2013, Rise of the Tomb Raider, and Shadow of the Tomb Raider, and new patches can be added with
+  `tomb-helper port` (see [Adding a new patch or game](#adding-a-new-patch-or-game))
 - Connects and disconnects from games as they are started and stopped: useful in case of crashes!
 
 # Usage
 
-- Download the [latest version](https://github.com/zed0/tomb-helper/releases/latest) of tomb-helper.exe
+- Download `tomb-helper.zip` from the [latest release](https://github.com/zed0/tomb-helper/releases/latest) and extract it
+  (it has the overlay's DLLs next to `tomb-helper.exe`; the exe on its own works too, without the overlay)
 - Open a `cmd` prompt in the directory it was downloaded to (you can type `cmd<enter>` in the Windows Explorer address bar)
 - Run `tomb-helper.exe`
+
+## Supported versions
+
+| Game | Version | Position tools | Cutscene skipping | Overlay |
+|---|---|---|---|---|
+| Tomb Raider 2013 | v1.01.748.0 | ✓ | | ✓ |
+| Tomb Raider 2013 | v1.1 build 838.0_32 | ✓ | | |
+| Tomb Raider 2013 | (Steam) v1.01.0.0 | ✓ | | ✓ |
+| Tomb Raider 2013 | (Epic Games) v1.01.0.0 | ✓ | | |
+| Rise of the Tomb Raider | v1.0 build 820.0_64, v1.0 build 1027.0_64 | ✓ | | |
+| Rise of the Tomb Raider | (Steam) v1.0 build 0.0_64 | ✓ | | ✓ |
+| Rise of the Tomb Raider | (Epic Games) v1.0 build 1027.0_64 | ✓ | | |
+| Shadow of the Tomb Raider | v1.0 build 234.1_64 | ✓ | ✓ | ✓ |
+| Shadow of the Tomb Raider | v1.0 build 298.0_64, 458.0_64, 489.0_64 | ✓ | ✓ | |
+| Shadow of the Tomb Raider | (Epic Games) v1.0 build 492.0_64 | ✓ | ✓ | |
+| Shadow of the Tomb Raider | (Steam) v1.0 build 492.0_64 | ✓ | ✓ | ✓ |
+
+The overlay can be added to the others with `tomb-helper port` (see [Adding a new patch or game](#adding-a-new-patch-or-game)).
 
 # Configuration
 
@@ -112,9 +134,8 @@ Each version looks like:
 ## Overlay
 
 The overlay (`ToggleUI`) draws a box around game objects near Lara, labelled with the object's name. Its window (top right; `ToggleSettingsWindow`, F11 by default, hides and shows it) has Lara's X/Y/Z position, the position tools (flight mode, and saving and restoring her position, as with the `ToggleActive`/`StorePosition`/`RestorePosition` hotkeys, with the saved position) and the overlay's settings, each in a section that can be collapsed.
-Drawing in the world needs the `CameraView` and `CameraLens` offsets, objects `InstanceArray` (and `PlayerProbes` for Lara's ground probes, `CollisionScene` for the level's collision), which only Rise of the Tomb Raider (Steam) and Shadow of the Tomb Raider 234.1 have so far; see [Porting the overlay](#porting-the-overlay). Without them only the window is shown. Tomb Raider 2013 (Steam) has the camera and objects: boxes round interactables (from the names of their components, e.g. `InteractComponent`), animals and characters (ones with a ragdoll), and anything matching `object_filters`, all the same size (no model bounds yet), and Lara's movement capsule, with while she aims the combat capsule behind her and the rod from her head forward that holds her off walls she faces (`lara_proxy`), the level's collision, Lara's ground probes, and triggers (sorted by what their scripts do, though not by who sets them off), but no model bounds or hit capsules yet.
-Tomb Raider 2013 is 32-bit and DirectX 11, so it needs a 32-bit build of the overlay: `cargo build --release --lib --target i686-pc-windows-msvc` (after `rustup target add i686-pc-windows-msvc`), then copy `target\i686-pc-windows-msvc
-elease	omb_helper_ui.dll` next to `tomb-helper.exe` as `tomb_helper_ui32.dll`.
+Drawing in the world needs the `CameraView` and `CameraLens` offsets, objects `InstanceArray` (and `PlayerProbes` for Lara's ground probes, `CollisionScene` for the level's collision), which the versions with the overlay in [Supported versions](#supported-versions) have; see [Porting the overlay](#porting-the-overlay) to add it to others. Without them only the window is shown. Tomb Raider 2013 has the camera and objects: boxes round interactables (from the names of their components, e.g. `InteractComponent`), animals and characters (ones with a ragdoll), and anything matching `object_filters`, all the same size (no model bounds yet), and Lara's movement capsule, with while she aims the combat capsule behind her and the rod from her head forward that holds her off walls she faces (`lara_proxy`), the level's collision, Lara's ground probes, and triggers (sorted by what their scripts do, though not by who sets them off), but no model bounds or hit capsules yet.
+Tomb Raider 2013 is 32-bit and DirectX 11, so it uses a 32-bit build of the overlay, `tomb_helper_ui32.dll`, which is in the release zip. To build it yourself: `rustup target add i686-pc-windows-msvc`, then `cargo build --release --lib --target i686-pc-windows-msvc`, and copy `target\i686-pc-windows-msvc\release\tomb_helper_ui.dll` next to `tomb-helper.exe` as `tomb_helper_ui32.dll`.
 - `interactables`: draw a box (teal) round each thing Lara can interact with, labelled with its name: campfires, pickups, documents, relics, caches, crates, tether points, throwables, plants and other things to gather crafting resources from, ... On by default
 - `npcs`: draw a box (red) round each character and animal (enemies, friendly characters, hares, squirrels, birds, ...), labelled with what it is (e.g. `rem_smg` or `trx_mountain_hare`). The box is round the capsules the game uses for hitting them, so it follows their pose. On by default
 - `triggers`: draw the trigger volumes, labelled with their names: boxes, spheres, planes and the polygon volumes the game streams the level with. Off by default

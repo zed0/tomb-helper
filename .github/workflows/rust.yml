@@ -12,8 +12,13 @@ jobs:
     runs-on: windows-latest
 
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
+    # TR2013 is 32-bit, so its overlay is built for i686
+    - name: Add the 32-bit target
+      run: rustup target add i686-pc-windows-msvc
     - name: Build
       run: cargo build --verbose
+    - name: Build the 32-bit overlay
+      run: cargo build --verbose --lib --target i686-pc-windows-msvc
     - name: Run tests
       run: cargo test --verbose

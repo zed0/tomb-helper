@@ -20,8 +20,9 @@ User docs (hotkeys, config, cutscene timing generation) live in `README.md`.
   at `H:\hudhook` tracks the same branch; to build against local changes there, add
   `--config "patch.crates-io.hudhook.path='H:/hudhook'"`. The patch's version must match the
   `hudhook = "..."` requirement or cargo silently ignores it and uses crates.io.
-- CI: `.github/workflows/rust.yml` (build + test on push/PR to master), `main.yml` (release on `v*` tag,
-  uploads only `tomb-helper.exe`). Versioning via `cargo-release`.
+- CI: `.github/workflows/rust.yml` (build, the 32-bit overlay too, and test on push/PR to master), `main.yml` (release
+  on `v*` tag: `tomb-helper.exe`, `tomb_helper_ui.dll`, `tomb_helper_ui32.dll`, and `tomb-helper.zip` of all three).
+  Versioning via `cargo-release`.
 - `.cargo/config.toml` holds the `crt-static` rustflags (static CRT so the exe/dll run standalone).
   It must stay under `.cargo/` — cargo ignores a `config.toml` at the repo root.
 
