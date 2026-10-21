@@ -24,8 +24,8 @@ use crate::object_list::ObjectList;
 use crate::offsets_file::{known_process_details, Hex, VersionEntry};
 use crate::pe_image::PeImage;
 use crate::position::Position;
-use crate::process_details::{AddressType, ProcessDetails};
-use process_memory::{CopyAddress, Pid, ProcessHandle, TryIntoProcessHandle};
+use crate::process_details::{AddressType, ProcessDetails, VersionIdentifier};
+use process_memory::{Architecture, CopyAddress, Pid, ProcessHandle, TryIntoProcessHandle};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::convert::TryInto;
 use std::path::PathBuf;
@@ -36,9 +36,20 @@ const MAX_PROBES: usize = 64;
 // Longest version string to read
 const VERSION_LENGTH: usize = 64;
 
-pub fn update_offsets(from: Option<String>, from_version: Option<String>, dry_run: bool) -> Result<()> {
+/// `update-offsets`: fails if the checks do
+pub fn update_offsets(from: Option<String>, from_version: Option<String>, dry_run: bool, new_game: Option<NewGame>) -> Result<()> {
+    run(from, from_version, dry_run, new_game.as_ref())?.1
+}
+
+/// Finds, saves (unless `dry_run`) and checks the running build's offsets: the entry, and how the checks went
+pub fn run(
+    from: Option<String>,
+    from_version: Option<String>,
+    dry_run: bool,
+    new_game: Option<&NewGame>,
+) -> Result<(ProcessDetails, Result<()>)> {
     let known = known_process_details();
-    let (pid, handle, base_address, existing, template) = attach(&known)?;
+    let (pid, handle, base_address, existing, template) = attach(&known, new_game)?;
     layout::set_for(&template);
     match &existing {
         Some(details) => println!("Found {} {}, updating its offsets", details.name, details.version.version),
@@ -205,10 +216,11 @@ pub fn update_offsets(from: Option<String>, from_version: Option<String>, dry_ru
     }
 
     let image_size = image.size_of_image();
-    let version_name = match (&existing, &version) {
-        (Some(details), _) => details.version.version.clone(),
-        (None, Some((_, string))) => format!("{} (image size {})", string, image_size),
-        (None, None) => format!("unknown build (image size {})", image_size),
+    let version_name = match (&existing, &version, new_game.and_then(|new| new.version.clone())) {
+        (Some(details), _, _) => details.version.version.clone(),
+        (None, _, Some(named)) => named,
+        (None, Some((_, string)), None) => format!("{} (image size {})", string, image_size),
+        (None, None, None) => format!("unknown build (image size {})", image_size),
     };
     let hex = |chain: &Vec<usize>| chain.iter().map(|o| Hex(*o)).collect::<Vec<Hex>>();
     let entry = VersionEntry {
@@ -254,7 +266,8 @@ pub fn update_offsets(from: Option<String>, from_version: Option<String>, dry_ru
         save_dump(&details, &image);
     }
     println!("\nChecking it...");
-    check::run(Handle::Live(pid, handle), base_address, details)
+    let checked = check::run(Handle::Live(pid, handle), base_address, details.clone());
+    Ok((details, checked))
 }
 
 /// Keeps the build's image for the next build's `--from` (a Denuvo build's exe can't be read from disk), unless there's
@@ -306,11 +319,25 @@ fn previous_build(template: &ProcessDetails, image: &PeImage) -> Option<(PeImage
     None
 }
 
-/// The running game (a known executable), its known details if this build is known, and the details to start from:
-/// the known ones, or the last known build of the same executable
+/// A game with no entry in the offsets file yet, to start one for
+pub struct NewGame {
+    pub executable: String,
+    pub name: String,
+    // What to call this build, if not after the image size
+    pub version: Option<String>,
+}
+
+/// The running game (a known executable, or `new_game`), its known details if this build is known, and the details to
+/// start from: the known ones, or the last known build of the same executable
 fn attach(
     known: &[ProcessDetails],
+    new_game: Option<&NewGame>,
 ) -> Result<(Pid, ProcessHandle, usize, Option<ProcessDetails>, ProcessDetails)> {
+    if let Some(new) = new_game {
+        if !known.iter().any(|d| d.executable_name.eq_ignore_ascii_case(&new.executable)) {
+            return attach_new(new);
+        }
+    }
     let mut executables: Vec<&str> = known.iter().map(|d| d.executable_name.as_str()).collect();
     executables.dedup();
     for executable in executables {
@@ -335,6 +362,29 @@ fn attach(
         return Ok((pid, handle, base_address, existing, template));
     }
     Err(anyhow!("None of the known games ({}) is running", known.iter().map(|d| d.executable_name.clone()).collect::<HashSet<_>>().into_iter().collect::<Vec<_>>().join(", ")))
+}
+
+/// A game tomb-helper doesn't know: an entry to start from with nothing but what its exe says (its pointer size and
+/// image size) and ROTTR's layout, which the same engine's other games mostly share
+fn attach_new(new: &NewGame) -> Result<(Pid, ProcessHandle, usize, Option<ProcessDetails>, ProcessDetails)> {
+    let pid = find_process::get_pid(&new.executable).with_context(|| format!("{} isn't running", new.executable))?;
+    let handle = pid.try_into_process_handle().with_context(|| format!("Could not open {}", new.executable))?;
+    let base_address = find_process::get_base_address(pid) as usize;
+    let image_size = find_process::get_image_size(handle, base_address)?;
+    let arch = if PeImage::process_is_64(handle, base_address)? { Architecture::Arch64Bit } else { Architecture::Arch32Bit };
+    println!("{} ({}) isn't a known game, so starting a new entry for it with ROTTR's layout", new.name, new.executable);
+    let template = ProcessDetails {
+        name: new.name.clone(),
+        executable_name: new.executable.clone(),
+        version: VersionIdentifier { version: format!("unknown build (image size {})", image_size), image_size: Some(image_size) },
+        arch,
+        address_offsets: Default::default(),
+        witnesses: Default::default(),
+        layout_witnesses: Default::default(),
+        unverified: Default::default(),
+        layout: Default::default(),
+    };
+    Ok((pid, handle, base_address, None, template))
 }
 
 /// Lara's instance (the one with a PlayerComponent) and where she is
