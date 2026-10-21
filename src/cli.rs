@@ -22,7 +22,7 @@ enum Command {
     ///
     /// Load into a level first. It finds the overlay's offsets, Lara's position, the ground probes and the version
     /// string on its own; for the rest (e.g. cutscenes) pass the previous build's exe or a dump of it with --from. Then
-    /// it checks them. It keeps a dump of the build in H:/tomb-helper-dumps, for the next build's --from. The offsets
+    /// it checks them. It keeps a dump of the build in the data folder (`data_dir` in tomb-helper.json, else tomb-helper-data next to the exe), for the next build's --from. The offsets
     /// file it writes (tomb-helper-offsets.json) can be edited, e.g. to fix the layout, and is reloaded while
     /// tomb-helper runs.
     UpdateOffsets {
@@ -54,10 +54,10 @@ enum Command {
         /// With --fit: write the result to the offsets file
         #[arg(long, requires = "fit")]
         save: bool,
-        /// Save what the check read as a snapshot (in H:/tomb-helper-dumps/snapshots, or to this file)
+        /// Save what the check read as a snapshot (in the data folder's snapshots, or to this file)
         #[arg(long, num_args = 0..=1, value_name = "FILE", conflicts_with = "replay")]
         snapshot: Option<Option<String>>,
-        /// Check every snapshot (in H:/tomb-helper-dumps/snapshots, or this folder) again, and show any whose results
+        /// Check every snapshot (in the data folder's snapshots, or this folder) again, and show any whose results
         /// have changed since it was taken
         #[arg(long, num_args = 0..=1, value_name = "DIR")]
         replay: Option<Option<String>>,

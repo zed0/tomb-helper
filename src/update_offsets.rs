@@ -28,7 +28,6 @@ use crate::process_details::{AddressType, ProcessDetails};
 use process_memory::{CopyAddress, Pid, ProcessHandle, TryIntoProcessHandle};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::convert::TryInto;
-use std::path::Path;
 
 // Probes starting this close to Lara are hers
 const PROBE_DISTANCE: f32 = 300.0;
@@ -255,11 +254,11 @@ pub fn update_offsets(from: Option<String>, from_version: Option<String>, dry_ru
 /// one already. Not being able to is only a warning.
 fn save_dump(details: &ProcessDetails, image: &PeImage) {
     let name = crate::snapshot::file_name(&details.name, &details.version.version);
-    let path = Path::new(crate::snapshot::DUMP_DIR).join(format!("{}.bin", name));
+    let path = crate::snapshot::dump_dir().join(format!("{}.bin", name));
     if path.exists() {
         return;
     }
-    match std::fs::create_dir_all(crate::snapshot::DUMP_DIR).and_then(|_| std::fs::write(&path, &image.data)) {
+    match std::fs::create_dir_all(crate::snapshot::dump_dir()).and_then(|_| std::fs::write(&path, &image.data)) {
         Ok(()) => println!("Saved a dump of this build for the next one's --from: {}", path.display()),
         Err(e) => eprintln!("Couldn't save a dump of this build to {}: {}", path.display(), e),
     }

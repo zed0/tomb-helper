@@ -2,7 +2,7 @@
 //! `check --snapshot [<file>]` runs `check` while recording every read (`game_memory::Handle::Recording`), then saves the main
 //! module, the memory read and the report `check` gives from the snapshot. `check --replay [<dir>]` checks each saved
 //! snapshot again and reports any whose results have changed, e.g. after a refactor or a change to the offsets file.
-//! Snapshots are big (the image is tens of MB), so they live in `SNAPSHOT_DIR`, not the repo.
+//! Snapshots are big (the image is tens of MB), so they live in the data folder (`snapshot_dir()`), not the repo.
 //!
 //! Scans through all of the game's memory (the trigger script scan) aren't kept, but what's read after them is, and
 //! the snapshot's regions are scanned instead when it's replayed, so they find the same things.
@@ -20,9 +20,15 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 /// Where snapshots are kept by default
-pub const SNAPSHOT_DIR: &str = r"H:\tomb-helper-dumps\snapshots";
+/// Where snapshots are kept by default
+pub fn snapshot_dir() -> PathBuf {
+    crate::config::data_dir().join("snapshots")
+}
+
 /// Where `update-offsets` keeps a dump of each build it ports, for the next build's `--from`
-pub const DUMP_DIR: &str = r"H:\tomb-helper-dumps";
+pub fn dump_dir() -> PathBuf {
+    crate::config::data_dir()
+}
 const MAGIC: &[u8; 8] = b"THSNAP1\0";
 
 /// The reads made through a recording handle, and the image if it was dumped
@@ -171,7 +177,7 @@ fn read_bytes(input: &mut impl Read) -> io::Result<Vec<u8>> {
 }
 
 /// `check --snapshot [<file>]`: checks the running game while recording what's read, and saves that as a snapshot (in
-/// `SNAPSHOT_DIR` by default)
+/// `snapshot_dir()` by default)
 pub fn take(out: Option<&str>, version: Option<String>) -> Result<()> {
     let (pid, process, base_address, details) = crate::chains::connect(version)?;
     println!("Found {} {}", details.name, details.version.version);
@@ -197,8 +203,8 @@ pub fn take(out: Option<&str>, version: Option<String>) -> Result<()> {
     let path = match out {
         Some(path) => PathBuf::from(path),
         None => {
-            std::fs::create_dir_all(SNAPSHOT_DIR)?;
-            Path::new(SNAPSHOT_DIR).join(format!("{} {}.snap", file_name(&header.game, &header.version), timestamp()))
+            std::fs::create_dir_all(snapshot_dir())?;
+            snapshot_dir().join(format!("{} {}.snap", file_name(&header.game, &header.version), timestamp()))
         }
     };
     snapshot.save(&path, &header).with_context(|| format!("couldn't save {}", path.display()))?;
@@ -237,11 +243,12 @@ pub fn replay(path: &Path, accept: bool) -> Result<Vec<String>> {
     Ok(changes)
 }
 
-/// `check --replay [<dir>]`: replays every snapshot in the directory (`SNAPSHOT_DIR` by default). With `--accept`
+/// `check --replay [<dir>]`: replays every snapshot in the directory (`snapshot_dir()` by default). With `--accept`
 /// (`accept`) also saves what each reports now as what it should report, after a change that's meant to change it.
 pub fn check_all(dir: Option<&str>, accept: bool) -> Result<()> {
-    let dir = dir.unwrap_or(SNAPSHOT_DIR);
-    let mut paths: Vec<PathBuf> = std::fs::read_dir(dir)
+    let dir = dir.map_or_else(snapshot_dir, PathBuf::from);
+    let dir = dir.display().to_string();
+    let mut paths: Vec<PathBuf> = std::fs::read_dir(&dir)
         .with_context(|| format!("couldn't read {}", dir))?
         .filter_map(|e| e.ok().map(|e| e.path()))
         .filter(|p| p.extension().map_or(false, |e| e == "snap"))
@@ -277,7 +284,7 @@ pub fn check_all(dir: Option<&str>, accept: bool) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    // Needs the snapshots in `SNAPSHOT_DIR`, and sets the layout and pointer size the other tests share, so it's run on
+    // Needs the snapshots in `snapshot_dir()`, and sets the layout and pointer size the other tests share, so it's run on
     // its own: `cargo test --release --bin tomb-helper -- --ignored snapshots`
     #[test]
     #[ignore]
