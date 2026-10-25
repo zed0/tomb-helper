@@ -158,6 +158,14 @@ enum Debug {
         #[arg(long)]
         field: Option<String>,
     },
+    /// Find the playing cutscene's id (`CutsceneId`) by the timing file's ids, starting from the version's chain for it
+    FindCutsceneId {
+        #[arg(long)]
+        version: Option<String>,
+        /// Keep it in the version's entry in the offsets file next to the exe
+        #[arg(long)]
+        save: bool,
+    },
     /// Show where a build's witnesses for a value (or group.field) match in another build, with the code around both
     MatchWitnesses {
         from: String,
@@ -262,6 +270,7 @@ fn run_debug(tool: Debug) -> Result<()> {
         Debug::Probe { version, watch } => crate::chains::probe(version, watch),
         Debug::Trace { image, address } => crate::derive::trace(&image, &address),
         Debug::ClassFields { image, class, field } => crate::class_fields::print_class_fields(&image, &class, field.as_deref()),
+        Debug::FindCutsceneId { version, save } => crate::cutscene_id::find_cutscene_id(version, save),
         Debug::MatchWitnesses { from, to, name, from_version } => {
             crate::witness::print_matches(&from, &to, &name, from_version.as_deref())
         }

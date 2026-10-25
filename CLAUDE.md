@@ -83,6 +83,7 @@ Each module's `//!` doc says what's in it and how it works; this is where to loo
 | `src/targets.rs` | What tomb-helper writes: chains built from the structures (or the offsets file's), checked before writing |
 | `src/tracked_memory.rs`, `src/tracked_position.rs` | Cached values at pointer chains, for the position and cutscene handlers |
 | `src/cutscene_handler.rs` | Cutscene skipping (SOTTR) and time saved |
+| `src/cutscene_id.rs` | Finding `CutsceneId` while a cutscene plays, by the timing file's ids (`debug find-cutscene-id`, run by `port`) |
 | `src/cutscene_timing_info.rs`, `src/cutscene_timing_generator_handler.rs` | The cutscene timing file, and recording it with LiveSplit |
 | `src/readable_from_path.rs` | JSON from a path or URL |
 | `src/check.rs` | `check`: reads what the overlay does and checks it makes sense |
@@ -116,6 +117,11 @@ Each module's `//!` doc says what's in it and how it works; this is where to loo
   uses them (from the previous build, or for a new game the other games' dumps, which have to agree), after the layout
   witnesses. Those are labelled "its class's code" in its summary; they've been right but for one in 11 checked, so
   `check` has to pass before they're trusted. `debug class-layout <from> <to>` shows how well it does between two dumps.
+  Witnesses only count where their displacement is the value's own offset (SOTTR's `CutsceneId` is used through a
+  pointer to a record, `[r14+4]`, so its witnesses can't say where the record went; `debug match-witnesses` shows what
+  they matched). Its chain is then held back as unverified, and `port` finds it while a cutscene plays: the cutscene's
+  length picks its timing file entry, whose ids are the same in every build (`cutscene_id`). Deriving 234.1 and 492
+  from each other gets everything else right (`player.instance` comes from `XPosition`'s chain).
 - **Add a new memory value:** add an `AddressType` variant, add offsets per version in `offsets.json`, read it with
   `Game` (`read_floats`, `require` and `game_memory`'s readers), or `TrackedMemory` in a handler that writes it.
 - **Writing a value:** anything a handler writes goes in `targets::WRITTEN`, with a check in `targets::verify` (what it

@@ -27,6 +27,7 @@ use signal_hook::flag;
 mod action;
 mod config;
 mod cutscene_handler;
+mod cutscene_id;
 mod cutscene_timing_generator_handler;
 mod chains;
 mod check;

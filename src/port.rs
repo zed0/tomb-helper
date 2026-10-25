@@ -1,15 +1,16 @@
 //! `tomb-helper port`: adding a new patch of a game, or a new game, step by step, asking for what it needs from the
 //! game along the way. It runs the same steps as the separate commands: `update-offsets` (with the newest dump of the
-//! game's last build as `--from`), `check --fit` if any checks fail, `check --snapshot`, and `watch --save` for the
-//! values and layout fields the game's other builds have witnesses for (or, for a new game, a few layout fields), so
-//! the next patch can be ported from this one.
+//! game's last build as `--from`), `check --fit` if any checks fail, `check --snapshot`, `debug find-cutscene-id --save`
+//! if the cutscene's id couldn't be derived for sure, and `watch --save` for the values and layout fields the game's
+//! other builds have witnesses for (or, for a new game, a few layout fields), so the next patch can be ported from this
+//! one.
 
 use anyhow::Result;
 use std::collections::BTreeSet;
 use std::io::{self, BufRead, Write};
 
 use crate::offsets_file::{known_process_details, OffsetsSource};
-use crate::process_details::ProcessDetails;
+use crate::process_details::{AddressType, ProcessDetails};
 use crate::update_offsets::NewGame;
 
 // Recording witnesses: time to switch back to the game (it pauses while alt-tabbed), and how long to record
@@ -65,6 +66,19 @@ pub fn port(exe: Option<String>) -> Result<()> {
               the game (`tomb-helper check --replay`).");
     report(crate::snapshot::take(None, None));
 
+    // Its witnesses go through a pointer to the record holding it, so it often can't be derived for sure
+    let mut details = details;
+    if details.unverified.contains_key(&AddressType::CutsceneId) {
+        step("Finding the cutscene's id");
+        if wait_or_skip(
+            "Where the cutscene's id is couldn't be worked out for sure, so it's found from the cutscene timing file while one \
+             plays. Start a cutscene (the game can be paused, and switching back here is fine), then press Enter.",
+        ) {
+            report(crate::cutscene_id::find_cutscene_id(None, true));
+            details = refreshed(&details);
+        }
+    }
+
     step("Recording what the next patch needs");
     let (values, fields) = witnessed(&details);
     if values.is_empty() {
@@ -112,6 +126,14 @@ pub fn port(exe: Option<String>) -> Result<()> {
     println!("A dump of this build is kept in {} for porting the next one.", crate::snapshot::dump_dir().display());
     println!("To share it, send that file's entry for {}, or add it to offsets.json in tomb-helper's source.", details.version.version);
     Ok(())
+}
+
+// The version's entry as it's been saved since
+fn refreshed(details: &ProcessDetails) -> ProcessDetails {
+    known_process_details()
+        .into_iter()
+        .find(|d| d.executable_name == details.executable_name && d.version.version == details.version.version)
+        .unwrap_or_else(|| details.clone())
 }
 
 fn is_known(executable: &str) -> bool {
