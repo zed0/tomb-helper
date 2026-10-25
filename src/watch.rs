@@ -35,6 +35,7 @@ use winapi::um::winnt::{
     CONTEXT, CONTEXT_DEBUG_REGISTERS, CONTEXT_FULL, DBG_CONTINUE, DBG_EXCEPTION_NOT_HANDLED, HANDLE, WOW64_CONTEXT,
     WOW64_CONTEXT_DEBUG_REGISTERS, WOW64_CONTEXT_FULL,
 };
+use winapi::um::winuser::{GetForegroundWindow, GetWindowThreadProcessId};
 use winapi::um::wow64apiset::IsWow64Process;
 
 // EFLAGS.RF
@@ -440,8 +441,13 @@ pub fn record(
     // Once the time is up, clear the breakpoints and keep handling events until they stop,
     // since detaching with a breakpoint event still pending would crash the game
     let mut quiet_since: Option<Instant> = None;
+    // How often the game was in front while watching, as it pauses (and nothing's accessed) otherwise
+    let mut samples = Samples::default();
 
     loop {
+        if !detaching {
+            samples.sample(pid);
+        }
         if !detaching && Instant::now() >= deadline {
             detaching = true;
             for thread in threads.values() {
@@ -572,8 +578,52 @@ pub fn record(
         armed,
         traps
     );
+    if samples.in_front() < MIN_IN_FRONT {
+        println!(
+            "The game was only in front for {:.0}% of the time, and it pauses otherwise, so this may have missed things: \
+             switch to it during the --delay\n",
+            samples.in_front() * 100.0
+        );
+    }
 
     Ok(hits)
+}
+
+// Below this share of the time in front, the game was paused for much of a watch
+const MIN_IN_FRONT: f64 = 0.8;
+// How often to check which window is in front
+const SAMPLE_INTERVAL: Duration = Duration::from_millis(100);
+
+// Whether the game's window was in front, sampled every `SAMPLE_INTERVAL`
+#[derive(Default)]
+struct Samples {
+    last: Option<Instant>,
+    taken: u32,
+    in_front: u32,
+}
+
+impl Samples {
+    fn sample(&mut self, pid: Pid) {
+        if self.last.map_or(false, |t| t.elapsed() < SAMPLE_INTERVAL) {
+            return;
+        }
+        self.last = Some(Instant::now());
+        self.taken += 1;
+        let mut owner = 0;
+        unsafe { GetWindowThreadProcessId(GetForegroundWindow(), &mut owner) };
+        if owner == pid {
+            self.in_front += 1;
+        }
+    }
+
+    // The share of the samples the game was in front for (all of it if none were taken)
+    fn in_front(&self) -> f64 {
+        if self.taken == 0 {
+            1.0
+        } else {
+            self.in_front as f64 / self.taken as f64
+        }
+    }
 }
 
 fn parse_hex(text: &str) -> Result<usize> {
