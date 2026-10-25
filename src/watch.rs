@@ -774,6 +774,13 @@ pub fn watch(names: &[&str], version: Option<String>, seconds: u64, delay: u64, 
             .collect();
         best.sort_by_key(|(rva, hit)| (hit.displacement != last_offset, std::cmp::Reverse(hit.count), **rva));
         best.truncate(MAX_WITNESSES);
+        if !best.is_empty() && best.iter().all(|(_, hit)| hit.displacement != last_offset) {
+            println!(
+                "    None of these use its offset ({:#X}), so they can't show where it goes in another build: \
+                 deriving it won't use them",
+                last_offset
+            );
+        }
         if !best.is_empty() {
             witnesses.insert(*address_type, best.iter().map(|(rva, _)| Hex(**rva)).collect());
         }

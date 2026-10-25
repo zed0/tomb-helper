@@ -158,6 +158,14 @@ enum Debug {
         #[arg(long)]
         field: Option<String>,
     },
+    /// Show where a build's witnesses for a value (or group.field) match in another build, with the code around both
+    MatchWitnesses {
+        from: String,
+        to: String,
+        name: String,
+        #[arg(long)]
+        from_version: Option<String>,
+    },
     /// Work out the layout of one build or game (exe or dump) from another's, by how each class's code uses its fields
     ClassLayout {
         from: String,
@@ -254,6 +262,9 @@ fn run_debug(tool: Debug) -> Result<()> {
         Debug::Probe { version, watch } => crate::chains::probe(version, watch),
         Debug::Trace { image, address } => crate::derive::trace(&image, &address),
         Debug::ClassFields { image, class, field } => crate::class_fields::print_class_fields(&image, &class, field.as_deref()),
+        Debug::MatchWitnesses { from, to, name, from_version } => {
+            crate::witness::print_matches(&from, &to, &name, from_version.as_deref())
+        }
         Debug::ClassLayout { from, to, from_version, to_version } => {
             crate::class_fields::print_class_layout(&from, &to, from_version.as_deref(), to_version.as_deref())
         }

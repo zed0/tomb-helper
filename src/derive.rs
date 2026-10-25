@@ -800,7 +800,10 @@ pub fn derive_lines(
     let mut entries: Vec<(&AddressType, &Vec<usize>)> = details.address_offsets.iter().collect();
     entries.sort_by_key(|(address_type, _)| **address_type);
 
-    // Each witness that matches votes for the last offset moving by as much as its displacement did
+    // Each witness that matches votes for the last offset moving by as much as its displacement did. Only those whose
+    // displacement is the last offset say where it went: others reach the value through a pointer into the middle of
+    // its object (SOTTR's cutscene id is used through a pointer to a record holding it, `[r14+4]`, which says nothing
+    // about where that record is)
     let mut witness_votes: HashMap<AddressType, WitnessVote> = HashMap::new();
     for (address_type, rvas) in &details.witnesses {
         let last = match details.address_offsets.get(address_type) {
@@ -809,11 +812,21 @@ pub fn derive_lines(
         };
         let matches = witness::match_witnesses(old, new, rvas);
         let mut votes: HashMap<i64, f64> = HashMap::new();
+        let mut elsewhere = 0;
         for m in matches.iter().flatten() {
+            if m.old_displacement != last {
+                elsewhere += 1;
+                continue;
+            }
             *votes.entry(last + m.new_displacement - m.old_displacement).or_default() += m.score;
         }
+        let ignored = if elsewhere > 0 {
+            format!(" ({} ignored, as they don't use its offset, {:#X})", elsewhere, last)
+        } else {
+            String::new()
+        };
         println!(
-            "  {:?}: {}/{} witnesses matched -> {}",
+            "  {:?}: {}/{} witnesses matched -> {}{}",
             address_type,
             matches.iter().flatten().count(),
             rvas.len(),
@@ -821,7 +834,8 @@ pub fn derive_lines(
                 .iter()
                 .map(|(o, v)| format!("{:#X} ({:.1})", o, v))
                 .collect::<Vec<_>>()
-                .join(", ")
+                .join(", "),
+            ignored
         );
         witness_votes.insert(
             *address_type,

@@ -2,7 +2,7 @@
 //! from one build into another, to see how the field offset they use has changed.
 
 use crate::pe_image::PeImage;
-use iced_x86::{Decoder, DecoderOptions};
+use iced_x86::{Decoder, DecoderOptions, Formatter, IntelFormatter};
 use rayon::prelude::*;
 use std::collections::HashMap;
 
@@ -66,6 +66,8 @@ pub struct Matched {
     pub old_displacement: i64,
     pub new_displacement: i64,
     pub score: f64,
+    // RVA of the instruction it matched in the new build
+    pub new_instruction: usize,
 }
 
 /// Matches each witness instruction (by RVA in `old`) into `new`, returning one result per witness
@@ -109,16 +111,155 @@ pub fn match_witnesses(old: &PeImage, new: &PeImage, witnesses: &[usize]) -> Vec
             }
             // Find the start of the matched instruction: the one whose displacement is at `best.1`
             let q = best.1;
-            let new_displacement = (q.saturating_sub(14)..q)
-                .filter_map(|start| displacement_at(new, start))
-                .find(|n| n.position == q && n.size == d.size)?;
+            let (new_instruction, new_displacement) = (q.saturating_sub(14)..q)
+                .filter_map(|start| displacement_at(new, start).map(|n| (start, n)))
+                .find(|(_, n)| n.position == q && n.size == d.size)?;
             Some(Matched {
                 old_displacement: d.value,
                 new_displacement: new_displacement.value,
                 score: fraction(best.0),
+                new_instruction,
             })
         })
         .collect()
+}
+
+// Instructions shown around a witness by `print_matches`, decoded from at most this far before it
+const CONTEXT_BEFORE: usize = 24;
+const CONTEXT_INSTRUCTIONS: usize = 7;
+
+// The instructions around the one at `rva`, which is marked
+fn context(image: &PeImage, rva: usize) -> Vec<String> {
+    let ip = image.image_base + rva as u64;
+    let decode = |start: usize, length: usize| {
+        let data = &image.data[start..image.data.len().min(start + length)];
+        Decoder::with_ip(image.bitness(), data, image.image_base + start as u64, DecoderOptions::NONE).into_iter().collect::<Vec<_>>()
+    };
+    // From the earliest start that decodes into the instruction at `rva`
+    let start = (rva.saturating_sub(CONTEXT_BEFORE)..=rva)
+        .find(|&start| decode(start, rva - start + 16).iter().any(|i| i.ip() == ip))
+        .unwrap_or(rva);
+    let instructions = decode(start, 0x80);
+    let at = instructions.iter().position(|i| i.ip() == ip).unwrap_or(0);
+    let mut formatter = IntelFormatter::new();
+    instructions
+        .iter()
+        .skip(at.saturating_sub(CONTEXT_INSTRUCTIONS / 2))
+        .take(CONTEXT_INSTRUCTIONS)
+        .map(|i| {
+            let mut text = String::new();
+            formatter.format(i, &mut text);
+            let mark = if i.ip() == ip { ">" } else { " " };
+            format!("{} +{:X}  {}", mark, i.ip() - image.image_base, text)
+        })
+        .collect()
+}
+
+// How far before an instruction to look for where its base register was set
+const BASE_SEARCH: usize = 0x400;
+
+// Where the base register of the witness at `rva` was last set before it, as an offset from another register (`lea
+// r14, [rcx+0x570]`, or `add r14, 0x570` after `mov r14, rcx`): the instruction's RVA and the offset. Else what set it
+// some other way (e.g. loading it as a pointer, when the witness says nothing about where the field is in the object
+// the chain reaches), or that nothing did as far back as it looks. Only follows the code in a straight line, so a branch
+// in between can make it wrong.
+fn base_setter(image: &PeImage, rva: usize) -> Result<(usize, i64), String> {
+    let found = base_search(image, rva);
+    found.ok_or_else(|| {
+        let ip = image.image_base + rva as u64;
+        let decode = |start: usize| {
+            let data = &image.data[start..image.data.len().min(rva + 16)];
+            Decoder::with_ip(image.bitness(), data, image.image_base + start as u64, DecoderOptions::NONE).into_iter().collect::<Vec<_>>()
+        };
+        let instructions = (rva.saturating_sub(BASE_SEARCH)..=rva).map(decode).find(|d| d.iter().any(|i| i.ip() == ip));
+        let instructions = match instructions {
+            Some(i) => i,
+            None => return "it couldn't be decoded".to_string(),
+        };
+        let at = instructions.iter().position(|i| i.ip() == ip).unwrap_or(0);
+        let base = instructions[at].memory_base().full_register();
+        let mut formatter = IntelFormatter::new();
+        match instructions[..at].iter().rev().find(|i| {
+            i.op_count() > 0 && i.op0_kind() == iced_x86::OpKind::Register && i.op0_register().full_register() == base
+        }) {
+            Some(i) => {
+                let mut text = String::new();
+                formatter.format(i, &mut text);
+                format!("{:?} was set by +{:X} {}", base, i.ip() - image.image_base, text)
+            }
+            None => format!("{:?} isn't set in the {:#X} bytes before it", base, BASE_SEARCH),
+        }
+    })
+}
+
+fn base_search(image: &PeImage, rva: usize) -> Option<(usize, i64)> {
+    let ip = image.image_base + rva as u64;
+    let decode = |start: usize| {
+        let data = &image.data[start..image.data.len().min(rva + 16)];
+        Decoder::with_ip(image.bitness(), data, image.image_base + start as u64, DecoderOptions::NONE).into_iter().collect::<Vec<_>>()
+    };
+    // The earliest start that decodes into the instruction at `rva` (decoding resynchronises within a few instructions)
+    let instructions = (rva.saturating_sub(BASE_SEARCH)..=rva).map(decode).find(|d| d.iter().any(|i| i.ip() == ip))?;
+    let at = instructions.iter().position(|i| i.ip() == ip)?;
+    let base = instructions[at].memory_base().full_register();
+    let mut offset = 0i64;
+    for instruction in instructions[..at].iter().rev() {
+        if instruction.op_count() == 0 || instruction.op0_kind() != iced_x86::OpKind::Register {
+            continue;
+        }
+        if instruction.op0_register().full_register() != base {
+            continue;
+        }
+        let displacement = if image.is_64 { instruction.memory_displacement64() as i64 } else { instruction.memory_displacement32() as i32 as i64 };
+        match instruction.mnemonic() {
+            iced_x86::Mnemonic::Lea if instruction.memory_index() == iced_x86::Register::None => {
+                return Some((instruction.ip() as usize - image.image_base as usize, offset + displacement));
+            }
+            iced_x86::Mnemonic::Add if instruction.op1_kind() != iced_x86::OpKind::Register => {
+                offset += instruction.immediate(1) as i64;
+            }
+            // Set some other way, so the offset it was given isn't known
+            _ => return None,
+        }
+    }
+    None
+}
+
+/// `debug match-witnesses <from> <to> <value or group.field>`: where each of `from`'s witnesses for it matched in `to`,
+/// with the code around both
+pub fn print_matches(from: &str, to: &str, name: &str, from_version: Option<&str>) -> anyhow::Result<()> {
+    use anyhow::Context;
+    let (old, new) = (crate::derive::load(from)?, crate::derive::load(to)?);
+    let details = crate::derive::reference_details(&old, from_version)?;
+    let witnesses = if name.contains('.') {
+        details.layout_witnesses.get(name).cloned()
+    } else {
+        details.witnesses.iter().find(|(t, _)| format!("{:?}", t) == name).map(|(_, w)| w.clone())
+    }
+    .with_context(|| format!("{} {} has no witnesses for {}", details.name, details.version.version, name))?;
+    let base = |image: &PeImage, rva: usize| match base_setter(image, rva) {
+        Ok((at, offset)) => format!("its base register was set at +{:X}, {:#X} into what it points to", at, offset),
+        Err(why) => why,
+    };
+    for (rva, matched) in witnesses.iter().zip(match_witnesses(&old, &new, &witnesses)) {
+        println!("\nwitness +{:X} ({}):", rva, base(&old, *rva));
+        context(&old, *rva).iter().for_each(|line| println!("    {}", line));
+        match matched {
+            Some(m) => {
+                println!(
+                    "  matched +{:X} ({:.0}% of the bytes around it), {:#X} -> {:#X} ({}):",
+                    m.new_instruction,
+                    m.score * 100.0,
+                    m.old_displacement,
+                    m.new_displacement,
+                    base(&new, m.new_instruction)
+                );
+                context(&new, m.new_instruction).iter().for_each(|line| println!("    {}", line));
+            }
+            None => println!("  not matched"),
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -151,7 +292,8 @@ mod tests {
             vec![Some(Matched {
                 old_displacement: 0x10,
                 new_displacement: 0x30,
-                score: 1.0
+                score: 1.0,
+                new_instruction: 0x1000 + old_position,
             })]
         );
     }
