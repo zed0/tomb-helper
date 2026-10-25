@@ -30,6 +30,7 @@ mod cutscene_handler;
 mod cutscene_timing_generator_handler;
 mod chains;
 mod check;
+mod class_fields;
 mod cli;
 mod collision;
 mod collision_mesh;

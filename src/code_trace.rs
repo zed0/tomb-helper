@@ -92,6 +92,9 @@ pub struct Tracer<'a> {
     bitness: u32,
     pointer_size: usize,
     resolver: Option<CallResolver<'a>>,
+    // How deep calls are followed, and how many instructions a trace looks at
+    max_depth: usize,
+    max_instructions: usize,
     // Where each function is called from directly (the return addresses), made when first needed
     callers: OnceLock<HashMap<usize, Vec<usize>>>,
 }
@@ -110,7 +113,16 @@ impl<'a> Tracer<'a> {
             pointer_size: if image.is_64 { 8 } else { 4 },
             resolver: None,
             callers: OnceLock::new(),
+            max_depth: MAX_CALL_DEPTH,
+            max_instructions: MAX_INSTRUCTIONS,
         }
+    }
+
+    /// Follow calls this deep, looking at up to this many instructions per trace
+    pub fn with_limits(mut self, max_depth: usize, max_instructions: usize) -> Tracer<'a> {
+        self.max_depth = max_depth;
+        self.max_instructions = max_instructions;
+        self
     }
 
     /// The return addresses of the direct calls (`call rel32`) to each function in the code
@@ -226,7 +238,7 @@ impl<'a> Tracer<'a> {
     /// Traces the code starting at the instruction at `start`, which should reference a static address
     pub fn trace(&self, start: usize) -> Vec<Access> {
         let mut walk = Walk {
-            budget: MAX_INSTRUCTIONS,
+            budget: self.max_instructions,
             accesses: vec![],
             info: InstructionInfoFactory::new(),
         };
@@ -242,6 +254,23 @@ impl<'a> Tracer<'a> {
                 self.walk(&mut walk, returns_to, state, 0, false);
             }
         }
+        walk.accesses
+    }
+
+    /// Traces a function from its start, with `register` holding a pointer to an object (e.g. `this`, rcx on x64 and
+    /// ecx on x86): the accesses through it, as chains `[0, offset, ...]` (`[0, 0x30]` is the field at +0x30, `[0, 0x30,
+    /// 0x8]` the field +0x8 into what that points to)
+    pub fn trace_object(&self, start: usize, register: Register) -> Vec<Access> {
+        let mut walk = Walk {
+            budget: self.max_instructions,
+            accesses: vec![],
+            info: InstructionInfoFactory::new(),
+        };
+        let mut state: State = Default::default();
+        if let Some(s) = slot(register) {
+            state[s] = Some(Tracked { path: vec![0], add: 0, is_address: false });
+        }
+        self.walk(&mut walk, start, state, 0, false);
         walk.accesses
     }
 
@@ -320,7 +349,7 @@ impl<'a> Tracer<'a> {
     }
 
     fn call(&self, walk: &mut Walk, target: usize, state: &State, depth: usize) -> Option<Tracked> {
-        if depth >= MAX_CALL_DEPTH {
+        if depth >= self.max_depth {
             return None;
         }
         // Arguments that carry a tracked pointer: rcx/rdx/r8/r9 on x64, `this` in ecx on x86

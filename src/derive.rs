@@ -491,11 +491,23 @@ pub fn check_matching(a: &str, b: &str, count: usize) -> Result<()> {
 
 /// Longest common subsequence of two access lists, matching accesses of the same shape
 fn align<'a>(old: &'a [Access], new: &'a [Access]) -> Vec<(&'a Access, &'a Access)> {
+    align_by(old, new, |a| a.shape(), |a| a.shape())
+}
+
+/// `align`, with what has to match for two accesses to be the same worked out by `old_key` and `new_key` (e.g. ignoring
+/// the size of pointers between a 32 and a 64-bit game)
+pub fn align_by<'a, K: PartialEq>(
+    old: &'a [Access],
+    new: &'a [Access],
+    old_key: impl Fn(&Access) -> K,
+    new_key: impl Fn(&Access) -> K,
+) -> Vec<(&'a Access, &'a Access)> {
+    let (old_keys, new_keys): (Vec<K>, Vec<K>) = (old.iter().map(old_key).collect(), new.iter().map(new_key).collect());
     let (n, m) = (old.len(), new.len());
     let mut table = vec![vec![0_u16; m + 1]; n + 1];
     for i in (0..n).rev() {
         for j in (0..m).rev() {
-            table[i][j] = if old[i].shape() == new[j].shape() {
+            table[i][j] = if old_keys[i] == new_keys[j] {
                 table[i + 1][j + 1] + 1
             } else {
                 table[i + 1][j].max(table[i][j + 1])
@@ -505,7 +517,7 @@ fn align<'a>(old: &'a [Access], new: &'a [Access]) -> Vec<(&'a Access, &'a Acces
     let (mut i, mut j) = (0, 0);
     let mut aligned = vec![];
     while i < n && j < m {
-        if old[i].shape() == new[j].shape() && table[i][j] == table[i + 1][j + 1] + 1 {
+        if old_keys[i] == new_keys[j] && table[i][j] == table[i + 1][j + 1] + 1 {
             aligned.push((&old[i], &new[j]));
             i += 1;
             j += 1;
@@ -519,7 +531,7 @@ fn align<'a>(old: &'a [Access], new: &'a [Access]) -> Vec<(&'a Access, &'a Acces
 }
 
 /// Old chain -> new chain -> votes
-type ChainVotes = HashMap<Vec<i64>, HashMap<Vec<i64>, f64>>;
+pub type ChainVotes = HashMap<Vec<i64>, HashMap<Vec<i64>, f64>>;
 
 fn chain_votes(old: &PeImage, new: &PeImage, pairs: &[Pair]) -> ChainVotes {
     let old_tracer = Tracer::new(old);

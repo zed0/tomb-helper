@@ -149,6 +149,23 @@ enum Debug {
     },
     /// Print the pointer chains the code accesses from each reference to a static address (in hex)
     Trace { image: String, address: String },
+    /// Print the fields of a class (e.g. "ProxyComponent@cdc") its virtual functions use, from an exe or dump
+    ClassFields {
+        image: String,
+        class: String,
+        /// Only say which virtual functions use this offset (hex)
+        #[arg(long)]
+        field: Option<String>,
+    },
+    /// Work out the layout of one build or game (exe or dump) from another's, by how each class's code uses its fields
+    ClassLayout {
+        from: String,
+        to: String,
+        #[arg(long)]
+        from_version: Option<String>,
+        #[arg(long)]
+        to_version: Option<String>,
+    },
     /// Watch up to 4 addresses (absolute, or +RVA, comma separated) in any process
     WatchRaw {
         pid: String,
@@ -235,6 +252,10 @@ fn run_debug(tool: Debug) -> Result<()> {
         Debug::Chains { version } => crate::chains::find_code_chains(version),
         Debug::Probe { version, watch } => crate::chains::probe(version, watch),
         Debug::Trace { image, address } => crate::derive::trace(&image, &address),
+        Debug::ClassFields { image, class, field } => crate::class_fields::print_class_fields(&image, &class, field.as_deref()),
+        Debug::ClassLayout { from, to, from_version, to_version } => {
+            crate::class_fields::print_class_layout(&from, &to, from_version.as_deref(), to_version.as_deref())
+        }
         Debug::WatchRaw { pid, addresses, seconds, delay, write, exec, dump } => {
             let kind = if exec {
                 Breakpoint::Execute

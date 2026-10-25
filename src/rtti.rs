@@ -93,6 +93,12 @@ pub fn all_vtables(data: &[u8], base_address: usize) -> Vec<(usize, String)> {
     find_vtables(data, base_address, &Format::current())
 }
 
+/// `all_vtables` of an image (e.g. a dump on disk), whatever game tomb-helper is connected to, if any
+pub fn image_vtables(image: &crate::pe_image::PeImage) -> Vec<(usize, String)> {
+    let format = Format::for_pointer_size(if image.is_64 { 8 } else { 4 });
+    find_vtables(&image.data, image.image_base as usize, &format)
+}
+
 fn find_vtables(data: &[u8], base_address: usize, format: &Format) -> Vec<(usize, String)> {
     let u32_at = |offset: usize| data.get(offset..offset + 4).map(|b| u32::from_le_bytes(b.try_into().unwrap()) as usize);
     let in_image = |address: usize| address >= base_address && address - base_address < data.len();

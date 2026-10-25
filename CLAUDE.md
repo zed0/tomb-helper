@@ -79,6 +79,7 @@ Each module's `//!` doc says what's in it and how it works; this is where to loo
 | `src/lib.rs` | The injected overlay (DLL): its window and drawing |
 | `src/position.rs` | `Position`, with `Vector3` conversions (shared with the DLL) |
 | `src/position_handler.rs` | Save/restore position, flight mode and movement |
+| `src/class_fields.rs` | Which RTTI class each layout field is in (`FIELD_CLASSES`), the fields a class's virtual functions use, and another build's or game's layout from that (`debug class-fields`, `debug class-layout`) |
 | `src/targets.rs` | What tomb-helper writes: chains built from the structures (or the offsets file's), checked before writing |
 | `src/tracked_memory.rs`, `src/tracked_position.rs` | Cached values at pointer chains, for the position and cutscene handlers |
 | `src/cutscene_handler.rs` | Cutscene skipping (SOTTR) and time saved |
@@ -446,7 +447,7 @@ again (`derive` plus live checks).
 - Dumps of each build and snapshots go in the data folder: `data_dir` in `tomb-helper.json`, else `tomb-helper-data`
   next to the exe (`config::data_dir`). Here it's `H:/tomb-helper-dumps`, set in `target/release/tomb-helper.json`.
 - The investigation tools the notes above name (`chains`, `probe`, `derive`, `discover`, `trace`, `watch-raw`, `disasm`,
-  `check-matching`, `overlay-data`, `dump`, `export-offsets`) are `tomb-helper debug <tool>`; `fit-layout` is `check
+  `check-matching`, `overlay-data`, `dump`, `export-offsets`, `class-fields`, `class-layout`) are `tomb-helper debug <tool>`; `fit-layout` is `check
   --fit`, `snapshot`/`check-snapshots`/`accept-snapshots` are `check --snapshot`/`--replay`/`--replay --accept`, and
   `watch-layout` is `watch` with `group.field` names.
 - `PositionHandler` "active" mode writes the cached position every tick, which is what lets Lara be

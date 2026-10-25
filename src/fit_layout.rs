@@ -58,7 +58,7 @@ const CHECK_GROUPS: &[(&str, &[&str])] = &[
 
 /// Layout values that aren't offsets into a structure: how much is read (which grow when fields move on), and type
 /// numbers, masks and indices (which never move)
-const READ_SIZES: &[&str] = &[
+pub const READ_SIZES: &[&str] = &[
     "instance.size",
     "proxy.size",
     "physics_shape.size",
@@ -68,7 +68,7 @@ const READ_SIZES: &[&str] = &[
     "trigger_shape.record_size",
     "script.node_size",
 ];
-const NOT_OFFSETS: &[&str] = &[
+pub const NOT_OFFSETS: &[&str] = &[
     "proxy.contact_size",
     "proxy.collides",
     "proxy.movement_collides",

@@ -21,7 +21,7 @@ use process_memory::CopyAddress;
 use std::collections::{BTreeMap, HashMap};
 use std::convert::TryInto;
 
-const GAME_RENDER: &str = ".?AVGameRender@@";
+pub const GAME_RENDER: &str = ".?AVGameRender@@";
 // Holds the cdc::CollisionSceneClient
 const MULTIBODY_CLIENT: &str = ".?AVTR9MultibodyClient@@";
 pub const COLLISION_SCENE_CLIENT: &str = ".?AVCollisionSceneClient@cdc@@";
