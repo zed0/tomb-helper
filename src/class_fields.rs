@@ -312,7 +312,7 @@ pub fn print_class_layout(from: &str, to: &str, from_version: Option<&str>, to_v
         &[(&old, &old_details)],
         &new,
         same_game,
-        &Default::default(),
+        &mut Default::default(),
         &mut notes,
     );
     println!("\nupdate-offsets would set ({}):", if same_game { "the same game" } else { "another game" });

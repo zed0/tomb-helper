@@ -214,7 +214,20 @@ pub fn run(
             println!("Working out the layout from how its classes' code uses it in {}...", names.join(", "));
             // Fields placed between moved ones are only right within a game (`--from` can be another game's dump)
             let same_game = references.iter().all(|(_, d)| d.name == template.name);
-            layout = class_layout(layout, &references, &image, same_game, &settled, &mut layout_notes);
+            layout = class_layout(layout, &references, &image, same_game, &mut settled, &mut layout_notes);
+        }
+
+        // Lara's proxy's fields by the values in them (she's standing somewhere ordinary, as for everything here):
+        // the games share their gameplay data, so the same values are in the same fields, wherever those are
+        let sources = crate::value_layout::sources(&template, previous.as_ref().map(|(_, d)| d), &known);
+        if !sources.is_empty() {
+            let names: Vec<String> = sources.iter().map(|(_, d)| format!("{} {}", d.name, d.version.version)).collect();
+            println!("Working out Lara's proxy from the values in it, as in {}...", names.join(", "));
+            let offsets: crate::process_details::AddressOffsets = found.iter().map(|(t, (chain, _))| (*t, chain.clone())).collect();
+            let target = crate::game::Game::new(memory, base_address, &offsets);
+            let target_details = ProcessDetails { address_offsets: offsets.clone(), layout: layout.clone(), ..template.clone() };
+            layout = crate::value_layout::apply(layout, &sources, &target, &target_details, &mut settled, &mut layout_notes);
+            crate::layout::set_for(&ProcessDetails { layout: layout.clone(), ..template.clone() });
         }
     }
 
@@ -346,13 +359,15 @@ fn previous_build(template: &ProcessDetails, image: &PeImage) -> Option<(PeImage
 
 /// The layout with the fields the classes' code in `references` says where they are in `image` (`class_fields`):
 /// matched by the code, or with `same_game` placed between fields that moved together (which is only reliable within a
-/// game). Where several references say, they have to agree. Fields in `settled` (by witnesses) are left as they are.
+/// game). Where several references say, they have to agree. Fields in `settled` (by witnesses) are left as they are, and
+/// those changed are added to it. Only fields the layout has are moved: another game having a field doesn't say this
+/// one uses it the same way.
 pub fn class_layout(
     mut layout: Layout,
     references: &[(&PeImage, &ProcessDetails)],
     image: &PeImage,
     same_game: bool,
-    settled: &HashSet<String>,
+    settled: &mut HashSet<String>,
     notes: &mut Vec<String>,
 ) -> Layout {
     use crate::class_fields::Confidence;
@@ -371,6 +386,9 @@ pub fn class_layout(
             continue;
         }
         let current = crate::layout_witness::field_offset(&layout, &name);
+        if current.is_none() {
+            continue;
+        }
         let offsets: HashSet<usize> = says.iter().map(|(offset, _, _)| *offset).collect();
         if offsets.len() > 1 {
             let each: Vec<String> = says.iter().map(|(offset, version, _)| format!("{:#X} in {}", offset, version)).collect();
@@ -385,6 +403,7 @@ pub fn class_layout(
             Ok(changed) => {
                 layout = changed;
                 notes.push(format!("{:<34} {:#X} -> {:#X} (its class's code: {})", name, current.unwrap_or(0), offset, how));
+                settled.insert(name.clone());
             }
             Err(e) => notes.push(format!("{:<34} couldn't be set: {:#}", name, e)),
         }

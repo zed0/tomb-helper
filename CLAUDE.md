@@ -83,6 +83,7 @@ Each module's `//!` doc says what's in it and how it works; this is where to loo
 | `src/targets.rs` | What tomb-helper writes: chains built from the structures (or the offsets file's), checked before writing |
 | `src/tracked_memory.rs`, `src/tracked_position.rs` | Cached values at pointer chains, for the position and cutscene handlers |
 | `src/cutscene_handler.rs` | Cutscene skipping (SOTTR) and time saved |
+| `src/value_layout.rs` | A layout from the values in it: Lara's proxy's fields found by their values in another game's or build's snapshot (`debug value-layout`, used by `update-offsets`) |
 | `src/cutscene_id.rs` | Finding `CutsceneId` while a cutscene plays, by the timing file's ids (`debug find-cutscene-id`, run by `port`) |
 | `src/cutscene_timing_info.rs`, `src/cutscene_timing_generator_handler.rs` | The cutscene timing file, and recording it with LiveSplit |
 | `src/readable_from_path.rs` | JSON from a path or URL |
@@ -122,6 +123,12 @@ Each module's `//!` doc says what's in it and how it works; this is where to loo
   they matched). Its chain is then held back as unverified, and `port` finds it while a cutscene plays: the cutscene's
   length picks its timing file entry, whose ids are the same in every build (`cutscene_id`). Deriving 234.1 and 492
   from each other gets everything else right (`player.instance` comes from `XPosition`'s chain).
+  The games share their gameplay data, so with Lara standing somewhere ordinary her proxy's fields hold the same values
+  in every game: `value_layout` finds them by value in the newest snapshot of the previous build (or for a new game, of
+  each other game), in order. Every pair of the 5 snapshots (ROTTR, SOTTR 492/234.1, TR2013 Steam/748, 32 and 64-bit)
+  got all 9 known proxy fields right. `update-offsets` applies it after the class code; like it, it only moves fields
+  the layout has (it predicts ROTTR's `resolved_centre` at +0x70, unconfirmed). Camera and player fields hold
+  values that depend on where she and the camera are, so they aren't found this way.
 - **Add a new memory value:** add an `AddressType` variant, add offsets per version in `offsets.json`, read it with
   `Game` (`read_floats`, `require` and `game_memory`'s readers), or `TrackedMemory` in a handler that writes it.
 - **Writing a value:** anything a handler writes goes in `targets::WRITTEN`, with a check in `targets::verify` (what it

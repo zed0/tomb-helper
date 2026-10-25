@@ -66,6 +66,7 @@ mod tracked_position;
 mod trigger;
 mod trigger_scripts;
 mod update_offsets;
+mod value_layout;
 mod cutscene_timing_info;
 mod readable_from_path;
 mod rtti;

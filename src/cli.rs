@@ -158,6 +158,18 @@ enum Debug {
         #[arg(long)]
         field: Option<String>,
     },
+    /// Work out the running game's layout for a group (e.g. proxy) by the values in it, from a snapshot of another game
+    /// or build, with Lara standing somewhere ordinary in both
+    ValueLayout {
+        snapshot: String,
+        #[arg(default_value = "proxy")]
+        group: String,
+        #[arg(long)]
+        version: Option<String>,
+        /// Another snapshot to work it out for, rather than the running game
+        #[arg(long)]
+        to: Option<String>,
+    },
     /// Find the playing cutscene's id (`CutsceneId`) by the timing file's ids, starting from the version's chain for it
     FindCutsceneId {
         #[arg(long)]
@@ -271,6 +283,9 @@ fn run_debug(tool: Debug) -> Result<()> {
         Debug::Trace { image, address } => crate::derive::trace(&image, &address),
         Debug::ClassFields { image, class, field } => crate::class_fields::print_class_fields(&image, &class, field.as_deref()),
         Debug::FindCutsceneId { version, save } => crate::cutscene_id::find_cutscene_id(version, save),
+        Debug::ValueLayout { snapshot, group, version, to } => {
+            crate::value_layout::print_value_layout(&snapshot, &group, version, to.as_deref())
+        }
         Debug::MatchWitnesses { from, to, name, from_version } => {
             crate::witness::print_matches(&from, &to, &name, from_version.as_deref())
         }
