@@ -17,8 +17,7 @@ use crate::position_handler::PositionHandler;
 use crate::process_details::ProcessDetails;
 use process_memory::Pid;
 use itertools::Itertools;
-use livesplit_hotkey::Hook;
-use livesplit_hotkey::KeyCode;
+use crate::hotkeys::{Callback, Hotkeys, KeyCode};
 use std::sync::{Arc, mpsc};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{thread, time};
@@ -42,6 +41,7 @@ mod discover;
 mod pe_image;
 mod position_handler;
 mod handler;
+mod hotkeys;
 mod aim_sweep;
 mod inject32;
 mod layout;
@@ -220,7 +220,6 @@ fn connect(
 
     let (tx, rx) = mpsc::channel();
 
-    let hook = Hook::new().unwrap();
     let key_groups = config
         .hotkeys
         .clone()
@@ -228,15 +227,17 @@ fn connect(
         .map(|h: Hotkey| -> (KeyCode, Action) { (h.key, h.action) })
         .into_group_map();
 
+    let mut callbacks: std::collections::HashMap<KeyCode, Callback> = std::collections::HashMap::new();
     for (key, actions) in key_groups {
         let current_tx = tx.clone();
-        hook.register(key, move || {
+        callbacks.insert(key, Box::new(move || {
             for action in &actions {
-                current_tx.send(*action).unwrap();
+                let _ = current_tx.send(*action);
             }
-        })
-        .unwrap();
+        }));
     }
+    // Polls the keys until it's dropped, when this returns
+    let _hotkeys = Hotkeys::start(callbacks);
 
     println!("Started!");
 

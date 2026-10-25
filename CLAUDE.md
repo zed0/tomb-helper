@@ -35,7 +35,7 @@ User docs (hotkeys, config, cutscene timing generation) live in `README.md`.
    - `PositionHandler::new_position_handler` (Lara position) and `::new_look_at_handler` (ROTTR look-at)
    - Each constructor returns `None` if the game version lacks a required `AddressType`, so features
      silently disappear per-version.
-3. Registers hotkeys with `livesplit_hotkey::Hook`; keys are grouped so one key can trigger several
+3. Starts the hotkeys (`hotkeys::Hotkeys`, a thread polling the bound keys, repeating held ones); keys are grouped so one key can trigger several
    `Action`s, sent over an mpsc channel.
 4. Busy loop: dispatch any received `Action` to every handler's `handle_action`, then call `handle_tick`
    on all. Exits on game process exit (`is_process_running`) or SIGINT. Errors are `eprintln!`ed (`report`), except the game
@@ -56,6 +56,7 @@ Each module's `//!` doc says what's in it and how it works; this is where to loo
 | `src/port.rs` | `port`: adding a patch or game step by step, with prompts (the other commands' steps in order) |
 | `src/config.rs` | `tomb-helper.json`: hotkeys, cutscene files, the overlay's starting settings |
 | `src/action.rs` | `Action`: everything a hotkey can be bound to |
+| `src/hotkeys.rs` | `KeyCode` (the keys' names in the config) and `Hotkeys`, polling the keys, repeating held ones |
 | `src/handler.rs` | The `Handler` trait every feature implements |
 | `offsets.json` | **Per-game-version offsets** (built into the exe), layouts, witnesses and `words` |
 | `src/offsets_file.rs` | The offsets file's JSON, `OffsetsSource` (the file next to the exe overrides the built in one, hot reloaded) |

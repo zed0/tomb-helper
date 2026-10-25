@@ -2,7 +2,7 @@
 //! by default), whether to record cutscene timings (`CutsceneTiming`), and the overlay's settings (`OverlayConfig`, the
 //! overlay window's settings to start with).
 
-use livesplit_hotkey::KeyCode;
+use crate::hotkeys::KeyCode;
 use serde::Deserialize;
 use std::path::PathBuf;
 use std::{env, fs};

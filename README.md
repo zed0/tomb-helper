@@ -96,7 +96,7 @@ Currently the available actions are:
 - `Up` (can take a distance, which defaults to `100.0`)
 - `Down` (can take a distance, which defaults to `100.0`)
 
-The available keys are listed in the [livesplit_hotkey library documentation](https://docs.rs/livesplit-hotkey/0.5.0/livesplit_hotkey/linux/enum.KeyCode.html).
+The available keys are the names in `KeyCode` in [`src/hotkeys.rs`](src/hotkeys.rs) (e.g. `F5`, `W`, `D1`, `NumPad0`, `Left`, `LeftShift`). Holding a key repeats its actions, at the keyboard's repeat delay and rate.
 
 ## Offsets file
 
