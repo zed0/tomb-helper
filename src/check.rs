@@ -195,8 +195,11 @@ fn check_written(game: &Game, report: &mut Report, components: &mut Components) 
         if found.is_empty() {
             continue;
         }
+        // The structures' chain is only listed once when the offsets file has the same one
+        let in_file = game.offsets.get(&address_type);
         let describe = |(source, chain, _, _): &(targets::Source, Vec<usize>, Option<usize>, Verdict)| {
-            format!("through {} {}", source.describe(), targets::describe_chain(chain))
+            let also = if *source == targets::Source::Structure && in_file == Some(chain) { " (the offsets file's too)" } else { "" };
+            format!("through {} {}{}", source.describe(), targets::describe_chain(chain), also)
         };
         let plausible: Vec<_> = found.iter().filter(|f| matches!(f.3, Verdict::Plausible(_))).collect();
         let implausible: Vec<String> = found

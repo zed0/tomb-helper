@@ -309,10 +309,16 @@ fn owner_check(game: &Game, components: &mut Components, address_type: AddressTy
     };
     let found = owner.and_then(|owner| components.classes.name(game.handle, owner));
     Some(match found {
-        Some(name) if name == class => Ok(format!("a {}", short_class(class))),
-        Some(name) => Err(format!("it's in a {}, not a {}", short_class(&name), short_class(class))),
-        None => Err(format!("it isn't in a {}", short_class(class))),
+        Some(name) if name == class => Ok(a(&short_class(class))),
+        Some(name) => Err(format!("it's in {}, not {}", a(&short_class(&name)), a(&short_class(class)))),
+        None => Err(format!("it isn't in {}", a(&short_class(class)))),
     })
+}
+
+// "a Player", "an ExplorationCameraController"
+fn a(noun: &str) -> String {
+    let vowel = noun.chars().next().map_or(false, |c| "AEIOUaeiou".contains(c));
+    format!("{} {}", if vowel { "an" } else { "a" }, noun)
 }
 
 /// A chain as the offsets file has it, e.g. [0x14B5BD8, 0x0, 0x33E8, 0x10]
@@ -362,7 +368,8 @@ fn cutscene(game: &Game) -> Verdict {
 mod tests {
     use super::*;
 
-    // SOTTR Steam 492's layout rebuilds the chains found for it by hand, with her proxy in slot 39 as it was then
+    // SOTTR Steam 492's layout rebuilds the chains found for it by hand (which were in the offsets file until the
+    // structures were known to give the same), with her proxy in slot 39 as it is there
     #[test]
     fn structures_give_the_chains_found_by_hand() {
         let details = crate::offsets_file::known_process_details()
@@ -370,18 +377,26 @@ mod tests {
             .find(|d| d.version.version == "(Steam) v1.0 build 492.0_64")
             .unwrap();
         crate::layout::set_for(&details);
+        let lara = [0x14B5BD8, 0x0, 0x33E8];
+        let proxy = [0x14B5BD8, 0x0, 0x33E8, 0xD8, 0x138];
+        let body = [0x14B5BD8, 0x0, 0x33E8, 0xD8, 0x138, 0x1A8];
+        let found_by_hand: Vec<(AddressType, Vec<usize>)> = vec![
+            (AddressType::Velocity, [&lara[..], &[0xF0, 0x20]].concat()),
+            (AddressType::FallStart, vec![0x14B5BD8, 0x0, 0x1064]),
+            (AddressType::FallStartCopy, vec![0x14B5BD8, 0x0, 0x1070]),
+            (AddressType::ProxyCentre, [&proxy[..], &[0x70]].concat()),
+            (AddressType::ProxyResolvedCentre, [&proxy[..], &[0xC0]].concat()),
+            (AddressType::ProxyFlags, [&proxy[..], &[0x18]].concat()),
+            (AddressType::ProxyShapeCentre, [&body[..], &[0x20, 0x0]].concat()),
+            (AddressType::ProxyShapePreviousCentre, [&body[..], &[0x20, 0xA0]].concat()),
+            (AddressType::ProxyShapeGap, [&body[..], &[0x20, 0x10]].concat()),
+            (AddressType::ProxyBodyGap, [&body[..], &[0x0]].concat()),
+            (AddressType::CameraCollision, vec![0x36ABA00, 0x450, 0xF08, 0x20, 0xDF8]),
+        ];
         let slot = |class: &str| (class == components::PROXY).then(|| 39);
-        let mut checked = 0;
-        for address_type in WRITTEN {
-            if let Some(known) = details.address_offsets.get(&address_type) {
-                if let Some(built) = chain_for(&details.address_offsets, address_type, slot) {
-                    assert_eq!(&built, known, "{:?}", address_type);
-                    checked += 1;
-                }
-            }
+        for (address_type, chain) in found_by_hand {
+            assert_eq!(chain_for(&details.address_offsets, address_type, slot), Some(chain), "{:?}", address_type);
         }
-        // Velocity, both fall starts, the proxy's seven and the camera's collision
-        assert_eq!(checked, 11);
     }
 
     #[test]
