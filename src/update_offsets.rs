@@ -233,6 +233,10 @@ pub fn run(
     for (address_type, (chain, _)) in &found {
         offsets.insert(*address_type, chain.clone());
     }
+    // What the chains found say of the layout
+    let (with_chains, note) = crate::targets::layout_from_chains(layout, &offsets.clone().into_iter().collect());
+    layout = with_chains;
+    layout_notes.extend(note);
 
     let image_size = image.size_of_image();
     let version_name = match (&existing, &version, new_game.and_then(|new| new.version.clone())) {

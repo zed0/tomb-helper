@@ -908,6 +908,14 @@ pub fn derive(from: &str, to: &str, from_version: Option<&str>) -> Result<()> {
             None => println!("//   layout {}: [UNSURE] kept {:#X} ({})", change.name, change.old, how),
         }
     }
+    // What the derived chains say of the layout
+    let derived: crate::process_details::AddressOffsets =
+        lines.iter().filter_map(|(t, chain, sure, _)| Some((*t, chain.clone().filter(|_| *sure)?))).collect();
+    let (layout, note) = crate::targets::layout_from_chains(details.layout.clone(), &derived);
+    if let Some(note) = note {
+        println!("//   layout {}", note);
+    }
+    details.layout = layout;
     print_entry(&details, &new, "TODO", &lines, &HashMap::new());
     Ok(())
 }

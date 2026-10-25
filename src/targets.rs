@@ -177,6 +177,23 @@ fn lara_instance(offsets: &AddressOffsets) -> Option<Vec<usize>> {
     }
 }
 
+/// The layout with what Lara's position chain says of it: `XPosition` is [.., player, `player.instance`,
+/// `instance.position`], so where the player points at her is the chain's second last offset (where the version has a
+/// player, and the chain ends in her instance's position). For a new build, whose chain was derived, with what changed
+pub fn layout_from_chains(mut layout: crate::layout::Layout, offsets: &AddressOffsets) -> (crate::layout::Layout, Option<String>) {
+    let chain = match offsets.get(&AddressType::XPosition) {
+        Some(chain) if chain.len() >= 3 => chain,
+        _ => return (layout, None),
+    };
+    let (n, current) = (chain.len(), layout.player.instance);
+    if chain[n - 1] != layout.instance.position || current.is_none() || current == Some(chain[n - 2]) {
+        return (layout, None);
+    }
+    layout.player.instance = Some(chain[n - 2]);
+    let note = format!("{:<34} {:#X} -> {:#X} (XPosition's chain)", "player.instance", current.unwrap_or(0), chain[n - 2]);
+    (layout, Some(note))
+}
+
 // The chain to the pointer to the player object: her position chain less two offsets, if the one before her
 // instance's position is where the player points at her
 fn player(offsets: &AddressOffsets) -> Option<Vec<usize>> {

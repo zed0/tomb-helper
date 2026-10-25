@@ -201,16 +201,20 @@
         "CutsceneId": ["0x360E0D0", "0x0", "0x120", "0x10", "0x1D4"]
       },
       "layout": {
-        "instance": {"object_name": ["0x80", "0x8", "0x60", "0x8"]},
+        "instance": {"object_name": ["0x80", "0x8", "0x60", "0x8"], "ballistic": "0xF0"},
+        "player": {"instance": "0x33C8", "fall_start": "0x1064", "fall_start_copy": "0x1070"},
+        "ballistic": {"velocity": "0x20"},
         "drawable": {"instance_drawable": "0xA8", "model_instance": "0x78", "mesh": "0x38"},
-        "camera": {"view": "0x2F0"},
+        "camera": {"view": "0x2F0", "collision": ["0x450", "0xF08", "0x20", "0xDF8"]},
         "trigger_shape": {"shape": "0xA0"},
         "collide": {"shapes": "0x78", "shape_count": "0x80"},
-        "body": {"next": "0x38", "parent": "0x50"},
+        "body": {"next": "0x38", "parent": "0x50", "gap": "0x0"},
+        "physics_shape": {"previous_centre": "0xA0", "gap": "0x10"},
         "proxy": {
           "centre": "0x70", "in_use_size": "0xA0", "in_use_offset": "0xB0", "in_use_local_rotation": "0xE0", "in_use_rotation": "0xF0",
           "next_size": "0x120", "next_offset": "0x130", "next_local_rotation": "0x150", "next_rotation": "0x160",
-          "body": "0x1A8", "size": "0x1B0", "contact_count": "0x1C4", "second_contact_count": "0x1CC", "contacts": "0x200"
+          "body": "0x1A8", "size": "0x1B0", "contact_count": "0x1C4", "second_contact_count": "0x1CC", "contacts": "0x200",
+          "flags": "0x18", "movement_collides": "0x1", "resolved_centre": "0xC0"
         }
       }
     },
