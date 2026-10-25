@@ -24,7 +24,7 @@ use std::convert::TryInto;
 const GAME_RENDER: &str = ".?AVGameRender@@";
 // Holds the cdc::CollisionSceneClient
 const MULTIBODY_CLIENT: &str = ".?AVTR9MultibodyClient@@";
-const COLLISION_SCENE_CLIENT: &str = ".?AVCollisionSceneClient@cdc@@";
+pub const COLLISION_SCENE_CLIENT: &str = ".?AVCollisionSceneClient@cdc@@";
 // Lara's proxy, where it's a static (TR2013), belongs to the instance with this in its name
 const LARA_NAME: &str = "lara";
 // How far into a proxy to look for its instance, where it isn't where the layout says (it moved between TR2013 builds)

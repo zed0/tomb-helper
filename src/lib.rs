@@ -14,7 +14,7 @@ use hudhook::*;
 use hudhook::hooks::dx11::ImguiDx11Hooks as GameHooks;
 #[cfg(not(target_arch = "x86"))]
 use hudhook::hooks::dx12::ImguiDx12Hooks as GameHooks;
-use crate::ui_ipc_data::{hotkey, projection_from_lens, BoolSetting, BoxKind, HotkeyLabel, Capsule, F32Setting, ObjectBox, ObjectCategory, Probe, SharedMemoryManager, SurfaceKind, Triangle, TriggerCategory, U32Setting, UiData, UiSettings, REQUEST_RESTORE_POSITION, REQUEST_STORE_POSITION, REQUEST_TOGGLE_FLYING, TRIGGER_ACTIONS};
+use crate::ui_ipc_data::{hotkey, projection_from_lens, BoolSetting, BoxKind, HotkeyLabel, Capsule, F32Setting, ObjectBox, ObjectCategory, Probe, SharedMemoryManager, SurfaceKind, Triangle, TriggerCategory, U32Setting, UiData, UiSettings, REQUEST_RESTORE_POSITION, REQUEST_STORE_POSITION, REQUEST_TOGGLE_FLYING, TRIGGER_ACTIONS, COLLISION_KINDS};
 use crate::position::Position;
 use crate::tracing::{error, warn};
 
@@ -923,7 +923,7 @@ fn collision_settings(ui: &Ui, ui_data: &UiData, settings: &UiSettings) {
         // Which kinds of collision (bits of the meshes' filters), and how many meshes in the level have each; what
         // they're for isn't known, besides 0x2 (Lara's movement)
         ui.indent();
-        let kinds = (0..16)
+        let kinds = (0..COLLISION_KINDS)
             .filter(|&bit| ui_data.mesh_kind_counts[bit] != 0)
             .map(|bit| (1 << bit, format!("{:X} ({})##kind", 1 << bit, ui_data.mesh_kind_counts[bit]), None))
             .collect();

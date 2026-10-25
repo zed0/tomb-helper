@@ -75,6 +75,11 @@ mod ui_ipc_data;
 #[cfg(windows)]
 extern crate winapi;
 
+// How often to look for a game while none is running
+const SEARCH_INTERVAL: time::Duration = time::Duration::from_millis(100);
+// How often to check whether the offsets file has changed while connected
+const OFFSETS_CHECK_INTERVAL: time::Duration = time::Duration::from_millis(500);
+
 fn main() {
     if std::env::args().len() > 1 {
         if let Err(e) = cli::run() {
@@ -110,7 +115,7 @@ fn main() {
             println!("Searching for Tomb Raider processes...");
         }
 
-        thread::sleep(time::Duration::from_millis(100));
+        thread::sleep(SEARCH_INTERVAL);
     }
 }
 
@@ -136,71 +141,32 @@ fn create_handlers(
     base_addr: usize,
     details: &ProcessDetails,
 ) -> Vec<Box<dyn Handler>> {
-    let mut handlers: Vec<Box<dyn Handler>> = vec![];
     layout::set_for(&details);
+    let (offsets, arch) = (&details.address_offsets, &details.arch);
 
-    match &config.record_cutscene_timing {
+    // Each is None if the version doesn't have the offsets it needs
+    let cutscenes: Option<Box<dyn Handler>> = match &config.record_cutscene_timing {
         CutsceneTiming::On { timing_file, livesplit_port } => {
-            match CutsceneTimingGeneratorHandler::new(
-                &details.address_offsets,
-                &details.arch,
-                &base_addr,
-                &handle,
-                timing_file,
-                livesplit_port,
-            ) {
-                Some(h) => handlers.push(Box::new(h)),
-                None => {},
-            }
-        },
-        CutsceneTiming::Off {} => {
-            match CutsceneHandler::new(
-                &details.address_offsets,
-                &details.arch,
-                &base_addr,
-                &handle,
-                &config.cutscene_blacklist_file,
-                &config.cutscene_timing_file,
-            ) {
-                Some(h) => handlers.push(Box::new(h)),
-                None => {},
-            }
-        },
-    }
+            CutsceneTimingGeneratorHandler::new(offsets, arch, &base_addr, &handle, timing_file, livesplit_port)
+                .map(|h| Box::new(h) as Box<dyn Handler>)
+        }
+        CutsceneTiming::Off {} => CutsceneHandler::new(
+            offsets,
+            arch,
+            &base_addr,
+            &handle,
+            &config.cutscene_blacklist_file,
+            &config.cutscene_timing_file,
+        )
+        .map(|h| Box::new(h) as Box<dyn Handler>),
+    };
+    let overlay = OverlayHandler::new_overlay_handler(offsets, arch, &base_addr, &handle, &pid, &config.overlay, &config.hotkeys);
+    let position = PositionHandler::new_position_handler(offsets, arch, &base_addr, &handle);
+    let look_at = PositionHandler::new_look_at_handler(offsets, arch, &base_addr, &handle);
 
-    match OverlayHandler::new_overlay_handler(
-        &details.address_offsets,
-        &details.arch,
-        &base_addr,
-        &handle,
-        &pid,
-        &config.overlay,
-        &config.hotkeys,
-    ) {
-        Some(h) => handlers.push(Box::new(h)),
-        None => {},
-    }
-
-    match PositionHandler::new_position_handler(
-        &details.address_offsets,
-        &details.arch,
-        &base_addr,
-        &handle,
-    ) {
-        Some(h) => handlers.push(Box::new(h)),
-        None => {},
-    }
-
-    match PositionHandler::new_look_at_handler(
-        &details.address_offsets,
-        &details.arch,
-        &base_addr,
-        &handle,
-    ) {
-        Some(h) => handlers.push(Box::new(h)),
-        None => {},
-    }
-
+    let mut handlers: Vec<Box<dyn Handler>> = cutscenes.into_iter().collect();
+    handlers.extend(overlay.map(|h| Box::new(h) as Box<dyn Handler>));
+    handlers.extend(position.into_iter().chain(look_at).map(|h| Box::new(h) as Box<dyn Handler>));
     handlers
 }
 
@@ -252,7 +218,7 @@ fn connect(
             return;
         }
 
-        if last_offsets_check.elapsed() > time::Duration::from_millis(500) {
+        if last_offsets_check.elapsed() > OFFSETS_CHECK_INTERVAL {
             last_offsets_check = time::Instant::now();
             if offsets.changed() {
                 *known = load_offsets(offsets, known.clone());

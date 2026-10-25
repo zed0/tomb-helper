@@ -16,6 +16,10 @@ use std::path::PathBuf;
 use std::collections::HashSet;
 use std::{fmt, iter};
 
+// `CutscenePrompt` once the cutscene can be skipped, which is when it's recorded as skippable. Not the value the
+// cutscene handler waits for (`PROMPT_SHOWN`, 1).
+const PROMPT_SKIPPABLE: u8 = 2;
+
 #[derive(Debug)]
 pub struct CutsceneTimingGeneratorHandler {
     timeline: TrackedMemory<f32>,
@@ -45,18 +49,8 @@ impl CutsceneTimingGeneratorHandler {
         println!("Loading cutscene timing generation handler...");
 
         Some(CutsceneTimingGeneratorHandler {
-            timeline: TrackedMemory::<f32>::new(
-                0.0,
-                address_offsets.get(&AddressType::CutsceneTimeline)?.clone(),
-                *arch,
-                *base_addr,
-            ),
-            id: TrackedMemory::<u32>::new(
-                0,
-                address_offsets.get(&AddressType::CutsceneId)?.clone(),
-                *arch,
-                *base_addr,
-            ),
+            timeline: TrackedMemory::find(address_offsets, AddressType::CutsceneTimeline, *arch, *base_addr)?,
+            id: TrackedMemory::find(address_offsets, AddressType::CutsceneId, *arch, *base_addr)?,
             handle: *handle,
             current_start_game_time: None,
             current_start_real_time: None,
@@ -69,12 +63,7 @@ impl CutsceneTimingGeneratorHandler {
             ).unwrap(),
             timing_info_path: PathBuf::from(timing_info_path),
             timing_info: TimingInfo::from_path(timing_info_path, &String::from("cutscene timing info")),
-            prompt: TrackedMemory::<u8>::new(
-                0,
-                address_offsets.get(&AddressType::CutscenePrompt)?.clone(),
-                *arch,
-                *base_addr,
-            ),
+            prompt: TrackedMemory::find(address_offsets, AddressType::CutscenePrompt, *arch, *base_addr)?,
         })
     }
 
@@ -205,7 +194,7 @@ impl CutsceneTimingGeneratorHandler {
 
             if self.skip_game_time.is_none() && self.skip_real_time.is_none() {
                 self.prompt.fetch_from_game(self.handle)?;
-                if self.prompt.data == 2 {
+                if self.prompt.data == PROMPT_SKIPPABLE {
                     self.skip_game_time = Some(self.get_livesplit_time()?);
                     self.skip_real_time = Some(Instant::now());
                     println!("skippable at: {:?} IGT, {:?} RTA", self.skip_game_time, self.skip_real_time);
@@ -229,10 +218,8 @@ impl Handler for CutsceneTimingGeneratorHandler {
         self.update_cutscene_tracker()?;
         Ok(())
     }
-    fn handle_action(&mut self, action: Action) -> Result<(), Box<dyn Error>> {
-        match action {
-            _ => Ok(()),
-        }
+    fn handle_action(&mut self, _action: Action) -> Result<(), Box<dyn Error>> {
+        Ok(())
     }
 }
 

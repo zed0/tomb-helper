@@ -283,6 +283,8 @@ group! {
         /// isn't known from physics bodies (TR2013)
         flags: Option<usize> = None,
         collides = 0x2,
+        /// In `ProxyFlags` (SOTTR's proxy +0x18), set while Lara's own proxy collides, which flight mode clears
+        movement_collides = 0x1,
         /// -> the instance it belongs to, where `discover` finds Lara's proxy as a static (TR2013)
         instance: Option<usize> = None,
         /// -> the first proxy attached to it that's found on its own, not through its body (`CombatProxy`, TR2013)
@@ -436,6 +438,8 @@ group! {
         /// -> entries: corner (x, y, z, 1), then how far it's swept
         poly_points = 0x10,
         poly_point_size = 0x20,
+        /// In an entry, the vector it's swept along
+        poly_sweep = 0x10,
     }
 }
 

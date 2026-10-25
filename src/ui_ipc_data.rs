@@ -28,6 +28,8 @@ pub const MAX_TRIGGER_LINES: usize = 16384;
 pub const MAX_TRIGGER_FACES: usize = 32768;
 // The keys bound to a control, e.g. "F5, NumPad5"
 pub const HOTKEY_LABEL_LENGTH: usize = 32;
+// Bits in a collision mesh's filter of which kinds of collision use it
+pub const COLLISION_KINDS: usize = 16;
 
 /// The overlay window's controls a hotkey can be bound to, which show its key (`UiData::hotkeys`, by this index)
 #[repr(u32)]
@@ -47,7 +49,8 @@ pub enum HotkeyLabel {
     Npcs,
 }
 
-pub const HOTKEY_LABELS: usize = 12;
+// How many there are (the last one's index, plus one)
+pub const HOTKEY_LABELS: usize = HotkeyLabel::Npcs as usize + 1;
 
 #[repr(u32)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -178,14 +181,18 @@ pub const TRIGGER_ACTIONS: [&str; 28] = [
     "UI",
     "rumble",
     "saves state",
-    // Acts on or sends messages to a particular instance
-    "instances",
-    // Has a script, but nothing it does is known
-    "something else",
-    "no script",
-    // Not looked for yet
-    "unchecked",
+    ACTS_ON_INSTANCES,
+    DOES_SOMETHING_ELSE,
+    NO_SCRIPT,
+    UNCHECKED,
 ];
+
+// The `TRIGGER_ACTIONS` that aren't from `words.script_actions`: acts on or sends messages to a particular instance;
+// has a script, but nothing it does is known; has no script; not looked for yet
+pub const ACTS_ON_INSTANCES: &str = "instances";
+pub const DOES_SOMETHING_ELSE: &str = "something else";
+pub const NO_SCRIPT: &str = "no script";
+pub const UNCHECKED: &str = "unchecked";
 
 pub fn trigger_action_bit(name: &str) -> u32 {
     TRIGGER_ACTIONS.iter().position(|a| a.eq_ignore_ascii_case(name)).map_or(0, |i| 1 << i)
@@ -356,7 +363,7 @@ pub struct UiData {
     // How long the exe took to find them
     pub triangle_milliseconds: f32,
     // How many of the level's collision instances have each kind bit
-    pub mesh_kind_counts: [u32; 16],
+    pub mesh_kind_counts: [u32; COLLISION_KINDS],
     pub triangles: [Triangle; MAX_TRIANGLES],
 }
 

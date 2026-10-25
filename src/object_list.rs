@@ -4,7 +4,7 @@
 //! table -> DrawableComponent -> InstanceDrawable -> CommonRenderModelInstance -> CommonRenderModel -> the `Mesh`
 //! header). Where everything is is in the layout (`layout::InstanceLayout`).
 
-use crate::game_memory::{Handle, f32_at, pointer_at, read_pointer, u32_at, u64_at};
+use crate::game_memory::{Handle, pointer_at, read_c_string, read_pointer, u32_at, u64_at, vector_at};
 use crate::components::{self, Components};
 use crate::layout;
 use crate::position::Position;
@@ -50,6 +50,7 @@ impl ObjectList {
     pub fn instances(&mut self, handle: Handle) -> io::Result<Vec<Instance>> {
         let layout = layout::current();
         let (instance, placement_layout) = (&layout.instance, &layout.placement);
+        let words = crate::words::current();
         let mut instances = vec![];
         let mut bytes = vec![0u8; instance.size * SLOTS_PER_READ];
         for first_slot in (0..MAX_INSTANCES).step_by(SLOTS_PER_READ) {
@@ -71,9 +72,9 @@ impl ObjectList {
                         (self.name(handle, name), self.name(handle, full_name))
                     }
                 };
-                // Spawned instances have no placement, and SOTTR's placements are all called "?", so they go by what
-                // they are instead
-                let unnamed = |n: &str| n.is_empty() || n == "?";
+                // Spawned instances have no placement, and some games' placements all have a placeholder name
+                // (`words.placeholder_names`), so they go by what they are instead
+                let unnamed = |n: &str| n.is_empty() || words.placeholder_names.iter().any(|p| p == n);
                 let (name, full_name) = if unnamed(&name) {
                     match read_chain(handle, address, &instance.object_name) {
                         Some(object_name) => (self.name(handle, object_name), String::new()),
@@ -112,22 +113,20 @@ pub fn read_transform(handle: Handle, instance_address: usize) -> io::Result<[f3
     let layout = layout::current();
     let mut instance = vec![0u8; layout.instance.size];
     handle.copy_address(instance_address, &mut instance)?;
-    // Unscaled if instances don't point at their transform
-    let mut axes = [0u8; 48];
-    match layout.instance.transform {
+    // Each axis' scale, unscaled if instances don't point at their transform
+    let scale = match layout.instance.transform {
         Some(offset) => {
             let transform = pointer_at(&instance, offset);
             if transform == 0 {
                 return Err(crate::game_memory::unreadable("instance has no transform"));
             }
+            // Its first three rows are the object's axes
+            let mut axes = [0u8; 3 * 16];
             handle.copy_address(transform + layout.transform.matrix, &mut axes)?;
+            [0, 1, 2].map(|axis| vector_at(&axes, axis * 16).norm())
         }
-        None => {
-            for axis in 0..3 {
-                axes[axis * 16 + axis * 4..axis * 16 + axis * 4 + 4].copy_from_slice(&1f32.to_le_bytes());
-            }
-        }
-    }
+        None => [1.0; 3],
+    };
 
     let position = read_position_from(&instance, layout.instance.position);
     let rotation = read_position_from(&instance, layout.instance.rotation);
@@ -138,9 +137,7 @@ pub fn read_transform(handle: Handle, instance_address: usize) -> io::Result<[f3
     // Row-major for row vectors like the game's, so each row is an object axis in world space
     let mut matrix = [0f32; 16];
     for axis in 0..3 {
-        let old_axis = read_position_from(&axes, axis * 16);
-        let scale = old_axis.vector().norm();
-        let direction = rotation.matrix().column(axis) * scale;
+        let direction = rotation.matrix().column(axis) * scale[axis];
         matrix[axis * 4..axis * 4 + 3].copy_from_slice(direction.as_slice());
     }
     matrix[12..16].copy_from_slice(&[position.x, position.y, position.z, 1.0]);
@@ -151,6 +148,11 @@ pub fn read_transform(handle: Handle, instance_address: usize) -> io::Result<[f3
 pub fn to_world(transform: &[f32; 16], point: Vector3<f32>) -> Position {
     let row = |r: usize| Vector3::new(transform[r * 4], transform[r * 4 + 1], transform[r * 4 + 2]);
     Position::from(row(0) * point.x + row(1) * point.y + row(2) * point.z + row(3))
+}
+
+/// Where an object's origin is in world space, for its transform (its last row)
+pub fn origin(transform: &[f32; 16]) -> Position {
+    Position { x: transform[12], y: transform[13], z: transform[14] }
 }
 
 pub fn read_position(handle: Handle, instance_address: usize) -> io::Result<Position> {
@@ -180,37 +182,18 @@ pub fn read_bounds(
     Some((read_position_from(&bytes, layout.mesh_min), read_position_from(&bytes, layout.mesh_max)))
 }
 
-// Follows the pointers at each offset in turn
 /// What an instance is (its object type's name, e.g. "laracroft")
 pub fn object_name(handle: Handle, instance_address: usize) -> Option<String> {
     let address = read_chain(handle, instance_address, &layout::current().instance.object_name)?;
     Some(read_c_string(handle, address))
 }
 
+// Follows the pointers at each offset in turn
 fn read_chain(handle: Handle, address: usize, offsets: &[usize]) -> Option<usize> {
     offsets.iter().try_fold(address, |address, offset| read_pointer(handle, address + offset))
 }
 
-
 fn read_position_from(bytes: &[u8], offset: usize) -> Position {
-    Position {
-        x: f32_at(bytes, offset),
-        y: f32_at(bytes, offset + 4),
-        z: f32_at(bytes, offset + 8),
-    }
+    Position::from(vector_at(bytes, offset))
 }
-
-fn read_c_string(handle: Handle, address: usize) -> String {
-    // A long read can fail if the string is near the end of a page, so fall back to a short one
-    for length in [128, 16] {
-        let mut bytes = vec![0u8; length];
-        if handle.copy_address(address, &mut bytes).is_ok() {
-            let end = bytes.iter().position(|&c| c == 0).unwrap_or(length);
-            return String::from_utf8_lossy(&bytes[..end]).into_owned();
-        }
-    }
-    String::new()
-}
-
-
 

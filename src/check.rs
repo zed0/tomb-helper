@@ -22,6 +22,17 @@ use std::collections::BTreeSet;
 
 // Things of Lara's should be this close to her
 const NEAR_LARA: f32 = 300.0;
+// What's plausible, (more than, less than): her movement and combat proxies' radii, her hit capsules', the aim sweep's
+// length, and the camera's vertical fov (radians) and aspect ratio
+const PROXY_RADIUS: (f32, f32) = (5.0, 100.0);
+const HIT_CAPSULE_RADIUS: (f32, f32) = (1.0, 60.0);
+const AIM_SWEEP_LENGTH: (f32, f32) = (10.0, 300.0);
+const FOV: (f32, f32) = (0.1, 3.0);
+const ASPECT: (f32, f32) = (0.3, 5.0);
+
+fn within(value: f32, (above, below): (f32, f32)) -> bool {
+    value > above && value < below
+}
 // How many of the instances nearest Lara to look at
 const NEARBY: usize = 400;
 const SAMPLE: usize = 64;
@@ -334,7 +345,7 @@ fn check_camera(game: &Game, report: &mut Report) {
                 (field(camera.lens_near), field(camera.lens_far), field(camera.lens_fov), field(camera.lens_aspect));
             report.result(
                 "camera lens",
-                near > 0.0 && far > near && fov > 0.1 && fov < 3.0 && aspect > 0.3 && aspect < 5.0,
+                near > 0.0 && far > near && within(fov, FOV) && within(aspect, ASPECT),
                 format!("near {:.1}, far {:.0}, fov {:.2}, aspect {:.2}", near, far, fov, aspect),
             );
         }
@@ -372,7 +383,7 @@ fn check_combat_proxy(game: &Game, report: &mut Report, position: &Position) {
             let centre = capsule.a.midpoint(&capsule.b);
             report.result(
                 "combat proxy",
-                capsule.radius > 5.0 && capsule.radius < 100.0 && centre.distance(position) < NEAR_LARA * 2.0,
+                within(capsule.radius, PROXY_RADIUS) && centre.distance(position) < NEAR_LARA * 2.0,
                 format!(
                     "radius {:.1}, {:.0} from Lara, {}",
                     capsule.radius,
@@ -399,7 +410,7 @@ fn check_aim_sweep(game: &Game, report: &mut Report, components: &mut Components
             let length = rod.a.distance(&rod.b);
             report.result(
                 "aim sweep",
-                length > 10.0 && length < 300.0 && rod.a.distance(position) < NEAR_LARA,
+                within(length, AIM_SWEEP_LENGTH) && rod.a.distance(position) < NEAR_LARA,
                 format!(
                     "radius {:.1}, {:.0} long, starting {:.0} from Lara{}",
                     rod.radius,
@@ -428,7 +439,7 @@ fn check_proxy(game: &Game, report: &mut Report, components: &mut Components, la
                 let centre = shape.a.midpoint(&shape.b);
                 report.result(
                     "movement capsule",
-                    shape.radius > 5.0 && shape.radius < 100.0 && centre.distance(position) < NEAR_LARA,
+                    within(shape.radius, PROXY_RADIUS) && centre.distance(position) < NEAR_LARA,
                     format!(
                         "radius {:.1}, {:.0} from Lara, {} attached proxies",
                         shape.radius,
@@ -453,7 +464,7 @@ fn check_capsules(game: &Game, report: &mut Report, components: &mut Components,
         Ok(capsules) => {
             let good = capsules
                 .iter()
-                .filter(|c| c.radius > 1.0 && c.radius < 60.0 && c.a.midpoint(&c.b).distance(position) < NEAR_LARA)
+                .filter(|c| within(c.radius, HIT_CAPSULE_RADIUS) && c.a.midpoint(&c.b).distance(position) < NEAR_LARA)
                 .count();
             report.result(
                 "hit capsules",
@@ -473,7 +484,7 @@ fn check_collision_meshes(game: &Game, report: &mut Report, lara: &Position) {
     let mut classes = crate::rtti::Classes::new(game.base_address);
     // TR2013's scene has no RTTI, so it can only be checked by what's in it
     let class = classes.name(game.handle, scene);
-    if class.is_some() && class.as_deref() != Some(".?AVCollisionSceneClient@cdc@@") {
+    if class.is_some() && class.as_deref() != Some(crate::discover::COLLISION_SCENE_CLIENT) {
         return report.fail("collision meshes", format!("CollisionScene is a {:?}, not a CollisionSceneClient", class));
     }
     let mut meshes = CollisionMeshes::default();

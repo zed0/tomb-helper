@@ -85,6 +85,7 @@ fn default_cutscene_timing_file_output() -> String {
         .into()
 }
 
+// LiveSplit Server's own default
 fn default_livesplit_port() -> u32 {
     return 16834;
 }
@@ -157,7 +158,8 @@ fn default_collision_mesh_radius() -> f32 {
 }
 
 fn default_collision_mesh_other_kinds() -> u32 {
-    0xFFFF & !0x2
+    let all = (1u32 << crate::ui_ipc_data::COLLISION_KINDS) - 1;
+    all & !(crate::layout::CollisionInstanceLayout::default().player_kind as u32)
 }
 
 fn default_collision_mesh_fade() -> bool {

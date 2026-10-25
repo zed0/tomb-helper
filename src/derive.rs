@@ -23,7 +23,7 @@ use crate::find_process;
 use crate::offsets_file::{to_json, Hex, VersionEntry};
 use crate::pe_image::PeImage;
 use crate::normalised;
-use crate::witness;
+use crate::witness::{self, key, KEYS, MIN_MARGIN, MIN_SCORE, WINDOW};
 use crate::offsets_file::known_process_details;
 use crate::process_details::{AddressType, ProcessDetails};
 use process_memory::Architecture;
@@ -32,11 +32,8 @@ use std::cell::OnceCell;
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
-// Bytes compared either side of the 4-byte address field
-const WINDOW: usize = 32;
-// Fraction of window bytes that must match, and how far the best match must beat the runner-up
-const MIN_SCORE: f64 = 0.6;
-const MIN_MARGIN: f64 = 0.1;
+// References are matched like witnesses (`WINDOW` bytes either side, by `key`), around their 4-byte address field
+const ADDRESS_SIZE: usize = 4;
 // For pairing references to an already known address, which needs less evidence
 const MIN_PAIR_SCORE: f64 = 0.5;
 const MAX_REFERENCES: usize = 60;
@@ -133,20 +130,16 @@ pub fn reference_target(image: &PeImage, position: usize) -> Option<usize> {
         if d[position - 1] & 0xC7 != 0x05 {
             return None;
         }
-        (position as i64 + 4 + value as i32 as i64) as usize
+        (position as i64 + ADDRESS_SIZE as i64 + value as i32 as i64) as usize
     } else {
         (value as u64).wrapping_sub(image.image_base) as usize
     };
-    if target >= 0x1000 && target < d.len() {
+    // Past the headers
+    if target >= crate::pe_image::HEADERS_SIZE && target < d.len() {
         Some(target)
     } else {
         None
     }
-}
-
-// The two bytes before the address field, i.e. opcode + ModRM
-fn key(data: &[u8], position: usize) -> usize {
-    (data[position - 2] as usize) << 8 | data[position - 1] as usize
 }
 
 /// Every reference to a static address in an image, indexed by target and by key
@@ -160,7 +153,7 @@ pub struct References<'a> {
 
 impl<'a> References<'a> {
     pub fn new(image: &'a PeImage) -> References<'a> {
-        let end = image.data.len() - WINDOW - 4;
+        let end = image.data.len() - WINDOW - ADDRESS_SIZE;
         // On x86 any 4 bytes can look like an absolute address, so in code only count those an instruction uses
         let code: Vec<_> = image.sections().into_iter().filter(|s| s.executable && !image.is_64).collect();
         let is_used = |position: usize| {
@@ -173,7 +166,7 @@ impl<'a> References<'a> {
             .filter(|(_, position)| is_used(*position as usize))
             .collect();
         by_target.par_sort_unstable();
-        let mut by_key = vec![vec![]; 0x10000];
+        let mut by_key = vec![vec![]; KEYS];
         for (_, position) in &by_target {
             by_key[key(&image.data, *position as usize)].push(*position);
         }
@@ -197,13 +190,7 @@ impl<'a> References<'a> {
 }
 
 fn similarity(a: &[u8], p: usize, b: &[u8], q: usize) -> usize {
-    let before = a[p - WINDOW..p].iter().zip(&b[q - WINDOW..q]).filter(|(x, y)| x == y).count();
-    let after = a[p + 4..p + 4 + WINDOW]
-        .iter()
-        .zip(&b[q + 4..q + 4 + WINDOW])
-        .filter(|(x, y)| x == y)
-        .count();
-    before + after
+    witness::similarity(a, p, b, q, ADDRESS_SIZE)
 }
 
 fn fraction(score: usize) -> f64 {

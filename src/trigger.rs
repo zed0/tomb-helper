@@ -4,7 +4,7 @@
 //! trigger categories by name (`categorise`, `words.trigger_categories`); and trigger shapes (`read_shape`: box, plane,
 //! sphere, polygon volume), as world space outlines and faces (polygon caps are ear clipped, as they can be concave).
 
-use crate::game_memory::{Handle, f32_at, pointer_at, read_pointer, read_u32, u32_at, vector_at};
+use crate::game_memory::{Handle, floats_at, pointer_at, read_pointer, read_u32, u32_at, vector_at};
 use crate::components::{self, Components};
 use crate::layout;
 use crate::object_list;
@@ -13,10 +13,8 @@ use crate::ui_ipc_data::TriggerCategory;
 use nalgebra::{Matrix3, Vector3};
 use process_memory::CopyAddress;
 
-// Instances (game objects) are sorted by what they can do through their components, see `components`
-
-// The words that say what things are are in `words`
-
+// Instances (game objects) are sorted by what they can do through their components, see `components`. The words that
+// say what things are are in `words`.
 
 // Whether an instance with an interaction component is one Lara can use, going by its name
 pub fn for_lara(name: &str) -> bool {
@@ -32,7 +30,11 @@ pub fn categorise(name: &str, full_name: &str) -> TriggerCategory {
 }
 
 // Where things are in a trigger's shape is in `layout`
+
+// A polygon volume's corners at most
 const MAX_POLY_POINTS: usize = 64;
+// A shape's sizes beyond this are garbage
+const MAX_SIZE: f32 = 1e6;
 // Lines per circle when drawing spheres
 const SPHERE_SEGMENTS: usize = 24;
 // The filled sphere's slices round and from pole to pole
@@ -56,6 +58,9 @@ pub enum Shape {
 
 // Components listed at most
 const MAX_COMPONENT_DATA: usize = 64;
+// How much of a component's name is read (exactly this much, as snapshots only have what was read): longer ones are
+// left out
+const MAX_COMPONENT_NAME: usize = 48;
 
 pub fn read_kinds(handle: Handle, components: &mut Components, instance_address: usize) -> Kinds {
     let layout = layout::current();
@@ -95,7 +100,7 @@ fn read_component_names(handle: Handle, pointer_address: usize) -> Vec<String> {
     entries
         .chunks_exact(layout.entry_size)
         .filter_map(|entry| {
-            let mut name = [0u8; 48];
+            let mut name = [0u8; MAX_COMPONENT_NAME];
             handle.copy_address(pointer_at(entry, layout.name), &mut name).ok()?;
             let end = name.iter().position(|&c| c == 0)?;
             Some(String::from_utf8_lossy(&name[..end]).to_lowercase())
@@ -118,10 +123,12 @@ fn trigger_object(handle: Handle, components: &mut Components, instance_address:
 // A trigger's shape from its game object (TR2013)
 fn read_object_shape(handle: Handle, object: usize, volume: bool) -> Option<Shape> {
     let layout = &layout::current().trigger_object;
-    let mut bytes = vec![0u8; layout.volume_size.max(layout.plane_size) + 0xC];
+    // Up to the end of the sizes (at most 3 floats)
+    let mut bytes = vec![0u8; layout.volume_size.max(layout.plane_size) + std::mem::size_of::<[f32; 3]>()];
     handle.copy_address(object, &mut bytes).ok()?;
     if !volume {
-        return Some(Shape::Plane(f32_at(&bytes, layout.plane_size), f32_at(&bytes, layout.plane_size + 4)));
+        let [width, height] = floats_at(&bytes, layout.plane_size);
+        return Some(Shape::Plane(width, height));
     }
     let shape_type = u32_at(&bytes, layout.volume_type) as usize;
     let size = vector_at(&bytes, layout.volume_size);
@@ -140,7 +147,7 @@ pub fn read_shape(handle: Handle, components: &mut Components, instance_address:
         Some((object, volume)) => read_object_shape(handle, object, volume),
         None => read_component_shape(handle, components, instance_address),
     }?;
-    let sane = |v: f32| v.is_finite() && v.abs() < 1e6;
+    let sane = |v: f32| v.is_finite() && v.abs() < MAX_SIZE;
     let ok = match &shape {
         Shape::Box(half) => half.iter().all(|&v| sane(v)),
         Shape::Plane(x, y) => sane(*x) && sane(*y),
@@ -161,14 +168,14 @@ fn read_component_shape(handle: Handle, components: &mut Components, instance_ad
     let record = read_pointer(handle, component + layout.shape)?;
     let mut bytes = vec![0u8; layout.record_size];
     handle.copy_address(record, &mut bytes).ok()?;
-    let size = |i: usize| f32_at(&bytes, layout.size + i * 4);
+    let [x, y, z] = floats_at(&bytes, layout.size);
     let shape_type = u32_at(&bytes, layout.shape_type) as usize;
     let shape = if shape_type == layout.box_type {
-        Shape::Box(Vector3::new(size(0), size(1), size(2)))
+        Shape::Box(Vector3::new(x, y, z))
     } else if shape_type == layout.plane_type {
-        Shape::Plane(size(0), size(1))
+        Shape::Plane(x, y)
     } else if shape_type == layout.sphere_type {
-        Shape::Sphere(size(0))
+        Shape::Sphere(x)
     } else if shape_type == layout.poly_type {
         let count = u32_at(&bytes, layout.poly_count) as usize;
         if count == 0 || count > MAX_POLY_POINTS {
@@ -176,7 +183,8 @@ fn read_component_shape(handle: Handle, components: &mut Components, instance_ad
         }
         let mut points = vec![0u8; count * layout.poly_point_size];
         handle.copy_address(pointer_at(&bytes, layout.poly_points), &mut points).ok()?;
-        Shape::Poly(points.chunks_exact(layout.poly_point_size).map(|p| (vector_at(p, 0), vector_at(p, 16))).collect())
+        let point = |p: &[u8]| (vector_at(p, 0), vector_at(p, layout.poly_sweep));
+        Shape::Poly(points.chunks_exact(layout.poly_point_size).map(point).collect())
     } else {
         return None;
     };
@@ -190,13 +198,7 @@ pub fn outline(shape: &Shape, matrix: &[f32; 16]) -> Vec<(Position, Position)> {
     let mut line = |a: Vector3<f32>, b: Vector3<f32>| lines.push((world(a), world(b)));
     match shape {
         Shape::Box(half) => {
-            let corner = |i: usize| {
-                Vector3::new(
-                    if i & 1 != 0 { half.x } else { -half.x },
-                    if i & 2 != 0 { half.y } else { -half.y },
-                    if i & 4 != 0 { half.z } else { -half.z },
-                )
-            };
+            let corner = |i: usize| box_corner(half, i);
             for a in 0..8 {
                 for axis in [1, 2, 4] {
                     if a & axis == 0 {
@@ -235,6 +237,12 @@ pub fn outline(shape: &Shape, matrix: &[f32; 16]) -> Vec<(Position, Position)> {
     lines
 }
 
+// Corner `i` (0 to 7) of a box of these half extents: + along each axis whose bit (1 x, 2 y, 4 z) is set in `i`
+fn box_corner(half: &Vector3<f32>, i: usize) -> Vector3<f32> {
+    let sign = |bit: usize| if i & bit != 0 { 1.0 } else { -1.0 };
+    Vector3::new(half.x * sign(1), half.y * sign(2), half.z * sign(4))
+}
+
 // A plane is upright in its instance's space: half its width along x, half its height along z (going by the bounds the
 // game keeps for it, TriggerComponent +0xC0/+0xD0)
 fn plane_corners(x: f32, z: f32) -> [Vector3<f32>; 4] {
@@ -248,7 +256,7 @@ pub fn contains(shape: &Shape, matrix: &[f32; 16], point: &Position) -> bool {
     let m = Matrix3::new(
         matrix[0], matrix[4], matrix[8], matrix[1], matrix[5], matrix[9], matrix[2], matrix[6], matrix[10],
     );
-    let offset = Vector3::new(point.x - matrix[12], point.y - matrix[13], point.z - matrix[14]);
+    let offset = point.vector() - object_list::origin(matrix).vector();
     let local = match m.try_inverse() {
         Some(inverse) => inverse * offset,
         None => return false,
@@ -297,13 +305,7 @@ pub fn faces(shape: &Shape, matrix: &[f32; 16]) -> Vec<[Position; 3]> {
     };
     match shape {
         Shape::Box(half) => {
-            let corner = |i: usize| {
-                Vector3::new(
-                    if i & 1 != 0 { half.x } else { -half.x },
-                    if i & 2 != 0 { half.y } else { -half.y },
-                    if i & 4 != 0 { half.z } else { -half.z },
-                )
-            };
+            let corner = |i: usize| box_corner(half, i);
             // Each side is the corners with one axis' bit fixed, in order round it
             for (axis, others) in [(1, [2, 4]), (2, [1, 4]), (4, [1, 2])] {
                 for side in [0, axis] {
@@ -393,11 +395,6 @@ fn triangulate(polygon: &[Vector3<f32>]) -> Vec<[usize; 3]> {
     }
     triangles
 }
-
-
-
-
-
 
 #[cfg(test)]
 mod tests {

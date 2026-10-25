@@ -3,10 +3,11 @@
 //! space triangles near a point, closest first, tagged floor, wall or ceiling by their normal. `raycast` finds where a
 //! line first hits them.
 
-use crate::game_memory::{Handle, pointer_at, read_u32, u16_at, u32_at, vector_at};
+use crate::game_memory::{Handle, floats_at, pointer_at, read_u32, u16_at, u32_at, vector_at};
 use crate::layout;
+use crate::object_list;
 use crate::position::Position;
-use crate::ui_ipc_data::{SurfaceKind, Triangle};
+use crate::ui_ipc_data::{SurfaceKind, Triangle, COLLISION_KINDS};
 use nalgebra::Vector3;
 use process_memory::CopyAddress;
 use std::collections::{HashMap, HashSet};
@@ -29,6 +30,9 @@ const FLOOR_NORMAL_Z: f32 = 0.7;
 const NEARBY_MARGIN: f32 = 1500.0;
 // Instances are tested against a ray if it passes this close to where they were when the list was last read
 const RAY_MARGIN: f32 = 100.0;
+// Vertices of 3 f32s (`collision_mesh.format_float`) or 3 f16s (`format_half`)
+const FLOAT_VERTEX_SIZE: usize = 12;
+const HALF_VERTEX_SIZE: usize = 6;
 
 struct Placement {
     address: usize,
@@ -38,8 +42,8 @@ struct Placement {
     // World space bounds when the list was read
     min: Vector3<f32>,
     max: Vector3<f32>,
-    // Its triangles in world space, and the matrix they were placed with
-    placed: Option<(Vec<u8>, Vec<PlacedTriangle>)>,
+    // The matrix its triangles were placed with (as bits), and the triangles in world space
+    placed: Option<([u32; 16], Vec<PlacedTriangle>)>,
 }
 
 struct PlacedTriangle {
@@ -59,8 +63,8 @@ pub struct Mesh {
 pub struct CollisionMeshes {
     placements: Vec<Placement>,
     meshes: HashMap<usize, Mesh>,
-    /// How many of the level's instances have each of the 16 kind bits, as of the last refresh
-    pub kind_counts: [u32; 16],
+    /// How many of the level's instances have each kind bit, as of the last refresh
+    pub kind_counts: [u32; COLLISION_KINDS],
 }
 
 impl CollisionMeshes {
@@ -90,7 +94,7 @@ impl CollisionMeshes {
         let mut placements: Vec<Placement> = vec![];
         // Many meshes are loaded twice and placed in the same place, with different kinds; the index of the one kept
         let mut seen = HashMap::new();
-        let mut kind_counts = [0u32; 16];
+        let mut kind_counts = [0u32; COLLISION_KINDS];
         let mut address = pointer_at(&scene, scene_layout.first);
         let mut bytes = vec![0u8; instance.size];
         let mut visited = 0;
@@ -245,15 +249,17 @@ fn place(handle: Handle, placement: &mut Placement, meshes: &mut HashMap<usize, 
         };
         placement.placed = None;
     }
-    let mut matrix = bytes[layout.matrix..layout.matrix + 0x40].to_vec();
+    let mut matrix: [f32; 16] = floats_at(bytes, layout.matrix);
     // The origin goes on the translation (the last row)
-    let translation = vector_at(&matrix, 48) + origin(bytes);
+    let origin = origin(bytes);
     for axis in 0..3 {
-        matrix[48 + axis * 4..52 + axis * 4].copy_from_slice(&translation[axis].to_le_bytes());
+        matrix[12 + axis] += origin[axis];
     }
-    if placement.placed.as_ref().map_or(true, |(m, _)| *m != matrix) {
+    // Compared by bits, so a NaN in it doesn't make it look changed every time
+    let bits = matrix.map(f32::to_bits);
+    if placement.placed.as_ref().map_or(true, |(placed_with, _)| *placed_with != bits) {
         let triangles = place_triangles(&meshes[&placement.mesh], &matrix, placement.flipped, placement.detailed);
-        placement.placed = Some((matrix, triangles));
+        placement.placed = Some((bits, triangles));
     }
     true
 }
@@ -312,14 +318,14 @@ pub fn read_mesh(handle: Handle, address: usize) -> io::Result<Mesh> {
 
     let format = u16_at(&header, layout.vertex_format) as usize;
     let vertices = if format == layout.format_float {
-        let mut bytes = vec![0u8; vertex_count * 12];
+        let mut bytes = vec![0u8; vertex_count * FLOAT_VERTEX_SIZE];
         handle.copy_address(pointer_at(&header, layout.vertices), &mut bytes)?;
-        bytes.chunks_exact(12).map(|v| vector_at(v, 0)).collect()
+        bytes.chunks_exact(FLOAT_VERTEX_SIZE).map(|v| vector_at(v, 0)).collect()
     } else if format == layout.format_half {
-        let mut bytes = vec![0u8; vertex_count * 6];
+        let mut bytes = vec![0u8; vertex_count * HALF_VERTEX_SIZE];
         handle.copy_address(pointer_at(&header, layout.vertices), &mut bytes)?;
         bytes
-            .chunks_exact(6)
+            .chunks_exact(HALF_VERTEX_SIZE)
             .map(|v| Vector3::new(half_at(v, 0), half_at(v, 2), half_at(v, 4)))
             .collect()
     } else {
@@ -339,15 +345,9 @@ pub fn read_mesh(handle: Handle, address: usize) -> io::Result<Mesh> {
     Ok(Mesh { header, vertices, triangles })
 }
 
-// The mesh's triangles in world space
-fn place_triangles(mesh: &Mesh, matrix: &[u8], flipped: bool, detailed: bool) -> Vec<PlacedTriangle> {
-    // `point * matrix` for the game's row-major matrices of row vectors
-    let rows = [vector_at(matrix, 0), vector_at(matrix, 16), vector_at(matrix, 32), vector_at(matrix, 48)];
-    let world: Vec<Vector3<f32>> = mesh
-        .vertices
-        .iter()
-        .map(|v| rows[0] * v.x + rows[1] * v.y + rows[2] * v.z + rows[3])
-        .collect();
+// The mesh's triangles in world space, for its instance's row-major object-to-world matrix of row vectors
+fn place_triangles(mesh: &Mesh, matrix: &[f32; 16], flipped: bool, detailed: bool) -> Vec<PlacedTriangle> {
+    let world: Vec<Vector3<f32>> = mesh.vertices.iter().map(|&v| object_list::to_world(matrix, v).vector()).collect();
 
     mesh.triangles
         .iter()
@@ -386,11 +386,6 @@ fn box_distance(point: &Vector3<f32>, min: &Vector3<f32>, max: &Vector3<f32>) ->
     (min - point).sup(&(point - max)).sup(&Vector3::zeros()).norm()
 }
 
-
-
-
-
-
 // IEEE half precision, without infinities or NaNs (like the game's conversion)
 fn half_at(bytes: &[u8], offset: usize) -> f32 {
     let bits = u16_at(bytes, offset) as u32;
@@ -424,8 +419,10 @@ mod tests {
         assert!(!ray_hits_box(&Vector3::new(2.0, 0.5, 5.0), &down, 10.0, &min, &max));
     }
 
-    fn matrix_bytes(rows: [[f32; 4]; 4]) -> Vec<u8> {
-        rows.iter().flatten().flat_map(|f| f.to_le_bytes()).collect()
+    fn matrix(rows: [[f32; 4]; 4]) -> [f32; 16] {
+        let mut matrix = [0.0; 16];
+        matrix.iter_mut().zip(rows.iter().flatten()).for_each(|(m, r)| *m = *r);
+        matrix
     }
 
     fn square_mesh() -> Mesh {
@@ -456,7 +453,7 @@ mod tests {
     #[test]
     fn triangles_are_placed_in_the_world() {
         // Rotated 90 degrees about x (y goes to z) and moved up 100
-        let matrix = matrix_bytes([
+        let matrix = matrix([
             [1., 0., 0., 0.],
             [0., 0., 1., 0.],
             [0., -1., 0., 0.],
@@ -473,7 +470,7 @@ mod tests {
 
     #[test]
     fn winding_gives_the_kind_and_flipping_reverses_it() {
-        let identity = matrix_bytes([[1., 0., 0., 0.], [0., 1., 0., 0.], [0., 0., 1., 0.], [0., 0., 0., 1.]]);
+        let identity = matrix([[1., 0., 0., 0.], [0., 1., 0., 0.], [0., 0., 1., 0.], [0., 0., 0., 1.]]);
         let kind = |flipped| place_triangles(&square_mesh(), &identity, flipped, false)[0].triangle.kind;
         assert_eq!(kind(false), SurfaceKind::Floor);
         assert_eq!(kind(true), SurfaceKind::Ceiling);

@@ -2,6 +2,7 @@
 //! `fetch_from_game` reads it, `apply_to_game` writes it back. Used by the position and cutscene handlers; everything
 //! else reads through `game_memory`.
 
+use crate::process_details::{AddressOffsets, AddressType};
 use process_memory::{Architecture, DataMember, Memory, ProcessHandle};
 use std::io;
 
@@ -26,6 +27,20 @@ impl<T: Copy + std::fmt::Debug> TrackedMemory<T> {
             arch,
             base_addr,
         }
+    }
+
+    /// The value at `address_type`'s offsets, starting as the default, if the version has them
+    pub fn find(
+        address_offsets: &AddressOffsets,
+        address_type: AddressType,
+        arch: Architecture,
+        base_addr: usize,
+    ) -> Option<TrackedMemory<T>>
+    where
+        T: Default,
+    {
+        let offsets = address_offsets.get(&address_type)?;
+        Some(TrackedMemory::new(T::default(), offsets.clone(), arch, base_addr))
     }
 
     pub fn offsets_with_base(&self) -> Vec<usize> {

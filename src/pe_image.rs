@@ -18,6 +18,41 @@ pub struct PeImage {
     pub image_base: u64,
 }
 
+// Where things are in the headers (learn.microsoft.com/en-us/windows/win32/debug/pe-format). In the DOS header, the
+// offset of the "PE\0\0" signature, which the COFF header follows.
+pub const PE_SIGNATURE_OFFSET: usize = 0x3C;
+// From the signature: u16 section count, u16 optional header size, and the optional header
+const SECTION_COUNT: usize = 6;
+const OPTIONAL_HEADER_SIZE: usize = 20;
+pub const OPTIONAL_HEADER: usize = 24;
+// In the optional header: its magic (PE32 or PE32+), the image base (a u64 in PE32+), u32 size of the image in memory,
+// and the data directories, of which the second is the imports'
+const PE32_MAGIC: u16 = 0x10B;
+const PE32_PLUS_MAGIC: u16 = 0x20B;
+const IMAGE_BASE_32: usize = 28;
+const IMAGE_BASE_64: usize = 24;
+pub const SIZE_OF_IMAGE: usize = 56;
+const DATA_DIRECTORIES_32: usize = 96;
+const DATA_DIRECTORIES_64: usize = 112;
+const IMPORT_DIRECTORY: usize = 8;
+// Section headers: u32 virtual size, virtual address, raw size, raw pointer and characteristics
+const SECTION_HEADER_SIZE: usize = 40;
+const SECTION_VIRTUAL_SIZE: usize = 8;
+const SECTION_VIRTUAL_ADDRESS: usize = 12;
+const SECTION_RAW_SIZE: usize = 16;
+const SECTION_RAW_POINTER: usize = 20;
+const SECTION_CHARACTERISTICS: usize = 36;
+// Import descriptors: u32 RVAs of the import lookup table, the DLL's name and the import address table
+const IMPORT_DESCRIPTOR_SIZE: usize = 20;
+const IMPORT_LOOKUP_TABLE: usize = 0;
+const IMPORT_NAME: usize = 12;
+const IMPORT_ADDRESS_TABLE: usize = 16;
+// A named import's lookup entry points at a u16 hint, then its name
+const IMPORT_HINT_SIZE: usize = 2;
+const MAX_IMPORT_NAME: usize = 256;
+/// The headers fit in the first page
+pub const HEADERS_SIZE: usize = 0x1000;
+
 fn invalid(msg: &str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, msg.to_string())
 }
@@ -50,34 +85,34 @@ fn parse_headers(data: &[u8]) -> io::Result<Headers> {
     if data.get(0..2) != Some(b"MZ") {
         return Err(invalid("Not a PE file (missing MZ)"));
     }
-    let pe = u32_at(data, 0x3C)? as usize;
+    let pe = u32_at(data, PE_SIGNATURE_OFFSET)? as usize;
     if data.get(pe..pe + 4) != Some(b"PE\0\0") {
         return Err(invalid("Not a PE file (missing PE signature)"));
     }
-    let section_count = u16_at(data, pe + 6)? as usize;
-    let optional_header_size = u16_at(data, pe + 20)? as usize;
-    let optional_header = pe + 24;
+    let section_count = u16_at(data, pe + SECTION_COUNT)? as usize;
+    let optional_header_size = u16_at(data, pe + OPTIONAL_HEADER_SIZE)? as usize;
+    let optional_header = pe + OPTIONAL_HEADER;
     let is_64 = match u16_at(data, optional_header)? {
-        0x10B => false,
-        0x20B => true,
+        PE32_MAGIC => false,
+        PE32_PLUS_MAGIC => true,
         _ => return Err(invalid("Unknown optional header magic")),
     };
     let image_base = if is_64 {
-        u64_at(data, optional_header + 24)?
+        u64_at(data, optional_header + IMAGE_BASE_64)?
     } else {
-        u32_at(data, optional_header + 28)? as u64
+        u32_at(data, optional_header + IMAGE_BASE_32)? as u64
     };
-    let size_of_image = u32_at(data, optional_header + 56)? as usize;
+    let size_of_image = u32_at(data, optional_header + SIZE_OF_IMAGE)? as usize;
 
     let section_table = optional_header + optional_header_size;
     let sections = (0..section_count)
         .map(|i| {
-            let s = section_table + i * 40;
+            let s = section_table + i * SECTION_HEADER_SIZE;
             Ok((
-                u32_at(data, s + 12)? as usize,
-                u32_at(data, s + 8)? as usize,
-                u32_at(data, s + 20)? as usize,
-                u32_at(data, s + 16)? as usize,
+                u32_at(data, s + SECTION_VIRTUAL_ADDRESS)? as usize,
+                u32_at(data, s + SECTION_VIRTUAL_SIZE)? as usize,
+                u32_at(data, s + SECTION_RAW_POINTER)? as usize,
+                u32_at(data, s + SECTION_RAW_SIZE)? as usize,
             ))
         })
         .collect::<io::Result<_>>()?;
@@ -115,7 +150,7 @@ impl PeImage {
         }
 
         let mut data = vec![0_u8; headers.size_of_image];
-        let header_size = 0x1000.min(file.len());
+        let header_size = HEADERS_SIZE.min(file.len());
         data[..header_size].copy_from_slice(&file[..header_size]);
         for (va, virtual_size, raw_ptr, raw_size) in headers.sections {
             let len = raw_size
@@ -184,7 +219,7 @@ impl PeImage {
 
     /// Whether a running process's main module (at `base_address`) is 64-bit, from its headers
     pub fn process_is_64(handle: impl CopyAddress, base_address: usize) -> io::Result<bool> {
-        let mut headers = vec![0_u8; 0x1000];
+        let mut headers = vec![0_u8; HEADERS_SIZE];
         handle.copy_address(base_address, &mut headers)?;
         Ok(parse_headers(&headers)?.is_64)
     }
@@ -197,19 +232,20 @@ impl PeImage {
     pub fn sections(&self) -> Vec<Section> {
         let data = &self.data;
         let parse = || -> io::Result<Vec<Section>> {
-            let pe = u32_at(data, 0x3C)? as usize;
+            let pe = u32_at(data, PE_SIGNATURE_OFFSET)? as usize;
             if data.get(pe..pe + 4) != Some(b"PE\0\0") {
                 return Err(invalid("No PE header"));
             }
-            let section_count = u16_at(data, pe + 6)? as usize;
-            let section_table = pe + 24 + u16_at(data, pe + 20)? as usize;
+            let section_count = u16_at(data, pe + SECTION_COUNT)? as usize;
+            let section_table = pe + OPTIONAL_HEADER + u16_at(data, pe + OPTIONAL_HEADER_SIZE)? as usize;
             (0..section_count)
                 .map(|i| {
-                    let s = section_table + i * 40;
-                    let characteristics = u32_at(data, s + 36)?;
+                    let s = section_table + i * SECTION_HEADER_SIZE;
+                    let characteristics = u32_at(data, s + SECTION_CHARACTERISTICS)?;
+                    let start = u32_at(data, s + SECTION_VIRTUAL_ADDRESS)? as usize;
                     Ok(Section {
-                        start: u32_at(data, s + 12)? as usize,
-                        end: u32_at(data, s + 12)? as usize + u32_at(data, s + 8)? as usize,
+                        start,
+                        end: start + u32_at(data, s + SECTION_VIRTUAL_SIZE)? as usize,
                         executable: characteristics & SECTION_EXECUTE != 0,
                         writable: characteristics & SECTION_WRITE != 0,
                     })
@@ -224,10 +260,10 @@ impl PeImage {
         let data = &self.data;
         let mut imports = HashMap::new();
         let parse = |imports: &mut HashMap<usize, String>| -> io::Result<()> {
-            let pe = u32_at(data, 0x3C)? as usize;
-            let optional_header = pe + 24;
-            let directories = optional_header + if self.is_64 { 112 } else { 96 };
-            let mut descriptor = u32_at(data, directories + 8)? as usize;
+            let pe = u32_at(data, PE_SIGNATURE_OFFSET)? as usize;
+            let optional_header = pe + OPTIONAL_HEADER;
+            let directories = optional_header + if self.is_64 { DATA_DIRECTORIES_64 } else { DATA_DIRECTORIES_32 };
+            let mut descriptor = u32_at(data, directories + IMPORT_DIRECTORY)? as usize;
             let slot_size = if self.is_64 { 8 } else { 4 };
             let slot_at = |offset: usize| -> io::Result<u64> {
                 if self.is_64 {
@@ -237,28 +273,29 @@ impl PeImage {
                 }
             };
             let ordinal_flag = if self.is_64 { 1 << 63 } else { 1 << 31 };
-            while descriptor != 0 && u32_at(data, descriptor + 12)? != 0 {
+            while descriptor != 0 && u32_at(data, descriptor + IMPORT_NAME)? != 0 {
                 // Names come from the import lookup table, since a loaded image's address table holds the addresses
-                let lookup = match u32_at(data, descriptor)? as usize {
-                    0 => u32_at(data, descriptor + 16)? as usize,
+                let table = u32_at(data, descriptor + IMPORT_ADDRESS_TABLE)? as usize;
+                let lookup = match u32_at(data, descriptor + IMPORT_LOOKUP_TABLE)? as usize {
+                    0 => table,
                     lookup => lookup,
                 };
-                let table = u32_at(data, descriptor + 16)? as usize;
                 for i in 0.. {
                     let entry = slot_at(lookup + i * slot_size)?;
                     if entry == 0 {
                         break;
                     }
                     if entry & ordinal_flag == 0 {
-                        let name = (entry as usize + 2..data.len().min(entry as usize + 258))
+                        let start = entry as usize + IMPORT_HINT_SIZE;
+                        let name = (start..data.len().min(start + MAX_IMPORT_NAME))
                             .find(|&end| data[end] == 0)
-                            .map(|end| String::from_utf8_lossy(&data[entry as usize + 2..end]).into_owned());
+                            .map(|end| String::from_utf8_lossy(&data[start..end]).into_owned());
                         if let Some(name) = name {
                             imports.insert(table + i * slot_size, name);
                         }
                     }
                 }
-                descriptor += 20;
+                descriptor += IMPORT_DESCRIPTOR_SIZE;
             }
             Ok(())
         };

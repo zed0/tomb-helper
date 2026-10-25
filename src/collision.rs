@@ -3,9 +3,10 @@
 //! camera and weapon, or TR2013's combat proxy) (`read_proxy`), including which of them is pushing her (a contact on
 //! its surface).
 
-use crate::game_memory::{Handle, f32_at, pointer_at, read_pointer_or_null, read_u32, u32_at, u64_at, vector_at};
+use crate::game_memory::{Handle, f32_at, floats_at, pointer_at, read_pointer_or_null, read_u32, u32_at, u64_at, vector_at};
 use crate::components::{self, Components};
 use crate::layout;
+use crate::object_list;
 use crate::position::Position;
 use crate::ui_ipc_data::{Capsule, Probe};
 use nalgebra::{Quaternion, UnitQuaternion, Vector3};
@@ -15,6 +16,21 @@ use std::io;
 // Lara's (and characters') hit capsules ("DefensiveCapsule_head", ...) are listed in their CollideComponent, each
 // attached to a bone of their skeleton. The TransformComponent's bone matrices (unlike its own matrix) are kept up to
 // date. Where everything is is in `layout`.
+
+// Hit shapes listed at most (a count above this is garbage)
+const MAX_HIT_SHAPES: usize = 256;
+// Below this, a length (squared) is taken as zero
+const EPSILON: f32 = 1e-6;
+
+// The ends of a capsule's cylinder part, which runs along its z axis
+fn capsule_ends(centre: Vector3<f32>, rotation: UnitQuaternion<f32>, length: f32) -> (Vector3<f32>, Vector3<f32>) {
+    let half_axis = rotation * Vector3::z() * (length / 2.0);
+    (centre - half_axis, centre + half_axis)
+}
+
+fn capsule(ends: (Vector3<f32>, Vector3<f32>), radius: f32) -> Capsule {
+    Capsule { a: Position::from(ends.0), b: Position::from(ends.1), radius }
+}
 
 #[derive(Debug, Clone)]
 pub struct CapsuleShape {
@@ -40,7 +56,7 @@ pub fn read_capsule_shapes(
     handle.copy_address(collide, &mut header)?;
     let shapes = pointer_at(&header, layout.shapes);
     let count = u32_at(&header, layout.shape_count) as usize;
-    if shapes == 0 || count > 256 {
+    if shapes == 0 || count > MAX_HIT_SHAPES {
         return Ok(vec![]);
     }
 
@@ -48,20 +64,21 @@ pub fn read_capsule_shapes(
     handle.copy_address(shapes, &mut entries)?;
     let mut capsules = vec![];
     for entry in entries.chunks_exact(layout.entry_size) {
-        let id = u64_at(entry, layout.entry_id) as usize;
-        if ((id >> 16) as usize) & 0xFF & layout.capsule_type_mask != layout.capsule_type {
+        // Byte 2 of the id is the shape's type, the high u32 its bone
+        let id = u64_at(entry, layout.entry_id);
+        if id.to_le_bytes()[2] as usize & layout.capsule_type_mask != layout.capsule_type {
             continue;
         }
         let mut shape = vec![0u8; layout.capsule_size];
         handle.copy_address(pointer_at(entry, layout.entry_shape), &mut shape)?;
 
         let rotation = quaternion_at(&shape, layout.capsule_rotation);
-        let centre = vector_at(&shape, layout.capsule_centre);
-        let half_axis = rotation * Vector3::z() * (f32_at(&shape, layout.capsule_length) / 2.0);
+        let (a, b) = capsule_ends(vector_at(&shape, layout.capsule_centre), rotation, f32_at(&shape, layout.capsule_length));
         capsules.push(CapsuleShape {
-            bone: (id >> 32) + 1,
-            a: centre - half_axis,
-            b: centre + half_axis,
+            // Bone n's matrix is the n + 1th
+            bone: (id >> 32) as usize + 1,
+            a,
+            b,
             radius: f32_at(&shape, layout.capsule_radius),
         });
     }
@@ -95,9 +112,10 @@ pub fn place_capsules(
         .iter()
         .map(|shape| {
             let bone = &bones[shape.bone * bone_size..(shape.bone + 1) * bone_size];
+            let matrix: [f32; 16] = floats_at(bone, 0);
             Capsule {
-                a: to_world(bone, &shape.a),
-                b: to_world(bone, &shape.b),
+                a: object_list::to_world(&matrix, shape.a),
+                b: object_list::to_world(&matrix, shape.b),
                 radius: shape.radius,
             }
         })
@@ -183,27 +201,28 @@ pub fn read_proxy(handle: Handle, proxy: usize, standalone: &[usize]) -> io::Res
 
     // The physics shape is what's actually swept, so prefer it for the shape in use
     let body = layout.body.map(|offset| pointer_at(&bytes, offset)).filter(|&body| body != 0);
+    // Radius and length
+    let size_at = |offset: usize| {
+        let [radius, length] = floats_at(&bytes, offset);
+        Vector3::new(radius, length, 0.0)
+    };
     if let Some((capsule, physics_centre, _)) = body.and_then(|body| read_physics_capsule(handle, body)) {
-        let size = Vector3::new(f32_at(&bytes, shapes[0].size), f32_at(&bytes, shapes[0].size + 4), 0.0);
-        capsules.push(ProxyCapsule { size, offset: in_use_offset, capsule });
+        capsules.push(ProxyCapsule { size: size_at(shapes[0].size), offset: in_use_offset, capsule });
         centre = physics_centre;
     }
 
     for shape in &shapes {
-        let radius = f32_at(&bytes, shape.size);
-        let length = f32_at(&bytes, shape.size + 4);
+        let size = size_at(shape.size);
+        let (radius, length) = (size.x, size.y);
         let offset = vector_at(&bytes, shape.offset);
         let rotation = quaternion_at(&bytes, shape.rotation);
-        let size = Vector3::new(radius, length, 0.0);
         let same = |c: &ProxyCapsule| (c.size - size).norm() < PROXY_SAME_SHAPE && (c.offset - offset).norm() < PROXY_SAME_SHAPE;
         if capsules.iter().any(same) {
             continue;
         }
         let shape_centre = centre + rotation * (offset - in_use_offset);
-        let half_axis = rotation * quaternion_at(&bytes, shape.local_rotation) * Vector3::z() * (length / 2.0);
-        let capsule =
-            Capsule { a: Position::from(shape_centre - half_axis), b: Position::from(shape_centre + half_axis), radius };
-        capsules.push(ProxyCapsule { size, offset, capsule });
+        let ends = capsule_ends(shape_centre, rotation * quaternion_at(&bytes, shape.local_rotation), length);
+        capsules.push(ProxyCapsule { size, offset, capsule: capsule(ends, radius) });
     }
     let shapes: Vec<Capsule> = capsules.into_iter().map(|c| c.capsule).collect();
 
@@ -211,7 +230,8 @@ pub fn read_proxy(handle: Handle, proxy: usize, standalone: &[usize]) -> io::Res
     // unless it's just touching her own capsule (the camera does whenever she aims).
     let contacts = read_contacts(handle, proxy);
     let on_contact = |capsule: &Capsule| {
-        contacts.iter().any(|c| (distance_to_capsule(c, capsule) - capsule.radius).abs() <= CONTACT_TOLERANCE)
+        let (a, b) = (capsule.a.vector(), capsule.b.vector());
+        contacts.iter().any(|c| (distance_to_segment(c, &a, &b) - capsule.radius).abs() <= CONTACT_TOLERANCE)
     };
     let mut attached = body.map_or(vec![], |body| read_attached_capsules(handle, body));
     // They only collide while she aims, when the camera's touching flag is always set as it overlaps her capsule
@@ -281,25 +301,9 @@ pub fn read_contacts(handle: Handle, proxy: usize) -> Vec<Vector3<f32>> {
     (0..count).map(|i| vector_at(&records, i * layout.contact_size)).collect()
 }
 
-fn capsule_segment(capsule: &Capsule) -> (Vector3<f32>, Vector3<f32>) {
-    (
-        capsule.a.vector(),
-        capsule.b.vector(),
-    )
-}
-
-// From the point to the capsule's segment
-fn distance_to_capsule(point: &Vector3<f32>, capsule: &Capsule) -> f32 {
-    let (a, b) = capsule_segment(capsule);
-    let line = b - a;
-    let t = ((point - a).dot(&line) / line.norm_squared().max(1e-6)).clamp(0.0, 1.0);
-    (point - (a + line * t)).norm()
-}
-
 fn capsules_overlap(first: &Capsule, second: &Capsule) -> bool {
-    let (a, b) = capsule_segment(first);
-    let (c, d) = capsule_segment(second);
-    segment_distance(a, b, c, d) < first.radius + second.radius
+    let distance = segment_distance(first.a.vector(), first.b.vector(), second.a.vector(), second.b.vector());
+    distance < first.radius + second.radius
 }
 
 // Closest distance between segments ab and cd
@@ -307,9 +311,9 @@ fn segment_distance(a: Vector3<f32>, b: Vector3<f32>, c: Vector3<f32>, d: Vector
     let (u, v, w) = (b - a, d - c, a - c);
     let (uu, uv, vv, uw, vw) = (u.dot(&u), u.dot(&v), v.dot(&v), u.dot(&w), v.dot(&w));
     let denominator = uu * vv - uv * uv;
-    let mut s = if denominator > 1e-6 { ((uv * vw - vv * uw) / denominator).clamp(0.0, 1.0) } else { 0.0 };
-    let t = if vv > 1e-6 { ((uv * s + vw) / vv).clamp(0.0, 1.0) } else { 0.0 };
-    if uu > 1e-6 {
+    let mut s = if denominator > EPSILON { ((uv * vw - vv * uw) / denominator).clamp(0.0, 1.0) } else { 0.0 };
+    let t = if vv > EPSILON { ((uv * s + vw) / vv).clamp(0.0, 1.0) } else { 0.0 };
+    if uu > EPSILON {
         s = ((uv * t - uw) / uu).clamp(0.0, 1.0);
     }
     ((a + u * s) - (c + v * t)).norm()
@@ -351,13 +355,9 @@ fn read_physics_capsule(handle: Handle, body: usize) -> Option<(Capsule, Vector3
         return None;
     }
     let centre = vector_at(&bytes, layout.centre);
-    let radius = f32_at(&bytes, layout.radius);
-    let half_axis = quaternion_at(&bytes, layout.rotation) * Vector3::z() * (f32_at(&bytes, layout.radius + 4) / 2.0);
-    Some((
-        Capsule { a: Position::from(centre - half_axis), b: Position::from(centre + half_axis), radius },
-        centre,
-        bytes[layout.touching] != 0,
-    ))
+    let [radius, length] = floats_at(&bytes, layout.radius);
+    let ends = capsule_ends(centre, quaternion_at(&bytes, layout.rotation), length);
+    Some((capsule(ends, radius), centre, bytes[layout.touching] != 0))
 }
 
 fn quaternion_at(bytes: &[u8], offset: usize) -> UnitQuaternion<f32> {
@@ -413,22 +413,9 @@ pub fn probes_near(probes: &[Probe], position: &Position) -> Vec<Probe> {
 
 fn distance_to_segment(point: &Vector3<f32>, start: &Vector3<f32>, end: &Vector3<f32>) -> f32 {
     let line = end - start;
-    let t = ((point - start).dot(&line) / line.norm_squared().max(1e-6)).clamp(0.0, 1.0);
+    let t = ((point - start).dot(&line) / line.norm_squared().max(EPSILON)).clamp(0.0, 1.0);
     (point - (start + line * t)).norm()
 }
-
-// `point * matrix` for a row-major matrix of row vectors, like the game's
-fn to_world(matrix: &[u8], point: &Vector3<f32>) -> Position {
-    let world = vector_at(matrix, 0) * point.x
-        + vector_at(matrix, 16) * point.y
-        + vector_at(matrix, 32) * point.z
-        + vector_at(matrix, 48);
-    Position::from(world)
-}
-
-
-
-
 
 #[cfg(test)]
 mod tests {
@@ -454,7 +441,8 @@ mod tests {
         let weapon = capsule((-16., -102., 125.), (-16., -12., 125.), 3.5);
         assert!(capsules_overlap(&camera, &lara));
         assert!(!capsules_overlap(&capsule((0., 80., 75.), (0., 80., 105.), 30.), &lara));
-        assert!((distance_to_capsule(&Vector3::new(0., 60., 90.), &camera) - camera.radius).abs() < 1e-4);
-        assert!(distance_to_capsule(&Vector3::new(0., -10., 90.), &weapon) > weapon.radius);
+        let distance_to = |point: Vector3<f32>, c: &Capsule| distance_to_segment(&point, &c.a.vector(), &c.b.vector());
+        assert!((distance_to(Vector3::new(0., 60., 90.), &camera) - camera.radius).abs() < 1e-4);
+        assert!(distance_to(Vector3::new(0., -10., 90.), &weapon) > weapon.radius);
     }
 }

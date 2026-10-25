@@ -29,8 +29,6 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 const HOLD_INTERVAL: Duration = Duration::from_millis(1);
-// Set in `ProxyFlags` while her proxy collides (SOTTR)
-const PROXY_COLLIDES: u32 = 0x1;
 // How long her proxy's physics body is put back on her for after a flight
 const BODY_RESET_TIME: Duration = Duration::from_millis(50);
 
@@ -68,27 +66,24 @@ impl PositionHandler {
             *base_addr,
         );
         let held = Held {
-            handle: SendHandle(*handle),
-            position: position.clone(),
-            velocity: tracked(address_offsets, &AddressType::Velocity, arch, base_addr),
+            velocity: TrackedMemory::find(address_offsets, AddressType::Velocity, *arch, *base_addr),
             fall_start: [AddressType::FallStart, AddressType::FallStartCopy]
                 .iter()
-                .filter_map(|address_type| tracked(address_offsets, address_type, arch, base_addr))
+                .filter_map(|address_type| TrackedMemory::find(address_offsets, *address_type, *arch, *base_addr))
                 .collect(),
-            proxy_centre: tracked(address_offsets, &AddressType::ProxyCentre, arch, base_addr),
-            proxy_resolved: tracked(address_offsets, &AddressType::ProxyResolvedCentre, arch, base_addr),
-            proxy_flags: tracked(address_offsets, &AddressType::ProxyFlags, arch, base_addr),
-            proxy_collided: None,
+            proxy_centre: TrackedMemory::find(address_offsets, AddressType::ProxyCentre, *arch, *base_addr),
+            proxy_resolved: TrackedMemory::find(address_offsets, AddressType::ProxyResolvedCentre, *arch, *base_addr),
+            proxy_flags: TrackedMemory::find(address_offsets, AddressType::ProxyFlags, *arch, *base_addr),
             body_centres: [AddressType::ProxyShapeCentre, AddressType::ProxyShapePreviousCentre]
                 .iter()
-                .filter_map(|address_type| tracked(address_offsets, address_type, arch, base_addr))
+                .filter_map(|address_type| TrackedMemory::find(address_offsets, *address_type, *arch, *base_addr))
                 .collect(),
             body_gaps: [AddressType::ProxyShapeGap, AddressType::ProxyBodyGap]
                 .iter()
-                .filter_map(|address_type| tracked(address_offsets, address_type, arch, base_addr))
+                .filter_map(|address_type| TrackedMemory::find(address_offsets, *address_type, *arch, *base_addr))
                 .collect(),
-            camera_collision: tracked(address_offsets, &AddressType::CameraCollision, arch, base_addr),
-            camera_collision_was: None,
+            camera_collision: TrackedMemory::find(address_offsets, AddressType::CameraCollision, *arch, *base_addr),
+            ..Held::new(*handle, &position)
         };
         Some(PositionHandler {
             saved_position: position.clone(),
@@ -129,20 +124,7 @@ impl PositionHandler {
         );
         Some(PositionHandler {
             saved_position: position.clone(),
-            held: Held {
-                handle: SendHandle(*handle),
-                position: position.clone(),
-                velocity: None,
-                fall_start: vec![],
-                proxy_centre: None,
-                proxy_resolved: None,
-                proxy_flags: None,
-                proxy_collided: None,
-                body_centres: vec![],
-                body_gaps: vec![],
-                camera_collision: None,
-                camera_collision_was: None,
-            },
+            held: Held::new(*handle, &position),
             position,
             camera_rotation: None,
             flight: None,
@@ -151,6 +133,32 @@ impl PositionHandler {
             saved: false,
             is_lara: false,
         })
+    }
+
+    // Moves the cached position this far forward and right, relative to the camera if the version has it (else along x
+    // and -y), while flying
+    fn move_by(&mut self, forward: f32, right: f32) {
+        if self.flight.is_none() {
+            return;
+        }
+        let position = &mut self.position;
+        match &self.camera_rotation {
+            Some((sin, cos)) => {
+                position.x.data += right * sin.data - forward * cos.data;
+                position.y.data += forward * sin.data + right * cos.data;
+            }
+            None => {
+                position.x.data += forward;
+                position.y.data -= right;
+            }
+        }
+    }
+
+    // Moves the cached position up, while flying
+    fn move_up(&mut self, up: f32) {
+        if self.flight.is_some() {
+            self.position.z.data += up;
+        }
     }
 
     // Moves where she's held to the cached position
@@ -208,77 +216,17 @@ impl Handler for PositionHandler {
                 self.position.apply_to_game(self.handle)?;
                 println!("Restored {}! {:}", self.name, self.position);
             }
-            Action::Forward { distance } => {
-                if active {
-                    match &self.camera_rotation {
-                        Some((sin, cos)) => {
-                            self.position.x.data -= distance * cos.data;
-                            self.position.y.data += distance * sin.data;
-                        }
-                        _ => self.position.x.data += distance,
-                    }
-                }
-            }
-            Action::Backward { distance } => {
-                if active {
-                    match &self.camera_rotation {
-                        Some((sin, cos)) => {
-                            self.position.x.data += distance * cos.data;
-                            self.position.y.data -= distance * sin.data;
-                        }
-                        _ => self.position.x.data -= distance,
-                    }
-                }
-            }
-            Action::Left { distance } => {
-                if active {
-                    match &self.camera_rotation {
-                        Some((sin, cos)) => {
-                            self.position.x.data -= distance * sin.data;
-                            self.position.y.data -= distance * cos.data;
-                        }
-                        _ => self.position.y.data += distance,
-                    }
-                }
-            }
-            Action::Right { distance } => {
-                if active {
-                    match &self.camera_rotation {
-                        Some((sin, cos)) => {
-                            self.position.x.data += distance * sin.data;
-                            self.position.y.data += distance * cos.data;
-                        }
-                        _ => self.position.y.data -= distance,
-                    }
-                }
-            }
-            Action::Up { distance } => {
-                if active {
-                    self.position.z.data += distance;
-                }
-            }
-            Action::Down { distance } => {
-                if active {
-                    self.position.z.data -= distance;
-                }
-            }
+            Action::Forward { distance } => self.move_by(distance, 0.0),
+            Action::Backward { distance } => self.move_by(-distance, 0.0),
+            Action::Left { distance } => self.move_by(0.0, -distance),
+            Action::Right { distance } => self.move_by(0.0, distance),
+            Action::Up { distance } => self.move_up(distance),
+            Action::Down { distance } => self.move_up(-distance),
             _ => (),
         }
         self.hold_here();
         Ok(())
     }
-}
-
-// The value at `address_type`, if this version has it
-fn tracked<T: Copy + Default + std::fmt::Debug>(
-    address_offsets: &AddressOffsets,
-    address_type: &AddressType,
-    arch: &Architecture,
-    base_addr: &usize,
-) -> Option<TrackedMemory<T>> {
-    address_offsets
-        .get(address_type)
-        .map(|offsets| TrackedMemory::new(T::default(), offsets.clone(), *arch, *base_addr))
 }
 
 // Process handles can be used from any thread
@@ -307,9 +255,30 @@ struct Held {
     camera_collision: Option<TrackedMemory<u8>>,
     // What it was before the flight, put back after
     camera_collision_was: Option<u8>,
+    // The bit of `proxy_flags` set while it collides
+    proxy_collides: u32,
 }
 
 impl Held {
+    // Holding just her position
+    fn new(handle: ProcessHandle, position: &TrackedPosition) -> Held {
+        Held {
+            handle: SendHandle(handle),
+            position: position.clone(),
+            velocity: None,
+            fall_start: vec![],
+            proxy_centre: None,
+            proxy_resolved: None,
+            proxy_flags: None,
+            proxy_collided: None,
+            body_centres: vec![],
+            body_gaps: vec![],
+            camera_collision: None,
+            camera_collision_was: None,
+            proxy_collides: crate::layout::current().proxy.movement_collides as u32,
+        }
+    }
+
     fn hold(&mut self, at: Position) {
         let handle = self.handle.0;
         self.position.x.data = at.x;
@@ -326,9 +295,9 @@ impl Held {
         }
         if let Some(flags) = &mut self.proxy_flags {
             if flags.fetch_from_game(handle).is_ok() {
-                self.proxy_collided.get_or_insert(flags.data & PROXY_COLLIDES != 0);
-                if flags.data & PROXY_COLLIDES != 0 {
-                    flags.data &= !PROXY_COLLIDES;
+                self.proxy_collided.get_or_insert(flags.data & self.proxy_collides != 0);
+                if flags.data & self.proxy_collides != 0 {
+                    flags.data &= !self.proxy_collides;
                     let _ = flags.apply_to_game(handle);
                 }
             }
@@ -352,7 +321,7 @@ impl Held {
         let handle = self.handle.0;
         if let (Some(flags), Some(true)) = (&mut self.proxy_flags, self.proxy_collided) {
             if flags.fetch_from_game(handle).is_ok() {
-                flags.data |= PROXY_COLLIDES;
+                flags.data |= self.proxy_collides;
                 let _ = flags.apply_to_game(handle);
             }
             // Over a few frames, in case the game moves it first

@@ -6,9 +6,15 @@ use iced_x86::{Decoder, DecoderOptions};
 use rayon::prelude::*;
 use std::collections::HashMap;
 
-const WINDOW: usize = 32;
-const MIN_SCORE: f64 = 0.6;
-const MIN_MARGIN: f64 = 0.1;
+// Bytes compared either side of an address or displacement field
+pub const WINDOW: usize = 32;
+// Fraction of window bytes that must match, and how far the best match must beat the runner-up
+pub const MIN_SCORE: f64 = 0.6;
+pub const MIN_MARGIN: f64 = 0.1;
+// How many `key`s there are
+pub const KEYS: usize = 1 << 16;
+// The longest an x86 instruction can be
+const MAX_INSTRUCTION_LENGTH: usize = 15;
 
 /// Where an instruction's displacement is, and its value
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -22,7 +28,7 @@ fn displacement_at(image: &PeImage, start: usize) -> Option<Displacement> {
     let data = image.data.get(start..)?;
     let mut decoder = Decoder::with_ip(
         image.bitness(),
-        &data[..data.len().min(15)],
+        &data[..data.len().min(MAX_INSTRUCTION_LENGTH)],
         image.image_base + start as u64,
         DecoderOptions::NONE,
     );
@@ -43,12 +49,13 @@ fn displacement_at(image: &PeImage, start: usize) -> Option<Displacement> {
     })
 }
 
-// The two bytes before the displacement (usually opcode + ModRM)
-fn key(data: &[u8], position: usize) -> usize {
+/// The two bytes before an address or displacement field (usually opcode + ModRM), below `KEYS`
+pub fn key(data: &[u8], position: usize) -> usize {
     (data[position - 2] as usize) << 8 | data[position - 1] as usize
 }
 
-fn similarity(a: &[u8], p: usize, b: &[u8], q: usize, size: usize) -> usize {
+/// How many of the `WINDOW` bytes either side of a `size` byte field at `p` in `a` and `q` in `b` are the same
+pub fn similarity(a: &[u8], p: usize, b: &[u8], q: usize, size: usize) -> usize {
     let same = |x: &[u8], y: &[u8]| x.iter().zip(y).filter(|(i, j)| i == j).count();
     same(&a[p - WINDOW..p], &b[q - WINDOW..q]) + same(&a[p + size..p + size + WINDOW], &b[q + size..q + size + WINDOW])
 }
@@ -66,7 +73,7 @@ pub fn match_witnesses(old: &PeImage, new: &PeImage, witnesses: &[usize]) -> Vec
     let old_displacements: Vec<Option<Displacement>> = witnesses.iter().map(|w| displacement_at(old, *w)).collect();
 
     // One pass over the new image collects every position with a key we're looking for
-    let mut wanted = vec![false; 0x10000];
+    let mut wanted = vec![false; KEYS];
     for d in old_displacements.iter().flatten() {
         wanted[key(&old.data, d.position)] = true;
     }

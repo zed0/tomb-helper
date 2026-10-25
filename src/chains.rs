@@ -17,6 +17,8 @@ use std::collections::HashMap;
 use std::{thread, time};
 
 const CANDIDATES_SHOWN: usize = 5;
+// Windows never maps the lowest 64KB, so anything below this isn't a pointer
+const MIN_POINTER: usize = 0x10000;
 
 pub fn connect(version: Option<String>) -> Result<(Pid, ProcessHandle, usize, ProcessDetails)> {
     let connected = find_process::find_process(known_process_details(), version)
@@ -74,7 +76,7 @@ fn resolve(chain: &[i64], base_addr: usize, mut read: impl FnMut(usize) -> Optio
     let mut address = (base_addr as i64 + chain[0]) as usize;
     for offset in &chain[1..] {
         let pointer = read(address)?;
-        if pointer < 0x10000 {
+        if pointer < MIN_POINTER {
             return None;
         }
         address = (pointer as i64 + offset) as usize;

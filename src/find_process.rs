@@ -154,13 +154,15 @@ pub fn close_handle(_handle: process_memory::ProcessHandle) {
     panic!("tomb-helper is only supported on Windows");
 }
 
+/// The size of the module in memory, from its PE headers
 pub fn get_image_size(handle: impl CopyAddress, base_addr: usize) -> Result<usize, std::io::Error> {
-    let mut image_optional_header_offset_bytes = [0_u8; 4];
-    handle.copy_address(base_addr + 0x3C, &mut image_optional_header_offset_bytes)?;
-    let image_optional_header_offset = u32::from_le_bytes(image_optional_header_offset_bytes) as usize;
+    use crate::pe_image::{OPTIONAL_HEADER, PE_SIGNATURE_OFFSET, SIZE_OF_IMAGE};
+    let mut pe_signature_offset_bytes = [0_u8; 4];
+    handle.copy_address(base_addr + PE_SIGNATURE_OFFSET, &mut pe_signature_offset_bytes)?;
+    let pe_signature_offset = u32::from_le_bytes(pe_signature_offset_bytes) as usize;
 
     let mut image_size_bytes = [0_u8; 4];
-    handle.copy_address(base_addr + image_optional_header_offset + 0x50, &mut image_size_bytes)?;
+    handle.copy_address(base_addr + pe_signature_offset + OPTIONAL_HEADER + SIZE_OF_IMAGE, &mut image_size_bytes)?;
     let image_size = u32::from_le_bytes(image_size_bytes) as usize;
 
     Ok(image_size)

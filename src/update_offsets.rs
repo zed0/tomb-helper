@@ -12,7 +12,7 @@
 //! and 8); what can't be confirmed goes to `unverified`. Saves with `discover::save_entry`, then runs `check::run`.
 
 use anyhow::{anyhow, Context, Result};
-use crate::game_memory::Handle;
+use crate::game_memory::{resolve, Handle};
 use crate::chains;
 use crate::check;
 use crate::components::{self, Components};
@@ -60,8 +60,6 @@ pub fn run(
     }
     println!("Dumping the game...");
     let image = PeImage::dump(pid).context("Could not dump the game")?;
-
-    let pointer_size = crate::game_memory::pointer_size();
 
     // How each offset list was found, for the summary
     let mut found: BTreeMap<AddressType, (Vec<usize>, String)> = BTreeMap::new();
@@ -120,7 +118,7 @@ pub fn run(
         }
         None => println!("Lara: NOT FOUND (no instance with a PlayerComponent or proxy; load into a level)"),
     }
-    let version = read_version(handle, base_address, &template, pointer_size);
+    let version = read_version(handle, base_address, &template);
     if let Some((address, string)) = &version {
         println!("Version string \"{}\"", string);
         targets.push((AddressType::Version, *address));
@@ -131,7 +129,7 @@ pub fn run(
         let unchanged = template
             .address_offsets
             .get(&address_type)
-            .filter(|chain| resolve(handle, base_address, chain, pointer_size) == Some(target));
+            .filter(|chain| resolve(handle, base_address, chain) == Some(target));
         match unchanged {
             Some(chain) => {
                 found.insert(address_type, (chain.clone(), "unchanged".to_string()));
@@ -439,25 +437,9 @@ fn find_probes(image: &PeImage, lara: &Position) -> Option<usize> {
     candidates.into_iter().max_by_key(|rva| counts.get(rva).copied().unwrap_or(0))
 }
 
-/// Where the chain points, following the same rules as `TrackedMemory`
-fn resolve(handle: ProcessHandle, base_address: usize, chain: &[usize], pointer_size: usize) -> Option<usize> {
-    let mut address = base_address + chain[0];
-    for offset in &chain[1..] {
-        let mut pointer = [0u8; 8];
-        handle.copy_address(address, &mut pointer[..pointer_size]).ok()?;
-        address = (u64::from_le_bytes(pointer) as usize).checked_add(*offset)?;
-    }
-    Some(address)
-}
-
 /// Where the version string is and what it says, if the previous build's `Version` offsets still find one
-fn read_version(
-    handle: ProcessHandle,
-    base_address: usize,
-    template: &ProcessDetails,
-    pointer_size: usize,
-) -> Option<(usize, String)> {
-    let address = resolve(handle, base_address, template.address_offsets.get(&AddressType::Version)?, pointer_size)?;
+fn read_version(handle: ProcessHandle, base_address: usize, template: &ProcessDetails) -> Option<(usize, String)> {
+    let address = resolve(handle, base_address, template.address_offsets.get(&AddressType::Version)?)?;
     let mut bytes = [0u8; VERSION_LENGTH];
     handle.copy_address(address, &mut bytes).ok()?;
     let end = bytes.iter().position(|&b| b == 0)?;

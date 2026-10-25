@@ -25,9 +25,10 @@ pub enum AddressType {
     CameraCos,
     // Row-major 4x4 world-to-view matrix (row vectors, as used by the game)
     CameraView,
-    // 8 floats: near, far, near, far, vertical fov (radians), aspect, fov, aspect
+    // 8 floats with the near and far planes, vertical fov (radians) and aspect ratio somewhere in them
+    // (`layout.camera.lens_*`; ROTTR's are near, far, near, far, fov, aspect, fov, aspect)
     CameraLens,
-    // Static array of 0x120 byte instance (game object) records, see `object_list`
+    // Static array of instance (game object) records (`layout.instance.size` bytes each), see `object_list`
     InstanceArray,
     // Count and records of the ground probes the game casts for Lara, see `collision::read_probes`
     PlayerProbes,
@@ -55,8 +56,8 @@ pub enum AddressType {
     // game moves her towards (so back through a wall she's flown through); flight mode puts the second where the first is
     ProxyCentre,
     ProxyResolvedCentre,
-    // Lara's proxy's u32 flags, with 0x1 set while it collides, which flight mode clears, or it's pushed back up out of
-    // the ground and she's pulled up after it
+    // Lara's proxy's u32 flags, with `layout.proxy.movement_collides` (0x1) set while it collides, which flight mode
+    // clears, or it's pushed back up out of the ground and she's pulled up after it
     ProxyFlags,
     // Lara's proxy's physics body: its shape's centre and a copy (3 floats), and how far it has left to go to get to her,
     // in the body and its shape (4 floats). With its proxy's collision off, the body stays where it was, and after, it

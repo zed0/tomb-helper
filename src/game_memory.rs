@@ -48,7 +48,7 @@ pub fn resolve(handle: impl CopyAddress + Copy, base_address: usize, offsets: &[
     let (first, rest) = offsets.split_first()?;
     let mut address = base_address + first;
     for offset in rest {
-        address = read_pointer(handle, address)? + offset;
+        address = read_pointer(handle, address)?.checked_add(*offset)?;
     }
     Some(address)
 }
@@ -71,7 +71,19 @@ pub fn read_u32(handle: impl CopyAddress, address: usize) -> Option<u32> {
     Some(u32::from_le_bytes(bytes))
 }
 
-/// `N` floats
+/// A nul terminated string, "" if it can't be read
+pub fn read_c_string(handle: impl CopyAddress, address: usize) -> String {
+    // A long read can fail if the string is near the end of a page, so fall back to a short one
+    for length in [128, 16] {
+        let mut bytes = vec![0u8; length];
+        if handle.copy_address(address, &mut bytes).is_ok() {
+            let end = bytes.iter().position(|&c| c == 0).unwrap_or(length);
+            return String::from_utf8_lossy(&bytes[..end]).into_owned();
+        }
+    }
+    String::new()
+}
+
 /// Something in the game that couldn't be read, e.g. a pointer chain that doesn't resolve: expected while it loads a
 /// level or exits, so only shown when debugging (`is_unreadable`)
 #[derive(Debug)]
@@ -104,6 +116,7 @@ pub fn is_unreadable(error: &(dyn std::error::Error + 'static)) -> bool {
     }
 }
 
+/// `N` floats
 pub fn read_floats<const N: usize>(handle: impl CopyAddress, address: usize) -> Option<[f32; N]> {
     let mut bytes = vec![0u8; N * 4];
     handle.copy_address(address, &mut bytes).ok()?;

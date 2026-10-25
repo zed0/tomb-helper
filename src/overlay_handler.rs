@@ -27,8 +27,11 @@ use process_memory::{Architecture, Pid, ProcessHandle};
 use crate::trigger::{self, Shape};
 use crate::trigger_scripts::{SetOffBy, TriggerScript, TriggerScripts};
 use crate::handler::HelperState;
-use crate::ui_ipc_data::{REQUEST_RESTORE_POSITION, REQUEST_STORE_POSITION, REQUEST_TOGGLE_FLYING, name_bytes, text_bytes, trigger_action_bit, trigger_action_mask, projection_from_lens, BoxKind, Capsule, HotkeyLabel, Line, ObjectBox, ObjectCategory, SharedMemoryManager, TriggerCategory, TriggerFace, TriggerLabel, UiSettings, HOTKEY_LABELS, HOTKEY_LABEL_LENGTH, MAX_ATTACHED, MAX_OBJECTS, MAX_TRIANGLES, MAX_TRIGGERS};
+use crate::ui_ipc_data::{REQUEST_RESTORE_POSITION, REQUEST_STORE_POSITION, REQUEST_TOGGLE_FLYING, name_bytes, text_bytes, trigger_action_bit, trigger_action_mask, projection_from_lens, BoxKind, Capsule, HotkeyLabel, Line, ObjectBox, ObjectCategory, SharedMemoryManager, TriggerCategory, TriggerFace, TriggerLabel, UiSettings, HOTKEY_LABELS, HOTKEY_LABEL_LENGTH, MAX_ATTACHED, MAX_OBJECTS, MAX_TRIANGLES, MAX_TRIGGERS, UNCHECKED};
 
+// The overlay's builds, next to the exe (`build.rs` puts the 32-bit one there)
+const OVERLAY_DLL: &str = "tomb_helper_ui.dll";
+const OVERLAY_DLL_32: &str = "tomb_helper_ui32.dll";
 // How far the camera's ray is followed to find where Lara's aiming
 const MAX_AIM_DISTANCE: f32 = 20000.0;
 // How far above her feet the middle of Lara is (her standing capsule's centre), which counts as her being in a trigger
@@ -324,7 +327,7 @@ impl OverlayHandler {
         let mut shown = vec![];
         for (instance, category) in candidates {
             let script = self.trigger_scripts.script(instance.id);
-            let does = script.map_or(trigger_action_bit("unchecked"), |s| s.actions);
+            let does = script.map_or(trigger_action_bit(UNCHECKED), |s| s.actions);
             if (settings.triggers_by_action && settings.trigger_actions & does == 0) || shown.len() >= MAX_TRIGGERS {
                 continue;
             }
@@ -488,9 +491,8 @@ impl OverlayHandler {
             };
             let (category, action) = (*category, *action);
             let outline = trigger::outline(shape, &transform);
-            let origin = Position { x: transform[12], y: transform[13], z: transform[14] };
             geometry.labels.push(TriggerLabel {
-                position: top_of(&outline).unwrap_or(origin),
+                position: top_of(&outline).unwrap_or_else(|| object_list::origin(&transform)),
                 category,
                 action,
                 name: text_bytes(label),
@@ -613,7 +615,7 @@ fn capsule_bounds(capsules: &[Capsule], transform: &[f32; 16]) -> Option<(Positi
         transform[8], transform[9], transform[10],
     ]);
     let to_object = axes.try_inverse()?;
-    let origin = Vector3::new(transform[12], transform[13], transform[14]);
+    let origin = object_list::origin(transform).vector();
     // A world space radius along each object axis
     let scale = Vector3::new(axes.column(0).norm(), axes.column(1).norm(), axes.column(2).norm());
 
@@ -748,10 +750,10 @@ impl Handler for OverlayHandler {
                     println!("Injecting overlay dll");
                     // A 32-bit game (TR2013) needs the 32-bit build of the overlay, injected its own way
                     let injected = if matches!(self.arch, Architecture::Arch32Bit) {
-                        let dll_path = env::current_exe()?.with_file_name("tomb_helper_ui32.dll");
+                        let dll_path = env::current_exe()?.with_file_name(OVERLAY_DLL_32);
                         inject32::inject(self.pid, &dll_path)
                     } else {
-                        let dll_path = env::current_exe()?.with_file_name("tomb_helper_ui.dll");
+                        let dll_path = env::current_exe()?.with_file_name(OVERLAY_DLL);
                         Process::by_pid(&self.pid)
                             .and_then(|process| process.inject(dll_path))
                             .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))

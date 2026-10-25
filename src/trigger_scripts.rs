@@ -16,7 +16,7 @@
 use anyhow::{bail, Context, Result};
 use crate::game_memory::{Handle, pointer_from, pointer_size, read_pointer, read_u32, read_u64, u16_at};
 use crate::layout::{self, ScriptLayout};
-use crate::ui_ipc_data::trigger_action_bit;
+use crate::ui_ipc_data::{trigger_action_bit, ACTS_ON_INSTANCES, DOES_SOMETHING_ELSE, NO_SCRIPT};
 use process_memory::CopyAddress;
 use std::collections::{HashMap, HashSet};
 use std::convert::TryInto;
@@ -196,16 +196,16 @@ fn categorise(nodes: &[Node], triggers: &HashSet<u64>, names: &HashMap<u64, Stri
             let mut bits = does.iter().fold(0, |bits, word| bits | trigger_action_bit(word));
             for target in using.iter().flat_map(|n| n.targets.iter()).filter(|t| *t != id) {
                 if let Some(name) = names.get(target).map(|n| short_name(n)) {
-                    bits |= trigger_action_bit("instances");
+                    bits |= trigger_action_bit(ACTS_ON_INSTANCES);
                     if !does.contains(&name) {
                         does.push(name);
                     }
                 }
             }
             if set_off_by == SetOffBy::Nothing {
-                bits |= trigger_action_bit("no script");
+                bits |= trigger_action_bit(NO_SCRIPT);
             } else if does.is_empty() {
-                bits |= trigger_action_bit("something else");
+                bits |= trigger_action_bit(DOES_SOMETHING_ELSE);
             }
             (*id, TriggerScript { set_off_by, does, actions: bits })
         })

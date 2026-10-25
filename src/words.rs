@@ -32,6 +32,9 @@ pub struct Words {
     /// Left off the names of the instances scripts act on, when they're shown
     /// (`tr11_animhost_friendly_npc_roaming_musician_guitar`)
     pub name_prefixes: Vec<String>,
+    /// Placement names that don't say anything (SOTTR's placements are all called "?"), so the instance goes by its
+    /// object type's name instead, like a spawned one
+    pub placeholder_names: Vec<String>,
 }
 
 impl Default for Words {
@@ -117,6 +120,7 @@ impl Default for Words {
             inventory_components: strings(vec!["inventorymembercomponent"]),
             npc_components: strings(vec!["ragdollcomponent"]),
             name_prefixes: strings(vec!["tr11_", "animhost_", "friendly_"]),
+            placeholder_names: strings(vec!["?"]),
         }
     }
 }

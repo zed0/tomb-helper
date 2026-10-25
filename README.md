@@ -7,7 +7,8 @@ A speedrun helper for the Tomb Raider reboot series
 Current features:
 - Save and restore positions
 - Move Lara directly
-- Skip cutscenes and record how much time was saved (in Shadow)
+- Skip cutscenes and record how much time was saved (in Shadow, the only one of the games that stops you skipping
+  cutscenes straight away)
 - An overlay in the game showing Lara's collision, the level's collision, interactable objects, characters and trigger
   volumes (in some versions, see [Supported versions](#supported-versions))
 - Supports Tomb Raider 2013, Rise of the Tomb Raider, and Shadow of the Tomb Raider, and new patches can be added with
@@ -36,6 +37,8 @@ Current features:
 | Shadow of the Tomb Raider | v1.0 build 298.0_64, 458.0_64, 489.0_64 | ✓ | ✓ | |
 | Shadow of the Tomb Raider | (Epic Games) v1.0 build 492.0_64 | ✓ | ✓ | |
 | Shadow of the Tomb Raider | (Steam) v1.0 build 492.0_64 | ✓ | ✓ | ✓ |
+
+Cutscene skipping is only for Shadow of the Tomb Raider because the other two games let you skip cutscenes whenever you like, so they don't need it.
 
 The overlay can be added to the others with `tomb-helper port` (see [Adding a new patch or game](#adding-a-new-patch-or-game)).
 
@@ -132,7 +135,7 @@ Each version looks like:
 - `offsets` are pointer chains: the first is relative to the game's exe, the rest are followed as pointers. Values a version doesn't have can be left out, and features that need them won't load
 - `witnesses` are optional, see [Finding offsets for a new game version](#finding-offsets-for-a-new-game-version)
 - `unverified` is ignored, and is where the tools put offsets they couldn't confirm
-- The file can also have a `words` section, beside `versions`, with the words tomb-helper goes by to tell what things are: `trigger_categories` (each category from `trigger_categories` in the config, with the words in trigger names that put a trigger in it, checked in order), `script_actions` (part of a script node's class name, and which of the `trigger_actions` it counts as), `not_interactable` (names of things with interactions that aren't for Lara), and for Tomb Raider 2013 `interactable_components`, `inventory_components` and `npc_components`. Any left out are the built in ones, which `src/words.rs` lists
+- The file can also have a `words` section, beside `versions`, with the words tomb-helper goes by to tell what things are: `trigger_categories` (each category from `trigger_categories` in the config, with the words in trigger names that put a trigger in it, checked in order), `script_actions` (part of a script node's class name, and which of the `trigger_actions` it counts as), `not_interactable` (names of things with interactions that aren't for Lara), `name_prefixes` (left off the names of the instances trigger scripts act on, when they're shown), `placeholder_names` (placement names that don't say anything, like Shadow's `?`, so the instance goes by its object type's name instead), and for Tomb Raider 2013 `interactable_components`, `inventory_components` and `npc_components`. Any left out are the built in ones, which `src/words.rs` lists
 - `layout` is optional: where things are in the game's structures, for the overlay, where they differ from Rise of the Tomb Raider (Steam)'s. E.g. `"layout": {"instance": {"position": "0x20"}, "collide": {"capsule_radius": "0x30"}}`. The groups and their fields are in `src/layout.rs`, with what each is. See [Porting the overlay](#porting-the-overlay)
 
 ## Overlay
