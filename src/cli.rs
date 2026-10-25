@@ -93,7 +93,7 @@ enum Command {
         targets: Vec<String>,
         #[arg(long)]
         version: Option<String>,
-        #[arg(long, default_value_t = 5)]
+        #[arg(long, default_value_t = 15)]
         seconds: u64,
         /// Wait this many seconds first, so the game can be focused
         #[arg(long, default_value_t = 0)]

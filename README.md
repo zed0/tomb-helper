@@ -297,10 +297,10 @@ For each value it lists the chains the game's code uses to reach the same addres
 For those, record which instructions access the value:
 
 ```
-tomb-helper watch CutscenePrompt CutsceneStatus CutsceneLength --delay 15 --seconds 8
+tomb-helper watch CutscenePrompt CutsceneStatus CutsceneLength CutsceneId --delay 15 --seconds 30
 ```
 
-This attaches to the game as a debugger and puts hardware breakpoints on up to 4 values, then detaches. The game pauses when it isn't focused, so use `--delay` to give yourself time to switch back to it (and get the values in use, e.g. start a cutscene). It prints a `"witnesses"` block to add to that version's entry in the offsets file (`--save` adds it for you); `update-offsets --from` (and `debug derive`) matches those instructions in the new build to find where each field moved to (`witness` in its output).
+This attaches to the game as a debugger and puts hardware breakpoints on up to 4 values, then detaches. The game pauses when it isn't focused, so use `--delay` to give yourself time to switch back to it (and get the values in use, e.g. start a cutscene). It watches for 15 seconds unless given `--seconds`; some values are only touched now and then (a cutscene's id at its camera cuts), so give those longer, and it says if the game wasn't in front for most of it. It prints a `"witnesses"` block to add to that version's entry in the offsets file (`--save` adds it for you); `update-offsets --from` (and `debug derive`) matches those instructions in the new build to find where each field moved to (`witness` in its output).
 
 `tomb-helper debug trace <exe> <static address>` prints the chains the code accesses from every reference to a static address, which helps when investigating by hand.
 

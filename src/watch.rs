@@ -756,7 +756,8 @@ pub fn watch(names: &[&str], version: Option<String>, seconds: u64, delay: u64, 
         let last_offset = *details.address_offsets[address_type].last().unwrap() as i64;
         println!("{:?} at {:#X}:", address_type, address);
         if hits.is_empty() {
-            println!("    not accessed");
+            // Some are only touched now and then, e.g. a cutscene's id at its camera cuts
+            println!("    not accessed (some values only are now and then: try a longer --seconds, doing what changes it)");
         }
         let mut by_count: Vec<(&usize, &Hit)> = hits.iter().collect();
         by_count.sort_by_key(|(rva, hit)| (std::cmp::Reverse(hit.count), **rva));

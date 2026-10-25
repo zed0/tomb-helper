@@ -15,6 +15,8 @@ use crate::update_offsets::NewGame;
 // Recording witnesses: time to switch back to the game (it pauses while alt-tabbed), and how long to record
 const SWITCH_SECONDS: u64 = 10;
 const RECORD_SECONDS: u64 = 8;
+// A cutscene's id is only touched at its camera cuts, so cutscenes are recorded for longer
+const CUTSCENE_RECORD_SECONDS: u64 = 30;
 // Layout fields to record for a game whose other builds have none, one from each structure that can be found
 const DEFAULT_LAYOUT_FIELDS: [&str; 4] = ["instance.position", "camera.view", "proxy.in_use_size", "collision_mesh.triangles"];
 
@@ -71,14 +73,15 @@ pub fn port(exe: Option<String>) -> Result<()> {
     for chunk in values.chunks(crate::watch::MAX_WATCHES) {
         let names: Vec<&str> = chunk.iter().map(String::as_str).collect();
         let cutscene = names.iter().any(|n| n.starts_with("Cutscene"));
-        let what = if cutscene { "start a cutscene" } else { "move Lara around, with the camera turning" };
+        let what = if cutscene { "start a cutscene, letting it play through a few camera cuts" } else { "move Lara around, with the camera turning" };
+        let seconds = if cutscene { CUTSCENE_RECORD_SECONDS } else { RECORD_SECONDS };
         if wait_or_skip(&format!(
             "Recording the instructions that use {}. Press Enter, then switch to the game within {}s and {}.",
             names.join(", "),
             SWITCH_SECONDS,
             what
         )) {
-            report(crate::watch::watch(&names, None, RECORD_SECONDS, SWITCH_SECONDS, false, true));
+            report(crate::watch::watch(&names, None, seconds, SWITCH_SECONDS, false, true));
         }
     }
     for chunk in fields.chunks(crate::watch::MAX_WATCHES) {

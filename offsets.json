@@ -316,7 +316,8 @@
         "CameraSin": ["0x2D1CD8", "0x9D7120", "0x2D8729", "0x2D88C7", "0x501F66", "0x9D70C3", "0x50233C"],
         "CutscenePrompt": ["0x417CA2", "0x41B7EF", "0x41A821", "0x41B887"],
         "CutsceneStatus": ["0x413E10"],
-        "CutsceneLength": ["0x41AD75"]
+        "CutsceneLength": ["0x41AD75"],
+        "CutsceneId": ["0xD2501C", "0xD2504B", "0xD253C2"]
       },
       "layout_witnesses": {
         "camera.view": ["0x9D5F79"],
