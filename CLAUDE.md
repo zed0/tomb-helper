@@ -273,6 +273,24 @@ again (`derive` plus live checks).
   shape type byte +0x98: 0 box (+0x20 quaternion, +0x30 half extents?), 1 capsule, 3 (grass, bushes; unknown), 4
   cylinder (+0x50 -> `cdc::GeomCylinder`). 1287 bodies; 1095 live `cdc::GeomHull`s are probably theirs too. Not drawn yet.
 
+### Flight mode (SOTTR Steam 492)
+- Holding her by writing her position isn't enough: the game moves her every frame, so `PositionHandler` writes from a
+  thread every 1ms. Found with Python polling and `watch-raw` while she was held in the air and flown through walls.
+- Velocity: [player+0x35C0 (her instance)]+0xF0 -> `cdc::BallisticComponent` +0x20, integrated (with gravity at +0x30) by
+  the player's movement (+0x9A22E0), which adds the result to her position (+0x99E980, a delta per kind summed at
+  player+0x490). player+0x710 is only an average of past velocities (ring buffer at +0x700). Zeroing it stops the drag.
+- Fall damage goes by player+0x1064 (and a copy at +0x1070), the height she last left the ground at: flown 15m down
+  with it untouched, she died on landing; moved with her, she lived.
+- Her proxy (component slot 39): +0x18 flags (0x4B3 standing, 0x1493 in the air), bit 0x1 is its collision; +0x70 its
+  centre (follows her), +0xC0 where collision put it, which the game moves her towards (up to ~30-100 a frame), so it
+  pulled her back through a wall she'd flown through, and up out of the ground. Flight clears bit 0x1 and copies +0x70
+  to +0xC0 and the physics shape's centre.
+- The camera: `GameRender`+0x450 -> Lara's `CameraComponent`, +0xF08 -> the active camera stack entry, +0x20 -> its
+  controller (`ExplorationCameraController`), whose collision struct at +0xDF0 (`cdc::GeomSphere` at +0x20, radius 10)
+  has an enabled byte at +0x8 that every collision pass checks (+0x8AF920, +0x8AFF30, +0x8B0D80): zeroed, the camera
+  goes through walls. Below ground it also follows her proxy's resolved centre, so that needs the proxy's collision off.
+- Still left: a small jitter in the air (probably her falling animation). Other versions don't have these offsets yet.
+
 ### TR2013 (32-bit)
 - Builds on disk: original `v1.01.748.0` (`D:\SteamLibrary\steamapps\common\Tomb Raider`, image size 38739968) and current
   Steam `v1.01.0.0` (`G:\SteamLibrary\SteamApps\common\Tomb Raider`, 38543360). Steam was rebuilt with a newer MSVC

@@ -44,6 +44,25 @@ pub enum AddressType {
     // The cdc::CollisionSceneClient listing the level's collision meshes (resolves to its address), see
     // `collision_mesh`
     CollisionScene,
+    // Lara's velocity (3 floats, her cdc::BallisticComponent's), which flight mode zeroes, or she's dragged down a
+    // little each frame by the speed she builds up falling
+    Velocity,
+    // The height she was last on the ground at (two copies), which fall damage goes by; flight mode moves it with her,
+    // or she dies when flown down too far below it
+    FallStart,
+    FallStartCopy,
+    // Lara's proxy's centre (3 floats, which follows her), and the centre it's been moved to by collision and its
+    // physics body's, which the game moves her towards (so back through a wall she's flown through); flight mode puts
+    // the last two where the first is
+    ProxyCentre,
+    ProxyResolvedCentre,
+    ProxyBodyCentre,
+    // Lara's proxy's u32 flags, with 0x1 set while it collides, which flight mode clears, or it's pushed back up out of
+    // the ground and she's pulled up after it
+    ProxyFlags,
+    // A byte, nonzero while the camera collides with the level (the active camera controller's); flight mode turns it
+    // off, or the camera stays on this side of a wall she's flown through
+    CameraCollision,
     CutscenePrompt,
     CutsceneStatus,
     CutsceneTimeline,
