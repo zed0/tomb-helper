@@ -79,6 +79,7 @@ Each module's `//!` doc says what's in it and how it works; this is where to loo
 | `src/lib.rs` | The injected overlay (DLL): its window and drawing |
 | `src/position.rs` | `Position`, with `Vector3` conversions (shared with the DLL) |
 | `src/position_handler.rs` | Save/restore position, flight mode and movement |
+| `src/targets.rs` | What tomb-helper writes: chains built from the structures (or the offsets file's), checked before writing |
 | `src/tracked_memory.rs`, `src/tracked_position.rs` | Cached values at pointer chains, for the position and cutscene handlers |
 | `src/cutscene_handler.rs` | Cutscene skipping (SOTTR) and time saved |
 | `src/cutscene_timing_info.rs`, `src/cutscene_timing_generator_handler.rs` | The cutscene timing file, and recording it with LiveSplit |
@@ -112,6 +113,11 @@ Each module's `//!` doc says what's in it and how it works; this is where to loo
   `Layout` (with ROTTR's value as the default), not constants.
 - **Add a new memory value:** add an `AddressType` variant, add offsets per version in `offsets.json`, read it with
   `Game` (`read_floats`, `require` and `game_memory`'s readers), or `TrackedMemory` in a handler that writes it.
+- **Writing a value:** anything a handler writes goes in `targets::WRITTEN`, with a check in `targets::verify` (what it
+  should look like, and the RTTI class it's in), and is found through `targets::find` just before writing, so a chain
+  that's wrong for a build is never written through. Where it's a field of something tomb-helper can already find (Lara's
+  instance or components, her player object, GameRender), add the field to `Layout` and build its chain in
+  `targets::structural` rather than adding offsets per version: then a new build ports it for free.
 - **Add a hotkey action:** add a variant to `Action` (`src/action.rs`), handle it in the relevant
   handler's `handle_action`, optionally add a default in `default_hotkeys()` (`src/config.rs`), and
   document it in `README.md`.
@@ -292,7 +298,11 @@ again (`derive` plus live checks).
   controller (`ExplorationCameraController`), whose collision struct at +0xDF0 (`cdc::GeomSphere` at +0x20, radius 10)
   has an enabled byte at +0x8 that every collision pass checks (+0x8AF920, +0x8AFF30, +0x8B0D80): zeroed, the camera
   goes through walls. Below ground it also follows her proxy's resolved centre, so that needs the proxy's collision off.
-- Still left: a small jitter in the air (probably her falling animation). Other versions don't have these offsets yet.
+- Still left: a small jitter in the air (probably her falling animation).
+- These are all fields of things found without offsets (her instance, components and player object through `XPosition`'s
+  chain, GameRender through `CameraView`'s), so `targets::structural` builds them from 492's layout (`instance.ballistic`,
+  `player`, `ballistic`, `proxy.flags`/`resolved_centre`, `body.gap`, `physics_shape`, `camera.collision`); a test checks
+  the layout gives exactly the chains above. Other versions only need those layout fields to get flight mode.
 
 ### TR2013 (32-bit)
 - Builds on disk: original `v1.01.748.0` (`D:\SteamLibrary\steamapps\common\Tomb Raider`, image size 38739968) and current

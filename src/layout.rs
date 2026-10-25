@@ -120,6 +120,29 @@ group! {
         /// -> the game object, whose RTTI class says whether it's a trigger and holds its shape (see `trigger_object`).
         /// None where triggers are components (ROTTR, SOTTR); TR2013 has it.
         game_object: Option<usize> = None,
+        /// -> cdc::BallisticComponent (Lara's velocity, `ballistic`), where it isn't found in the component table. SOTTR
+        /// has it at 0xF0
+        ballistic: Option<usize> = None,
+    }
+}
+
+group! {
+    /// The player object, which Lara's position chain goes through (`XPosition` is [.., player, `instance`,
+    /// `instance.position`])
+    PlayerLayout {
+        /// -> Lara's instance
+        instance: Option<usize> = Some(0x31A8),
+        /// f32, the height she last left the ground at, which fall damage goes by, and a copy of it (SOTTR 0x1064, 0x1070)
+        fall_start: Option<usize> = None,
+        fall_start_copy: Option<usize> = None,
+    }
+}
+
+group! {
+    /// cdc::BallisticComponent, which moves Lara
+    BallisticLayout {
+        /// 3 floats, integrated with gravity each frame (SOTTR 0x20)
+        velocity: Option<usize> = None,
     }
 }
 
@@ -283,8 +306,10 @@ group! {
         /// isn't known from physics bodies (TR2013)
         flags: Option<usize> = None,
         collides = 0x2,
-        /// In `ProxyFlags` (SOTTR's proxy +0x18), set while Lara's own proxy collides, which flight mode clears
+        /// In the flags, set while Lara's own proxy collides, which flight mode clears (SOTTR's flags are at +0x18)
         movement_collides = 0x1,
+        /// 3 floats, where collision has put the proxy, which the game moves her towards (SOTTR 0xC0)
+        resolved_centre: Option<usize> = None,
         /// -> the instance it belongs to, where `discover` finds Lara's proxy as a static (TR2013)
         instance: Option<usize> = None,
         /// -> the first proxy attached to it that's found on its own, not through its body (`CombatProxy`, TR2013)
@@ -299,6 +324,8 @@ group! {
         shape = 0x20,
         next = 0x30,
         parent = 0x48,
+        /// 4 floats, how far it has left to go to get to its proxy, zero normally (SOTTR 0x0)
+        gap: Option<usize> = None,
     }
 }
 
@@ -317,6 +344,10 @@ group! {
         /// Byte, nonzero while it's touching something
         touching = 0x99,
         size = 0xA0,
+        /// A copy of the centre (SOTTR 0xA0)
+        previous_centre: Option<usize> = None,
+        /// 4 floats, how far it has left to go, like the body's (SOTTR 0x10)
+        gap: Option<usize> = None,
     }
 }
 
@@ -347,6 +378,9 @@ group! {
         /// The first row of camera-to-world (`CameraSin`, `CameraCos`)
         sin = 0x70,
         cos = 0x74,
+        /// Pointers from GameRender to the active camera controller's collision enabled byte (SOTTR: -> CameraComponent,
+        /// -> camera stack entry, -> controller, then the byte). Empty if it isn't known.
+        collision: Vec<usize> = vec![],
     }
 }
 
@@ -489,6 +523,8 @@ group! {
 #[serde(default, deny_unknown_fields)]
 pub struct Layout {
     pub instance: InstanceLayout,
+    pub player: PlayerLayout,
+    pub ballistic: BallisticLayout,
     pub placement: PlacementLayout,
     pub component: ComponentLayout,
     pub component_data: ComponentDataLayout,

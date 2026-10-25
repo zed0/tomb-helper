@@ -68,6 +68,7 @@ mod cutscene_timing_info;
 mod readable_from_path;
 mod rtti;
 mod snapshot;
+mod targets;
 // Shared with the overlay, which uses the other half of it
 #[allow(dead_code)]
 mod ui_ipc_data;
@@ -155,14 +156,15 @@ fn create_handlers(
             arch,
             &base_addr,
             &handle,
+            &pid,
             &config.cutscene_blacklist_file,
             &config.cutscene_timing_file,
         )
         .map(|h| Box::new(h) as Box<dyn Handler>),
     };
     let overlay = OverlayHandler::new_overlay_handler(offsets, arch, &base_addr, &handle, &pid, &config.overlay, &config.hotkeys);
-    let position = PositionHandler::new_position_handler(offsets, arch, &base_addr, &handle);
-    let look_at = PositionHandler::new_look_at_handler(offsets, arch, &base_addr, &handle);
+    let position = PositionHandler::new_position_handler(offsets, arch, &base_addr, &handle, &pid);
+    let look_at = PositionHandler::new_look_at_handler(offsets, arch, &base_addr, &handle, &pid);
 
     let mut handlers: Vec<Box<dyn Handler>> = cutscenes.into_iter().collect();
     handlers.extend(overlay.map(|h| Box::new(h) as Box<dyn Handler>));

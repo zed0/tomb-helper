@@ -16,6 +16,7 @@ use crate::position::Position;
 use crate::process_details::{AddressType, ProcessDetails};
 use crate::trigger::{self, Shape};
 use crate::trigger_scripts::SetOffBy;
+use crate::targets::{self, Verdict};
 use crate::ui_ipc_data::SurfaceKind;
 use nalgebra::{Matrix3, Vector3};
 use std::collections::BTreeSet;
@@ -158,6 +159,7 @@ fn run_report(handle: Handle, base_address: usize, details: ProcessDetails, repo
         }
         None => report.skip("Lara's collision and the level's", "her position couldn't be read".to_string()),
     }
+    check_written(&game, report, &mut components);
     check_kinds(&game, report, &mut components, &nearby);
     match &instances {
         Some(instances) if report.options.scripts => check_trigger_scripts(&game, report, &mut components, instances, &nearby),
@@ -175,6 +177,71 @@ fn run_report(handle: Handle, base_address: usize, details: ProcessDetails, repo
         bail!("{} checks failed", report.failed);
     }
     Ok(())
+}
+
+// What tomb-helper writes (`targets`): each way of finding it should give something plausible, and the same address.
+// Only those the version has a way to find are reported.
+fn check_written(game: &Game, report: &mut Report, components: &mut Components) {
+    for address_type in targets::WRITTEN {
+        let name = format!("{:?}", address_type);
+        let found: Vec<_> = targets::candidates(game, components, address_type)
+            .into_iter()
+            .map(|(chain, source)| {
+                let address = crate::game_memory::resolve(game.handle, game.base_address, &chain);
+                let verdict = targets::verify(game, components, address_type, &chain);
+                (source, chain, address, verdict)
+            })
+            .collect();
+        if found.is_empty() {
+            continue;
+        }
+        let describe = |(source, chain, _, _): &(targets::Source, Vec<usize>, Option<usize>, Verdict)| {
+            format!("through {} {}", source.describe(), targets::describe_chain(chain))
+        };
+        let plausible: Vec<_> = found.iter().filter(|f| matches!(f.3, Verdict::Plausible(_))).collect();
+        let implausible: Vec<String> = found
+            .iter()
+            .filter_map(|f| match &f.3 {
+                Verdict::Implausible(why) => Some(format!("{}: {}", describe(f), why)),
+                _ => None,
+            })
+            .collect();
+        let unreadable: Vec<String> = found
+            .iter()
+            .filter_map(|f| match &f.3 {
+                Verdict::Unreadable(why) => Some(format!("{}: {}", describe(f), why)),
+                _ => None,
+            })
+            .collect();
+        let mut addresses: Vec<usize> = plausible.iter().filter_map(|f| f.2).collect();
+        addresses.sort();
+        addresses.dedup();
+        match plausible.first() {
+            None if implausible.is_empty() => report.skip(&name, unreadable.join("; ")),
+            None => report.fail(&name, implausible.join("; ")),
+            Some(_) if addresses.len() > 1 => {
+                let ways: Vec<String> = plausible.iter().map(|f| format!("{} -> {:#X}", describe(f), f.2.unwrap_or(0))).collect();
+                report.fail(&name, format!("they lead to different places: {}", ways.join(", ")))
+            }
+            Some(first) => {
+                let what = match &first.3 {
+                    Verdict::Plausible(what) => what.clone(),
+                    _ => unreachable!(),
+                };
+                let ways: Vec<&str> = plausible.iter().map(|f| f.0.describe()).collect();
+                let agree = if ways.len() > 1 {
+                    format!("through {}, which agree on {}", ways.join(" and "), targets::describe_chain(&first.1))
+                } else {
+                    describe(first)
+                };
+                if implausible.is_empty() {
+                    report.pass(&name, format!("{}; {}", what, agree));
+                } else {
+                    report.fail(&name, format!("{}; {}, but {}", what, agree, implausible.join("; ")));
+                }
+            }
+        }
+    }
 }
 
 fn check_position(game: &Game, report: &mut Report) -> Option<Position> {

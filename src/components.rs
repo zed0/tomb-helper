@@ -16,6 +16,8 @@ pub const DRAWABLE: &str = ".?AVDrawableComponent@cdc@@";
 pub const COLLIDE: &str = ".?AVCollideComponent@cdc@@";
 pub const PROXY: &str = ".?AVProxyComponent@cdc@@";
 pub const PLAYER: &str = ".?AVPlayerComponent@@";
+// Lara's velocity
+pub const BALLISTIC: &str = ".?AVBallisticComponent@cdc@@";
 pub const TRIGGER: &str = ".?AVTriggerComponent@@";
 // The trigger's shape (other instances have them too)
 pub const SHAPE: &str = ".?AVShapeComponent@cdc@@";

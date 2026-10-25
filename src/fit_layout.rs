@@ -42,6 +42,18 @@ const CHECK_GROUPS: &[(&str, &[&str])] = &[
     ("hit capsules", &["collide", "transform"]),
     ("collision meshes", &["collision_scene", "collision_instance", "collision_mesh"]),
     ("trigger shapes", &["trigger_shape", "trigger_object", "component_data"]),
+    // What tomb-helper writes, where it's found through the structures (`targets`)
+    ("XPosition", &["instance"]),
+    ("Velocity", &["instance", "ballistic"]),
+    ("FallStart", &["player"]),
+    ("FallStartCopy", &["player"]),
+    ("ProxyCentre", &["proxy"]),
+    ("ProxyResolvedCentre", &["proxy"]),
+    ("ProxyFlags", &["proxy"]),
+    ("ProxyShapeCentre", &["proxy", "body", "physics_shape"]),
+    ("ProxyShapePreviousCentre", &["proxy", "body", "physics_shape"]),
+    ("ProxyShapeGap", &["proxy", "body", "physics_shape"]),
+    ("ProxyBodyGap", &["proxy", "body"]),
 ];
 
 /// Layout values that aren't offsets into a structure: how much is read (which grow when fields move on), and type
@@ -59,6 +71,7 @@ const READ_SIZES: &[&str] = &[
 const NOT_OFFSETS: &[&str] = &[
     "proxy.contact_size",
     "proxy.collides",
+    "proxy.movement_collides",
     "component_data.entry_size",
     "aim_sweep.max_handles",
     "aim_sweep.handle_size",
@@ -85,6 +98,8 @@ const NOT_OFFSETS: &[&str] = &[
     "trigger_shape.sphere_type",
     "trigger_shape.poly_type",
     "trigger_shape.poly_point_size",
+    // In a polygon's entries, not the record
+    "trigger_shape.poly_sweep",
     "trigger_object.volume_box",
     "trigger_object.volume_sphere",
     "script.link_size",

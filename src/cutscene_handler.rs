@@ -3,12 +3,16 @@
 //! returns `Ok` when there's no cutscene, as Space is also jump. A blacklist delay of `NEVER_SKIP` means never skip.
 
 use crate::action::Action;
+use crate::components::Components;
+use crate::game::Game;
+use crate::game_memory::Handle as GameHandle;
 use crate::handler::Handler;
 use crate::process_details::{AddressOffsets, AddressType};
 use crate::cutscene_timing_info::{TimingInfo, TimingEntry};
+use crate::targets::{self, Verdict};
 use crate::tracked_memory::TrackedMemory;
 use crate::readable_from_path::ReadableFromPath;
-use process_memory::{Architecture, ProcessHandle};
+use process_memory::{Architecture, Pid, ProcessHandle};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::error::Error;
@@ -28,7 +32,6 @@ const TIMING_TOLERANCE: f32 = 0.1;
 // Seconds after the prompt changes before the game will let you skip, timed by when the values in Cheat Engine change
 const PROMPT_DELAY: f32 = 0.23;
 
-#[derive(Debug, Clone)]
 pub struct CutsceneHandler {
     prompt: TrackedMemory<u8>,
     status: TrackedMemory<u8>,
@@ -43,6 +46,9 @@ pub struct CutsceneHandler {
     skipping_cutscene: Option<TimingEntry>,
     skip_time: Option<f32>,
     fadeout_start: Option<Instant>,
+    // For checking the status looks right before it's written
+    game: Game,
+    components: Components,
 }
 
 impl CutsceneHandler {
@@ -51,6 +57,7 @@ impl CutsceneHandler {
         arch: &Architecture,
         base_addr: &usize,
         handle: &ProcessHandle,
+        pid: &Pid,
         blacklist_location: &String,
         timing_info_path: &String,
     ) -> Option<CutsceneHandler> {
@@ -70,6 +77,8 @@ impl CutsceneHandler {
             skipping_cutscene: None,
             skip_time: None,
             fadeout_start: None,
+            game: Game::new(GameHandle::Live(*pid, *handle), *base_addr, address_offsets),
+            components: Components::new(*base_addr),
         })
     }
 
@@ -129,6 +138,15 @@ impl CutsceneHandler {
             && cutscene_info.in_game_time > TIMING_TOLERANCE
         {
             println!("Cutscene timing info is inconsistent between in game and real time for cutscene {}, not skipping! Report these ids along with which cutscene you were attempting to skip!", self.id.data);
+        }
+
+        // Not through a chain that's wrong for this build
+        let chain = self.game.offsets.get(&AddressType::CutsceneStatus).cloned().unwrap_or_default();
+        match targets::verify(&self.game, &mut self.components, AddressType::CutsceneStatus, &chain) {
+            Verdict::Plausible(_) => {}
+            Verdict::Implausible(why) | Verdict::Unreadable(why) => {
+                return Err(CutsceneError::new(&format!("The cutscene's state looks wrong ({}), not skipping.", why)).into())
+            }
         }
 
         self.start_fadeout(cutscene_info)?;
