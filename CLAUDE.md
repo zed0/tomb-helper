@@ -111,7 +111,11 @@ Each module's `//!` doc says what's in it and how it works; this is where to loo
   left of that version's `layout` by hand until `check` passes (README "Porting the overlay"). It saves to `tomb-helper-offsets.json` next to the exe, which hot reloads; copy
   the entry into `offsets.json` once it works. Use `image_size` when the version string is shared between stores. Only
   include the `AddressType`s you've found — handlers needing missing ones won't load. New fields read from the game go in
-  `Layout` (with ROTTR's value as the default), not constants.
+  `Layout` (with ROTTR's value as the default), not constants, and if they're in an object with RTTI, in
+  `class_fields::FIELD_CLASSES`: then `update-offsets` works out where they are in a new build from how the class's code
+  uses them (from the previous build, or for a new game the other games' dumps, which have to agree), after the layout
+  witnesses. Those are labelled "its class's code" in its summary; they've been right but for one in 11 checked, so
+  `check` has to pass before they're trusted. `debug class-layout <from> <to>` shows how well it does between two dumps.
 - **Add a new memory value:** add an `AddressType` variant, add offsets per version in `offsets.json`, read it with
   `Game` (`read_floats`, `require` and `game_memory`'s readers), or `TrackedMemory` in a handler that writes it.
 - **Writing a value:** anything a handler writes goes in `targets::WRITTEN`, with a check in `targets::verify` (what it

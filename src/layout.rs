@@ -302,16 +302,18 @@ group! {
         second_contact_count: Option<usize> = Some(0x168),
         contacts: Option<usize> = Some(0x190),
         contact_size = 0x60,
-        /// u32 flags, with `collides` set while an attached proxy (e.g. the combat proxy) collides, for a game where that
-        /// isn't known from physics bodies (TR2013)
-        flags: Option<usize> = None,
+        /// u32 flags (bit 0x20 clears while Lara aims and rolls), with `collides` set while an attached proxy (e.g. the
+        /// combat proxy) collides, for a game where that isn't known from physics bodies (TR2013)
+        flags: Option<usize> = Some(0x18),
         collides = 0x2,
-        /// In the flags, set while Lara's own proxy collides, which flight mode clears (SOTTR's flags are at +0x18)
-        movement_collides = 0x1,
+        /// In the flags, set while Lara's own proxy collides, which flight mode clears. None where it isn't known, when
+        /// flight mode leaves the flags alone (SOTTR 0x1)
+        movement_collides: Option<usize> = None,
         /// 3 floats, where collision has put the proxy, which the game moves her towards (SOTTR 0xC0)
         resolved_centre: Option<usize> = None,
-        /// -> the instance it belongs to, where `discover` finds Lara's proxy as a static (TR2013)
-        instance: Option<usize> = None,
+        /// -> the instance it belongs to (every component's back pointer, `component.instance`; TR2013's static proxy has
+        /// it elsewhere, where `discover` finds Lara's proxy by it)
+        instance: Option<usize> = Some(0x8),
         /// -> the first proxy attached to it that's found on its own, not through its body (`CombatProxy`, TR2013)
         attached: Option<usize> = None,
     }

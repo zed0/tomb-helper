@@ -348,7 +348,7 @@ impl Held {
             body_gaps: vec![],
             camera_collision: None,
             camera_collision_was: None,
-            proxy_collides: crate::layout::current().proxy.movement_collides as u32,
+            proxy_collides: crate::layout::current().proxy.movement_collides.unwrap_or(0) as u32,
         }
     }
 

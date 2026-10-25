@@ -332,7 +332,7 @@
           "centre": "0x70", "in_use_size": "0xA0", "in_use_offset": "0xB0", "in_use_local_rotation": "0xE0", "in_use_rotation": "0xF0",
           "next_size": "0x120", "next_offset": "0x130", "next_local_rotation": "0x150", "next_rotation": "0x160",
           "body": "0x1A8", "size": "0x1B0", "contact_count": "0x1C4", "second_contact_count": "0x1CC", "contacts": "0x200",
-          "flags": "0x18", "resolved_centre": "0xC0"
+          "flags": "0x18", "movement_collides": "0x1", "resolved_centre": "0xC0"
         }
       }
     }

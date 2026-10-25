@@ -152,7 +152,8 @@ fn chain_for(offsets: &AddressOffsets, address_type: AddressType, mut slot: impl
         AddressType::FallStartCopy => then(player(offsets)?, &[layout.player.fall_start_copy]),
         AddressType::ProxyCentre => then(proxy()?, &[Some(proxy_layout.centre)]),
         AddressType::ProxyResolvedCentre => then(proxy()?, &[proxy_layout.resolved_centre]),
-        AddressType::ProxyFlags => then(proxy()?, &[proxy_layout.flags]),
+        // Only where which bit is its collision is known, as that's what flight mode changes
+        AddressType::ProxyFlags if proxy_layout.movement_collides.is_some() => then(proxy()?, &[proxy_layout.flags]),
         AddressType::ProxyShapeCentre => then(proxy()?, &[proxy_layout.body, Some(body.shape), Some(shape.centre)]),
         AddressType::ProxyShapePreviousCentre => {
             then(proxy()?, &[proxy_layout.body, Some(body.shape), shape.previous_centre])
@@ -260,10 +261,10 @@ pub fn verify(game: &Game, components: &mut Components, address_type: AddressTyp
             None => unreadable(),
         },
         AddressType::ProxyFlags => match read_u32(game.handle, address) {
-            Some(flags) => {
-                let collides = layout::current().proxy.movement_collides as u32;
-                verdict(flags & collides != 0, format!("flags {:#X}", flags))
-            }
+            Some(flags) => match layout::current().proxy.movement_collides {
+                Some(collides) => verdict(flags & collides as u32 != 0, format!("flags {:#X}", flags)),
+                None => Verdict::Implausible(format!("flags {:#X}, but which bit is its collision isn't known", flags)),
+            },
             None => unreadable(),
         },
         AddressType::CameraCollision => match read_byte(game, address) {

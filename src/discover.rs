@@ -120,8 +120,9 @@ pub fn find_statics(handle: Handle, base_address: usize, image: &PeImage) -> BTr
         }
         None => println!("Instance array: NOT FOUND"),
     }
-    // Where Lara's proxy is a static (TR2013), and the attached one found from it
-    if let Some(instance_offset) = layout.proxy.instance {
+    // Where Lara's proxy is a static (TR2013, whose instances have no component table to find it in), and the attached
+    // one found from it
+    if let (None, Some(instance_offset)) = (layout.instance.components, layout.proxy.instance) {
         match find_player_proxy(handle, image, base_address, instance_offset) {
             Some(proxy) => {
                 println!("Lara's proxy at mod+{:X}, belonging to her instance at {:#X}", proxy.rva, proxy.lara);

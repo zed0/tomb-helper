@@ -203,10 +203,10 @@ mod tests {
         assert_eq!(field_offset(&layout, "proxy.in_use_size"), Some(layout.proxy.in_use_size));
         assert_eq!(field_offset(&layout, "proxy.nothing"), None);
         // Unset optional fields have no offset
-        assert_eq!(field_offset(&layout, "proxy.instance"), None);
+        assert_eq!(field_offset(&layout, "proxy.attached"), None);
         let changed = with_field(&layout, "proxy.in_use_size", 0x99).unwrap();
         assert_eq!(changed.proxy.in_use_size, 0x99);
         assert_eq!(changed.proxy.centre, layout.proxy.centre);
-        assert_eq!(with_field(&layout, "proxy.instance", 0x18).unwrap().proxy.instance, Some(0x18));
+        assert_eq!(with_field(&layout, "proxy.attached", 0x788).unwrap().proxy.attached, Some(0x788));
     }
 }

@@ -8,9 +8,12 @@
 //! there (by how deep, how big and whether each is followed, as compilers pick different instructions), and a field
 //! the code uses goes where its accesses line up (`Matched`). Others are only placed when the used fields either side
 //! moved by the same amount, and that's often wrong, as are single matches (`Guessed`); `check` has to confirm those.
-//! Measured on the dumps: ROTTR -> SOTTR 234.1 got every field it matched right (9, 5 of them known), but covers only
-//! the fields virtual functions use (not the proxy's shapes, or the camera's). Into TR2013 (another compiler, 32-bit)
-//! the proxy's first virtual function lines up access for access, but few of the fields its layout has are used there.
+//! Measured on the dumps (`debug class-layout`): ROTTR -> SOTTR 234.1 got every field it matched right (9, 5 of them
+//! known), ROTTR -> TR2013 (another compiler, 32-bit) the proxy's flags and instance, but TR2013 Steam -> v1.01.748 said
+//! the flags stayed at 0x10 when they're at 0x8 there: matches are good evidence, not proof. Only the fields the
+//! virtual functions use are covered (not the proxy's shapes, or the camera's), and a field another game doesn't have
+//! can be matched to one that's used the same way (ROTTR's physics body to something of TR2013's, which has none).
+//! `update-offsets` uses what's matched (and within a game what's placed) for a new build's layout (`class_layout`).
 
 use anyhow::{bail, Result};
 use crate::code_trace::{Access, Tracer};
@@ -299,6 +302,28 @@ pub fn print_class_layout(from: &str, to: &str, from_version: Option<&str>, to_v
     }
     for (confidence, (right, wrong, unchecked)) in tally.iter().rev() {
         println!("{:?}: {} right, {} wrong, {} not known in the offsets file", confidence, right, wrong, unchecked);
+    }
+
+    // What `update-offsets` would do with it, starting from `from`'s layout
+    let same_game = new_details.as_ref().map_or(false, |d| d.name == old_details.name);
+    let mut notes = vec![];
+    let applied = crate::update_offsets::class_layout(
+        old_details.layout.clone(),
+        &[(&old, &old_details)],
+        &new,
+        same_game,
+        &Default::default(),
+        &mut notes,
+    );
+    println!("\nupdate-offsets would set ({}):", if same_game { "the same game" } else { "another game" });
+    for note in &notes {
+        let name = note.split_whitespace().next().unwrap_or("");
+        let verdict = match (field_offset(&applied, name), known(name)) {
+            (Some(set), Some(known)) if set == known => "right",
+            (Some(_), Some(_)) => "WRONG",
+            _ => "",
+        };
+        println!("  {:<6} {}", verdict, note);
     }
     Ok(())
 }

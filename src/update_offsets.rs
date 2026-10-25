@@ -19,7 +19,7 @@ use crate::components::{self, Components};
 use crate::derive::{self, format_offsets, References};
 use crate::discover;
 use crate::find_process;
-use crate::layout;
+use crate::layout::{self, Layout};
 use crate::object_list::ObjectList;
 use crate::offsets_file::{known_process_details, Hex, VersionEntry};
 use crate::pe_image::PeImage;
@@ -165,11 +165,16 @@ pub fn run(
         }
         None => previous_build(&template, &image),
     };
+    // Layout fields the witnesses have said where they went, which the classes' code doesn't overrule
+    let mut settled: HashSet<String> = HashSet::new();
     if let Some((old, old_details)) = &previous {
         println!("Deriving the rest from {} {}...", old_details.name, old_details.version.version);
         // Layout fields the old build has witnesses for, where they match into this one
         for change in crate::layout_witness::derive_layout(&old, &old_details, &image) {
             let how = format!("{}/{} witnesses matched", change.matched, change.witnesses);
+            if change.new.is_some() {
+                settled.insert(change.name.clone());
+            }
             match change.new {
                 Some(offset) if offset != change.old => match crate::layout_witness::with_field(&layout, &change.name, offset) {
                     Ok(changed) => {
@@ -192,6 +197,22 @@ pub fn run(
                 }
                 _ => {}
             }
+        }
+    }
+
+    // A new build's (or game's) layout, where its classes' code says where their fields are: from the previous build,
+    // or for a new game, other games of the engine
+    if existing.is_none() {
+        let is_new_game = !known.iter().any(|d| d.executable_name.eq_ignore_ascii_case(&template.executable_name));
+        let others = if is_new_game { other_games(&image) } else { vec![] };
+        let references: Vec<(&PeImage, &ProcessDetails)> = match &previous {
+            Some((old, old_details)) => vec![(old, old_details)],
+            None => others.iter().map(|(image, details)| (image, details)).collect(),
+        };
+        if !references.is_empty() {
+            let names: Vec<String> = references.iter().map(|(_, d)| format!("{} {}", d.name, d.version.version)).collect();
+            println!("Working out the layout from how its classes' code uses it in {}...", names.join(", "));
+            layout = class_layout(layout, &references, &image, !is_new_game, &settled, &mut layout_notes);
         }
     }
 
@@ -315,6 +336,82 @@ fn previous_build(template: &ProcessDetails, image: &PeImage) -> Option<(PeImage
         println!("None of the dumps of {} in {} is of a known build, so not deriving from one", template.name, crate::snapshot::dump_dir().display());
     }
     None
+}
+
+/// The layout with the fields the classes' code in `references` says where they are in `image` (`class_fields`):
+/// matched by the code, or with `same_game` placed between fields that moved together (which is only reliable within a
+/// game). Where several references say, they have to agree. Fields in `settled` (by witnesses) are left as they are.
+pub fn class_layout(
+    mut layout: Layout,
+    references: &[(&PeImage, &ProcessDetails)],
+    image: &PeImage,
+    same_game: bool,
+    settled: &HashSet<String>,
+    notes: &mut Vec<String>,
+) -> Layout {
+    use crate::class_fields::Confidence;
+    // Field -> (where it is, which reference said, how)
+    let mut said: BTreeMap<String, Vec<(usize, String, String)>> = BTreeMap::new();
+    for (reference, details) in references {
+        for field in crate::class_fields::derive_layout(reference, &details.layout, image) {
+            let usable = field.confidence == Confidence::Matched || (same_game && field.confidence == Confidence::Placed);
+            if let (true, Some(new)) = (usable, field.new) {
+                said.entry(field.name).or_default().push((new, details.version.version.clone(), field.how));
+            }
+        }
+    }
+    for (name, says) in said {
+        if settled.contains(&name) {
+            continue;
+        }
+        let current = crate::layout_witness::field_offset(&layout, &name);
+        let offsets: HashSet<usize> = says.iter().map(|(offset, _, _)| *offset).collect();
+        if offsets.len() > 1 {
+            let each: Vec<String> = says.iter().map(|(offset, version, _)| format!("{:#X} in {}", offset, version)).collect();
+            notes.push(format!("{:<34} UNSURE, the classes' code disagrees ({}), kept {:#X}", name, each.join(", "), current.unwrap_or(0)));
+            continue;
+        }
+        let (offset, _, how) = &says[0];
+        if current == Some(*offset) {
+            continue;
+        }
+        match crate::layout_witness::with_field(&layout, &name, *offset) {
+            Ok(changed) => {
+                layout = changed;
+                notes.push(format!("{:<34} {:#X} -> {:#X} (its class's code: {})", name, current.unwrap_or(0), offset, how));
+            }
+            Err(e) => notes.push(format!("{:<34} couldn't be set: {:#}", name, e)),
+        }
+    }
+    layout
+}
+
+/// For a new game: the newest dump in the data folder of each known game (of the same bitness, if there are any)
+fn other_games(image: &PeImage) -> Vec<(PeImage, ProcessDetails)> {
+    let mut dumps: Vec<(std::time::SystemTime, PathBuf)> = std::fs::read_dir(crate::snapshot::dump_dir())
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_string_lossy().ends_with(".bin"))
+        .filter_map(|e| Some((e.metadata().ok()?.modified().ok()?, e.path())))
+        .collect();
+    dumps.sort();
+    let mut newest: BTreeMap<String, (PeImage, ProcessDetails)> = BTreeMap::new();
+    for (_, path) in dumps.iter().rev() {
+        let dump = match PeImage::load(path) {
+            Ok(dump) => dump,
+            Err(_) => continue,
+        };
+        if let Ok(details) = derive::reference_details(&dump, None) {
+            newest.entry(details.name.clone()).or_insert((dump, details));
+        }
+    }
+    let all: Vec<(PeImage, ProcessDetails)> = newest.into_values().collect();
+    if all.iter().any(|(dump, _)| dump.is_64 == image.is_64) {
+        all.into_iter().filter(|(dump, _)| dump.is_64 == image.is_64).collect()
+    } else {
+        all
+    }
 }
 
 /// A game with no entry in the offsets file yet, to start one for
