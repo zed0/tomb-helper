@@ -269,7 +269,7 @@ tomb-helper can work out most of the memory offsets for a new version of a game 
 tomb-helper debug derive <from> <to> [--from-version <version>]
 ```
 
-`<from>` and `<to>` are paths to the game's exe, or `running` to use the game that is currently running. Games protected by Denuvo (e.g. Shadow of the Tomb Raider v1.0 build 234.1) are encrypted on disk, so for those launch the game, wait for the main menu, and use `running`, or pass the dump `update-offsets` kept of it (or save one with `tomb-helper debug dump [<out.bin>]`).
+`<from>` and `<to>` are paths to the game's exe, or `running` to use the game that is currently running. Games protected by Denuvo (e.g. Shadow of the Tomb Raider v1.0 build 234.1) are encrypted on disk, so for those launch the game, wait for the main menu, and use `running`, or pass the dump `update-offsets` kept of it (or save one with `tomb-helper debug dump [<out.bin>]`, which goes in the data folder unless you give a path).
 
 The version of `<from>` is detected from its image size where possible, otherwise pass `--from-version` with a version from the [offsets file](#offsets-file), e.g.
 

@@ -318,6 +318,11 @@
         "CutsceneStatus": ["0x413E10"],
         "CutsceneLength": ["0x41AD75"]
       },
+      "layout_witnesses": {
+        "camera.view": ["0x9D5F79"],
+        "proxy.centre": ["0x20DB82", "0x21D90C"],
+        "proxy.in_use_size": ["0x21D6E1", "0x21D717"]
+      },
       "layout": {
         "instance": {"object_name": ["0x80", "0x8", "0x60", "0x8"], "ballistic": "0xF0"},
         "player": {"instance": "0x33E8", "fall_start": "0x1064", "fall_start_copy": "0x1070"},

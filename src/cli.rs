@@ -132,7 +132,8 @@ enum Debug {
     },
     /// Write the offsets tomb-helper is using to a file (tomb-helper-offsets.json next to the exe by default)
     ExportOffsets { out: Option<String> },
-    /// Save the running game's unpacked image (`update-offsets` keeps one of each build it ports)
+    /// Save the running game's unpacked image, to the data folder unless given a path (`update-offsets` keeps one of
+    /// each build it ports there, and derives new builds from them)
     Dump { out: Option<String> },
     /// Find the pointer chains the game's own code uses to reach each known value
     Chains {
@@ -303,9 +304,17 @@ fn export_offsets(out: Option<&str>) -> Result<()> {
 
 fn dump(out: Option<&str>) -> Result<()> {
     let (image, exe) = crate::derive::running_game()?;
-    let out = out.map(String::from).unwrap_or_else(|| format!("{}-{}.bin", exe.trim_end_matches(".exe"), image.size_of_image()));
-    std::fs::write(&out, &image.data).with_context(|| format!("Could not write {}", out))?;
-    println!("Wrote {} bytes to {}", image.data.len(), out);
+    // In the data folder by default, where `update-offsets` looks for the last build's dump
+    let out = match out {
+        Some(out) => std::path::PathBuf::from(out),
+        None => {
+            let folder = crate::snapshot::dump_dir();
+            std::fs::create_dir_all(&folder).with_context(|| format!("Could not create {}", folder.display()))?;
+            folder.join(format!("{}-{}.bin", exe.trim_end_matches(".exe"), image.size_of_image()))
+        }
+    };
+    std::fs::write(&out, &image.data).with_context(|| format!("Could not write {}", out.display()))?;
+    println!("Wrote {} bytes to {}", image.data.len(), out.display());
     Ok(())
 }
 
