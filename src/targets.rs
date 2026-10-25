@@ -348,20 +348,30 @@ fn cutscene(game: &Game) -> Verdict {
         (Some(status), Some(prompt)) => (status, prompt),
         _ => return Verdict::Unreadable("there's no cutscene".to_string()),
     };
-    let what = format!("status {}, prompt {}", status, prompt);
-    let small = status < MAX_CUTSCENE_STATE && prompt < MAX_CUTSCENE_STATE;
-    match (float(AddressType::CutsceneTimeline), float(AddressType::CutsceneLength)) {
-        (Some(timeline), Some(length)) => {
-            let sane = length.is_finite() && (0.0..MAX_CUTSCENE_LENGTH).contains(&length) && timeline.is_finite() && timeline >= 0.0;
-            let what = format!("{}, {:.1}s of {:.1}s", what, timeline, length);
-            if small && sane {
-                Verdict::Plausible(what)
-            } else {
-                Verdict::Implausible(what)
+    let mut what = format!("status {}, prompt {}", status, prompt);
+    let mut sane = status < MAX_CUTSCENE_STATE && prompt < MAX_CUTSCENE_STATE;
+    if let (Some(timeline), Some(length)) = (float(AddressType::CutsceneTimeline), float(AddressType::CutsceneLength)) {
+        sane &= length.is_finite() && (0.0..MAX_CUTSCENE_LENGTH).contains(&length) && timeline.is_finite() && timeline >= 0.0;
+        what = format!("{}, {:.1}s of {:.1}s", what, timeline, length);
+    }
+    // What the blacklist and timing info go by: a cutscene always has one (a chain into the wrong field of the right
+    // object read 0 in SOTTR 234.1)
+    if game.has(AddressType::CutsceneId) {
+        match game.resolve(AddressType::CutsceneId).and_then(|address| read_u32(game.handle, address)) {
+            Some(id) => {
+                sane &= id != 0;
+                what = format!("{}, id {:#X}", what, id);
+            }
+            None => {
+                sane = false;
+                what = format!("{}, but its id can't be read", what);
             }
         }
-        _ if small => Verdict::Plausible(what),
-        _ => Verdict::Implausible(what),
+    }
+    if sane {
+        Verdict::Plausible(what)
+    } else {
+        Verdict::Implausible(what)
     }
 }
 
