@@ -51,15 +51,20 @@ pub enum AddressType {
     // or she dies when flown down too far below it
     FallStart,
     FallStartCopy,
-    // Lara's proxy's centre (3 floats, which follows her), and the centre it's been moved to by collision and its
-    // physics body's, which the game moves her towards (so back through a wall she's flown through); flight mode puts
-    // the last two where the first is
+    // Lara's proxy's centre (3 floats, which follows her), and the centre it's been moved to by collision, which the
+    // game moves her towards (so back through a wall she's flown through); flight mode puts the second where the first is
     ProxyCentre,
     ProxyResolvedCentre,
-    ProxyBodyCentre,
     // Lara's proxy's u32 flags, with 0x1 set while it collides, which flight mode clears, or it's pushed back up out of
     // the ground and she's pulled up after it
     ProxyFlags,
+    // Lara's proxy's physics body: its shape's centre and a copy (3 floats), and how far it has left to go to get to her,
+    // in the body and its shape (4 floats). With its proxy's collision off, the body stays where it was, and after, it
+    // only moves towards her, so flight mode puts it back on her afterwards
+    ProxyShapeCentre,
+    ProxyShapePreviousCentre,
+    ProxyShapeGap,
+    ProxyBodyGap,
     // A byte, nonzero while the camera collides with the level (the active camera controller's); flight mode turns it
     // off, or the camera stays on this side of a wall she's flown through
     CameraCollision,

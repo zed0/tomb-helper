@@ -284,7 +284,10 @@ again (`derive` plus live checks).
 - Her proxy (component slot 39): +0x18 flags (0x4B3 standing, 0x1493 in the air), bit 0x1 is its collision; +0x70 its
   centre (follows her), +0xC0 where collision put it, which the game moves her towards (up to ~30-100 a frame), so it
   pulled her back through a wall she'd flown through, and up out of the ground. Flight clears bit 0x1 and copies +0x70
-  to +0xC0 and the physics shape's centre.
+  to +0xC0. With bit 0x1 clear her physics body (proxy+0x1A8 -> body, +0x20 -> shape: +0x0 centre, +0xA0 a copy) stays
+  where it was, and once it's set again the body only moves towards her (body +0x0 and shape +0x10 are how far it has
+  left, zero normally), stopping at walls: it stayed ~1000 away, and she could jump through walls until the game was
+  restarted. Setting the shape's centres to the proxy's and zeroing those two after the flight puts it back on her.
 - The camera: `GameRender`+0x450 -> Lara's `CameraComponent`, +0xF08 -> the active camera stack entry, +0x20 -> its
   controller (`ExplorationCameraController`), whose collision struct at +0xDF0 (`cdc::GeomSphere` at +0x20, radius 10)
   has an enabled byte at +0x8 that every collision pass checks (+0x8AF920, +0x8AFF30, +0x8B0D80): zeroed, the camera
