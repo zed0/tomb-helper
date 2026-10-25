@@ -229,6 +229,12 @@ pub fn run(
             layout = crate::value_layout::apply(layout, &sources, &target, &target_details, &mut settled, &mut layout_notes);
             crate::layout::set_for(&ProcessDetails { layout: layout.clone(), ..template.clone() });
         }
+
+        // The camera's fields by what they have to be (no other build needed), moving the camera's chains with them
+        let offsets: crate::process_details::AddressOffsets = found.iter().map(|(t, (chain, _))| (*t, chain.clone())).collect();
+        let game = crate::game::Game::new(memory, base_address, &offsets);
+        layout = crate::camera_fields::apply(layout, &game, &mut found, &mut layout_notes);
+        crate::layout::set_for(&ProcessDetails { layout: layout.clone(), ..template.clone() });
     }
 
     // Anything not found keeps what it was (for a known build), or is left for review (for a new one)

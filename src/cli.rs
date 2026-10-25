@@ -170,6 +170,14 @@ enum Debug {
         #[arg(long)]
         to: Option<String>,
     },
+    /// Find the running game's camera fields by what they have to be (starting from its layout, or another version's)
+    CameraFields {
+        #[arg(long)]
+        version: Option<String>,
+        /// Start from this version's camera layout rather than the running game's
+        #[arg(long)]
+        layout_of: Option<String>,
+    },
     /// Find the playing cutscene's id (`CutsceneId`) by the timing file's ids, starting from the version's chain for it
     FindCutsceneId {
         #[arg(long)]
@@ -283,6 +291,7 @@ fn run_debug(tool: Debug) -> Result<()> {
         Debug::Trace { image, address } => crate::derive::trace(&image, &address),
         Debug::ClassFields { image, class, field } => crate::class_fields::print_class_fields(&image, &class, field.as_deref()),
         Debug::FindCutsceneId { version, save } => crate::cutscene_id::find_cutscene_id(version, save),
+        Debug::CameraFields { version, layout_of } => crate::camera_fields::print_camera_fields(version, layout_of.as_deref()),
         Debug::ValueLayout { snapshot, group, version, to } => {
             crate::value_layout::print_value_layout(&snapshot, &group, version, to.as_deref())
         }

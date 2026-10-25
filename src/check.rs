@@ -400,11 +400,22 @@ fn check_bounds(game: &Game, report: &mut Report, components: &mut Components, n
 
 fn check_camera(game: &Game, report: &mut Report) {
     match game.resolve(AddressType::CameraView).and_then(|a| read_floats::<16>(game.handle, a)) {
-        Some(view) => report.result(
-            "camera view",
-            is_rotation(&view, false),
-            format!("rotation rows {:?}", rows(&view).map(|r| format!("{:.2}", r.norm()))),
-        ),
+        Some(view) => {
+            // Where GameRender can be read (not from a snapshot), it has to be the world-to-view matrix, not just a
+            // rotation (the camera-to-world ones are too)
+            let offset = game.offsets.get(&AddressType::CameraView).and_then(|c| c.last().copied()).unwrap_or(0);
+            let camera = crate::camera_fields::Camera::read(game, &crate::layout::current().camera);
+            let is_view = camera.map(|c| c.is_view(offset));
+            report.result(
+                "camera view",
+                is_rotation(&view, false) && is_view != Some(false),
+                format!(
+                    "rotation rows {:?}{}",
+                    rows(&view).map(|r| format!("{:.2}", r.norm())),
+                    if is_view == Some(false) { ", but it isn't the inverse of a camera-to-world matrix near Lara" } else { "" }
+                ),
+            )
+        }
         None => report.fail("camera view", "CameraView doesn't resolve".to_string()),
     }
     match game.resolve(AddressType::CameraLens).and_then(|a| read_floats::<8>(game.handle, a)) {

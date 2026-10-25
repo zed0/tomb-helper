@@ -29,6 +29,7 @@ mod config;
 mod cutscene_handler;
 mod cutscene_id;
 mod cutscene_timing_generator_handler;
+mod camera_fields;
 mod chains;
 mod check;
 mod class_fields;

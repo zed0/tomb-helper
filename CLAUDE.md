@@ -83,6 +83,7 @@ Each module's `//!` doc says what's in it and how it works; this is where to loo
 | `src/targets.rs` | What tomb-helper writes: chains built from the structures (or the offsets file's), checked before writing |
 | `src/tracked_memory.rs`, `src/tracked_position.rs` | Cached values at pointer chains, for the position and cutscene handlers |
 | `src/cutscene_handler.rs` | Cutscene skipping (SOTTR) and time saved |
+| `src/camera_fields.rs` | The camera's fields by what they have to be (inverse matrices, the first camera-to-world one, fov then aspect), for `update-offsets` and `check`; `debug camera-fields` |
 | `src/value_layout.rs` | A layout from the values in it: Lara's proxy's fields found by their values in another game's or build's snapshot (`debug value-layout`, used by `update-offsets`) |
 | `src/cutscene_id.rs` | Finding `CutsceneId` while a cutscene plays, by the timing file's ids (`debug find-cutscene-id`, run by `port`) |
 | `src/cutscene_timing_info.rs`, `src/cutscene_timing_generator_handler.rs` | The cutscene timing file, and recording it with LiveSplit |
@@ -128,7 +129,13 @@ Each module's `//!` doc says what's in it and how it works; this is where to loo
   each other game), in order. Every pair of the 5 snapshots (ROTTR, SOTTR 492/234.1, TR2013 Steam/748, 32 and 64-bit)
   got all 9 known proxy fields right. `update-offsets` applies it after the class code; like it, it only moves fields
   the layout has (it predicts ROTTR's `resolved_centre` at +0x70, unconfirmed). Camera and player fields hold
-  values that depend on where she and the camera are, so they aren't found this way.
+  values that depend on where she and the camera are, so they aren't found this way. The camera's are found by what
+  they have to be instead (`camera_fields`, no other build needed): in GameRender, `view` is the one world-to-view
+  matrix (the inverse of a camera-to-world one; those all put the camera near Lara), `sin` the first camera-to-world
+  one, and the lens's fov comes just before its aspect, after the near and far planes. Checked live in ROTTR, SOTTR
+  492 and TR2013 Steam, and from ROTTR's and SOTTR's layouts it finds all of TR2013's. Fields that pass are kept (ROTTR's
+  lens has two fov copies, and the first can be another pass's). `player.instance` comes from `XPosition`'s chain; 8
+  fields of the player point at Lara's instance in ROTTR and SOTTR, the right one the 4th in both.
 - **Add a new memory value:** add an `AddressType` variant, add offsets per version in `offsets.json`, read it with
   `Game` (`read_floats`, `require` and `game_memory`'s readers), or `TrackedMemory` in a handler that writes it.
 - **Writing a value:** anything a handler writes goes in `targets::WRITTEN`, with a check in `targets::verify` (what it
