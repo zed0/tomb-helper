@@ -212,7 +212,9 @@ pub fn run(
         if !references.is_empty() {
             let names: Vec<String> = references.iter().map(|(_, d)| format!("{} {}", d.name, d.version.version)).collect();
             println!("Working out the layout from how its classes' code uses it in {}...", names.join(", "));
-            layout = class_layout(layout, &references, &image, !is_new_game, &settled, &mut layout_notes);
+            // Fields placed between moved ones are only right within a game (`--from` can be another game's dump)
+            let same_game = references.iter().all(|(_, d)| d.name == template.name);
+            layout = class_layout(layout, &references, &image, same_game, &settled, &mut layout_notes);
         }
     }
 
