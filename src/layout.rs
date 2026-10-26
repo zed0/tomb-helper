@@ -294,8 +294,8 @@ group! {
         next_offset = 0xD0,
         next_local_rotation = 0xF0,
         next_rotation = 0x100,
-        /// -> physics body the proxy is swept as, which the camera's and Lara's weapon's are attached to. None if there
-        /// isn't one (TR2013)
+        /// -> physics body the proxy is swept as (or in TR2013, placed at), which the camera's and Lara's weapon's (TR2013's
+        /// combat proxy's) are attached to. TR2013 Steam 0x10C
         body: Option<usize> = Some(0x148),
         size = 0x150,
         /// What it hit this frame (including through the proxies attached to it): two u32 counts (next to each other in

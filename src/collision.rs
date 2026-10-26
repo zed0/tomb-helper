@@ -240,7 +240,13 @@ pub fn read_proxy(handle: Handle, proxy: usize, standalone: &[usize]) -> io::Res
     // Ones found on their own say whether they collide in their flags, and are only touching if on a contact
     for &other in standalone {
         if let Ok((capsule, collides)) = read_attached_proxy(handle, other) {
-            attached.push(AttachedProxy { capsule, touching: false });
+            // It may have been found through her body too (TR2013's combat proxy's body is in her list, but further
+            // along than is searched)
+            let same = |a: &AttachedProxy| (a.capsule.a.vector() - capsule.a.vector()).norm() < PROXY_SAME_SHAPE
+                && (a.capsule.b.vector() - capsule.b.vector()).norm() < PROXY_SAME_SHAPE;
+            if !attached.iter().any(same) {
+                attached.push(AttachedProxy { capsule, touching: false });
+            }
             attached_active |= collides;
         }
     }

@@ -141,7 +141,7 @@ Each module's `//!` doc says what's in it and how it works; this is where to loo
   instance a pointer or two in) that follow both lifts are it and its copy. In TR2013 Steam that found the player at
   [[instance + 0xA8] + 0x14] (as the aim sweep knew) and the fall start at 0xF0C and 0xF18, 0xC apart as SOTTR's are;
   TR2013's position chain doesn't go through the player, hence `player.from_instance`. Flown down in TR2013 and lived.
-- TR2013 Steam has every flight value SOTTR has except the body ones (its proxy has no physics body), found live:
+- TR2013 Steam has every flight value SOTTR has but the body's gaps and previous centre, found live:
   velocity at her instance +0xA4 -> `cdc::BallisticComponent` +0x10 (fell by ~1 a frame during a lift, 0 on landing);
   `PlayerProxy` flags +0x10 (0xB3 standing, 0x93 in the air: SOTTR's 0x4B3/0x1493, same low byte), whose bit 0x1 gates
   the proxy update (+0x1705E0) copying the collision result ([proxy+0x108]+0x80) into +0x60, the resolved centre (which
@@ -150,6 +150,13 @@ Each module's `//!` doc says what's in it and how it works; this is where to loo
   query), whose byte is read every frame by three tests that skip collision when it's 0 (+0x511572, +0x511DCC,
   +0x520BF7), like SOTTR's three passes. targets builds the proxy's fields from `PlayerProxy` where there's no
   component table. Not flown with them yet.
+- It has a physics body after all (`proxy.body` +0x10C, which the notes above once said it hadn't): body +0x0 -> shape,
+  +0x38 next (423 in the list; +0x3C the other way), +0x40 -> rigid body (also proxy +0x108: inertia, mass 100 at +0x3C,
+  +0x80 position = the proxy's centre), +0x44 parent (the combat proxy's body has hers, 20 along the list), +0x48 -> its
+  proxy +0xF8. Shape as ROTTR's (+0x0 centre, +0x20 rotation, +0x44 radius/length 25/60) but type at +0x70 and touching
+  at +0x71 (0x2F). Unlike SOTTR's it isn't swept towards her: the proxy's set-transform (+0x175800, with no test of the
+  collision bit) works out her centre from her feet and places the body there (+0x1EF960 -> +0x1F2D70, written at
+  +0x1333AB), so there are no gaps to clear and it can't be left behind a wall.
 - **Add a new memory value:** add an `AddressType` variant, add offsets per version in `offsets.json`, read it with
   `Game` (`read_floats`, `require` and `game_memory`'s readers), or `TrackedMemory` in a handler that writes it.
 - **Writing a value:** anything a handler writes goes in `targets::WRITTEN`, with a check in `targets::verify` (what it
@@ -375,7 +382,7 @@ again (`derive` plus live checks).
     `proxy`): +0x10 u32 flags (bit 0x20 clears while aiming, as in ROTTR), +0x18 -> its instance, +0x20 centre, +0x48
     radius/length (25, 60; aiming 25, 40), +0x50 offset (0, -5, 85; aiming (0, -10, 90)), +0x70 tilt and +0x80 facing
     quaternions, +0xA0/+0xB0/+0xD0/+0xE0 the shape it's changing to, +0xC0 her feet (feet + facing * offset = centre,
-    checked), +0xF8 -> what it's attached to (her instance). No physics body (`proxy.body` null). Contacts: u32 count at
+    checked), +0xF8 -> what it's attached to (her instance), +0x10C -> its physics body (see below). Contacts: u32 count at
     +0x120 (the records keep their old values when it's 0, which is why they looked stale), 0x50 byte records from +0x130
     (normal + distance, then the point at +0x10). Aiming at a wall she faced, every live contact was on the combat
     proxy (`collision::read_proxy`'s `standalone`), none on hers.
