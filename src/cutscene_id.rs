@@ -1,6 +1,5 @@
-//! Finding a build's `CutsceneId` while a cutscene plays, for when deriving it from another build isn't sure (its
-//! witnesses reach the id through a pointer to a small record holding it, which says nothing about where that record
-//! is, see `derive`). The cutscene's length (`CutsceneLength`, which derives fine) picks its entry in the cutscene timing
+//! Finding a build's `CutsceneId` while a cutscene plays, for when deriving it from another build isn't sure (the code
+//! reaches the id through a pointer to a small record holding it, which says nothing about where that record is). The cutscene's length (`CutsceneLength`, which derives fine) picks its entry in the cutscene timing
 //! file, and a cutscene's ids are the same in every build, so the id is the one place, reached the way the chain it's
 //! given is (keeping as much of its start as can be kept), that holds one of that entry's ids. Places in a run of known
 //! ids (the level's table of its cutscenes) are left out. `debug find-cutscene-id [--save]`, and `port` runs it.

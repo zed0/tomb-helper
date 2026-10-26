@@ -165,28 +165,10 @@ pub fn run(
         }
         None => previous_build(&template, &image),
     };
-    // Layout fields the witnesses have said where they went, which the classes' code doesn't overrule
+    // Layout fields already worked out, which later steps don't overrule
     let mut settled: HashSet<String> = HashSet::new();
     if let Some((old, old_details)) = &previous {
         println!("Deriving the rest from {} {}...", old_details.name, old_details.version.version);
-        // Layout fields the old build has witnesses for, where they match into this one
-        for change in crate::layout_witness::derive_layout(&old, &old_details, &image) {
-            let how = format!("{}/{} witnesses matched", change.matched, change.witnesses);
-            if change.new.is_some() {
-                settled.insert(change.name.clone());
-            }
-            match change.new {
-                Some(offset) if offset != change.old => match crate::layout_witness::with_field(&layout, &change.name, offset) {
-                    Ok(changed) => {
-                        layout = changed;
-                        layout_notes.push(format!("{:<34} {:#X} -> {:#X} ({})", change.name, change.old, offset, how));
-                    }
-                    Err(e) => layout_notes.push(format!("{:<34} couldn't be set: {:#}", change.name, e)),
-                },
-                Some(_) => layout_notes.push(format!("{:<34} unchanged ({})", change.name, how)),
-                None => layout_notes.push(format!("{:<34} UNSURE, kept {:#X} ({})", change.name, change.old, how)),
-            }
-        }
         for (address_type, chain, sure, note) in derive::derive_lines(&old, &old_details, &image) {
             match chain {
                 Some(chain) if sure && !found.contains_key(&address_type) => {
@@ -274,11 +256,6 @@ pub fn run(
         image_size: Some(image_size),
         bits: image.bitness(),
         offsets: offsets.iter().map(|(t, c)| (*t, hex(c))).collect(),
-        witnesses: existing.as_ref().map_or_else(BTreeMap::new, |d| d.witnesses.iter().map(|(t, w)| (*t, hex(w))).collect()),
-        // Instructions in this build, so only a known build keeps them
-        layout_witnesses: existing
-            .as_ref()
-            .map_or_else(BTreeMap::new, |d| d.layout_witnesses.iter().map(|(n, w)| (n.clone(), hex(w))).collect()),
         unverified: unverified.iter().map(|(t, c)| (*t, hex(c))).collect(),
         layout,
     };
@@ -365,7 +342,7 @@ fn previous_build(template: &ProcessDetails, image: &PeImage) -> Option<(PeImage
 
 /// The layout with the fields the classes' code in `references` says where they are in `image` (`class_fields`):
 /// matched by the code, or with `same_game` placed between fields that moved together (which is only reliable within a
-/// game). Where several references say, they have to agree. Fields in `settled` (by witnesses) are left as they are, and
+/// game). Where several references say, they have to agree. Fields in `settled` are left as they are, and
 /// those changed are added to it. Only fields the layout has are moved: another game having a field doesn't say this
 /// one uses it the same way.
 pub fn class_layout(
@@ -391,7 +368,7 @@ pub fn class_layout(
         if settled.contains(&name) {
             continue;
         }
-        let current = crate::layout_witness::field_offset(&layout, &name);
+        let current = crate::layout::field_offset(&layout, &name);
         if current.is_none() {
             continue;
         }
@@ -405,7 +382,7 @@ pub fn class_layout(
         if current == Some(*offset) {
             continue;
         }
-        match crate::layout_witness::with_field(&layout, &name, *offset) {
+        match crate::layout::with_field(&layout, &name, *offset) {
             Ok(changed) => {
                 layout = changed;
                 notes.push(format!("{:<34} {:#X} -> {:#X} (its class's code: {})", name, current.unwrap_or(0), offset, how));
@@ -505,8 +482,6 @@ fn attach_new(new: &NewGame) -> Result<(Pid, ProcessHandle, usize, Option<Proces
         version: VersionIdentifier { version: format!("unknown build (image size {})", image_size), image_size: Some(image_size) },
         arch,
         address_offsets: Default::default(),
-        witnesses: Default::default(),
-        layout_witnesses: Default::default(),
         unverified: Default::default(),
         layout: Default::default(),
     };

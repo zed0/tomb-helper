@@ -1,7 +1,6 @@
-//! Finds the instructions that access a value ("witnesses") by attaching as a debugger for a few
-//! seconds and putting hardware breakpoints on it. This finds code that a static trace can't reach,
-//! e.g. fields read through objects found in lists. `derive` then matches these instructions in a
-//! new build to find where the field moved to.
+//! Finds the instructions that access a value by attaching as a debugger for a few seconds and putting hardware
+//! breakpoints on it (`debug watch`). This finds code that a static trace can't reach, e.g. fields read through objects
+//! found in lists.
 //!
 //! It sets DR0-3 on up to 4 values (resolved after `--delay`) and records each accessing instruction with its callers
 //! (return addresses scanned off the stack); `--write` breaks on writes only. In a 32-bit game the debug registers are
@@ -14,7 +13,7 @@
 use anyhow::{bail, Context as _, Result};
 use crate::derive::format_offsets;
 use crate::find_process;
-use crate::offsets_file::{known_process_details, to_json, Hex};
+use crate::offsets_file::known_process_details;
 use crate::process_details::AddressType;
 use iced_x86::{CodeSize, Decoder, DecoderOptions, Formatter, Instruction, IntelFormatter, Mnemonic, OpKind, Register};
 use process_memory::{CopyAddress, DataMember, Memory, Pid, ProcessHandle, TryIntoProcessHandle};
@@ -51,8 +50,6 @@ const STATUS_WX86_SINGLE_STEP: u32 = 0x4000_001E;
 const STATUS_WX86_BREAKPOINT: u32 = 0x4000_001F;
 // Longest x86 instruction
 const MAX_INSTRUCTION_LENGTH: usize = 15;
-// Witnesses suggested per value
-const MAX_WITNESSES: usize = 8;
 // How much of the stack to search for return addresses, and how many callers to keep
 const STACK_SCAN_SIZE: usize = 0x1000;
 const MAX_CALLERS: usize = 8;
@@ -714,7 +711,8 @@ pub fn disasm(pid: &str, address: &str, count: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn watch(names: &[&str], version: Option<String>, seconds: u64, delay: u64, write_only: bool, save: bool) -> Result<()> {
+/// `debug watch <value>... [--seconds <n>] [--delay <n>] [--write]`
+pub fn watch(names: &[&str], version: Option<String>, seconds: u64, delay: u64, write_only: bool) -> Result<()> {
     let kind = if write_only { Breakpoint::Write } else { Breakpoint::Access };
     if delay > 0 {
         println!("Starting in {} seconds...", delay);
@@ -751,9 +749,7 @@ pub fn watch(names: &[&str], version: Option<String>, seconds: u64, delay: u64, 
     let image_size = find_process::get_image_size(handle, base_addr)?;
     let hits = record(pid, handle, base_addr, &addresses, seconds, kind, Some((base_addr, base_addr + image_size)), None)?;
 
-    let mut witnesses: BTreeMap<AddressType, Vec<Hex>> = BTreeMap::new();
     for ((address_type, address), hits) in watched.iter().zip(&hits) {
-        let last_offset = *details.address_offsets[address_type].last().unwrap() as i64;
         println!("{:?} at {:#X}:", address_type, address);
         if hits.is_empty() {
             // Some are only touched now and then, e.g. a cutscene's id at its camera cuts
@@ -765,40 +761,6 @@ pub fn watch(names: &[&str], version: Option<String>, seconds: u64, delay: u64, 
             println!("    {:#010X} {:>6}x  {}", rva, hit.count, hit.text);
             print_callers(hit);
         }
-        // The best witnesses access the field with the same offset as the chain (so they use the
-        // same object pointer), and run often (so they're the main code path, not a one-off)
-        let mut best: Vec<(&usize, &Hit)> = by_count
-            .iter()
-            .filter(|(_, hit)| hit.displacement != 0)
-            .cloned()
-            .collect();
-        best.sort_by_key(|(rva, hit)| (hit.displacement != last_offset, std::cmp::Reverse(hit.count), **rva));
-        best.truncate(MAX_WITNESSES);
-        if !best.is_empty() && best.iter().all(|(_, hit)| hit.displacement != last_offset) {
-            println!(
-                "    None of these use its offset ({:#X}), so they can't show where it goes in another build: \
-                 deriving it won't use them",
-                last_offset
-            );
-        }
-        if !best.is_empty() {
-            witnesses.insert(*address_type, best.iter().map(|(rva, _)| Hex(**rva)).collect());
-        }
-    }
-    if witnesses.is_empty() {
-        return Ok(());
-    }
-    if save {
-        let mut entry = crate::offsets_file::VersionEntry::from_details(&details);
-        entry.witnesses.extend(witnesses);
-        crate::discover::save_entry(entry)?;
-    } else {
-        println!(
-            "\n// Instructions that access each value, for `update-offsets --from` to match in new versions. Add these\n\
-             // to the \"witnesses\" of {} in the offsets file (or watch again with --save):",
-            details.version.version
-        );
-        println!("\"witnesses\": {}", to_json(&witnesses));
     }
     Ok(())
 }

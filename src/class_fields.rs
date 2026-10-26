@@ -21,7 +21,7 @@ use crate::components;
 use crate::derive::ChainVotes;
 use crate::fit_layout::{NOT_OFFSETS, READ_SIZES};
 use crate::layout::Layout;
-use crate::layout_witness::field_offset;
+use crate::layout::field_offset;
 use crate::pe_image::PeImage;
 use iced_x86::Register;
 use std::collections::BTreeMap;

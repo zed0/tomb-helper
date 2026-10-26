@@ -13,7 +13,7 @@ use crate::check::{self, Options};
 use crate::discover;
 use crate::game_memory::Handle;
 use crate::layout::Layout;
-use crate::layout_witness::{field_offset, with_field};
+use crate::layout::{field_offset, with_field};
 use crate::offsets_file::VersionEntry;
 use crate::process_details::ProcessDetails;
 use crate::snapshot::Snapshot;

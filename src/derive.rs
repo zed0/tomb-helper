@@ -13,7 +13,7 @@
 //! shifted by the same amount as its nearest neighbouring field.
 //!
 //! References are matched by byte windows (`Deriver`), or, where that isn't confident, by `normalised` (sure only if
-//! deriving back lands within 0x400). Chain levels map by `code`, `witness`, `shifted` or `copied`; between compilers
+//! deriving back lands within 0x400). Chain levels map by `code`, `shifted` or `copied`; between compilers
 //! only an unchanged offset or a strong vote counts. On x86 a code position only counts as a reference if an
 //! instruction uses it. `debug check-matching <a> <b> [n]` round trips n statics to measure how well references are matched.
 
@@ -23,7 +23,6 @@ use crate::find_process;
 use crate::offsets_file::{to_json, Hex, VersionEntry};
 use crate::pe_image::PeImage;
 use crate::normalised;
-use crate::witness::{self, key, KEYS, MIN_MARGIN, MIN_SCORE, WINDOW};
 use crate::offsets_file::known_process_details;
 use crate::process_details::{AddressType, ProcessDetails};
 use process_memory::Architecture;
@@ -32,7 +31,20 @@ use std::cell::OnceCell;
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
-// References are matched like witnesses (`WINDOW` bytes either side, by `key`), around their 4-byte address field
+// Bytes compared either side of a reference's address field
+const WINDOW: usize = 32;
+// Fraction of window bytes that must match, and how far the best match must beat the runner-up
+const MIN_SCORE: f64 = 0.6;
+const MIN_MARGIN: f64 = 0.1;
+// How many `key`s there are
+const KEYS: usize = 1 << 16;
+
+/// The two bytes before an address field (usually opcode + ModRM), below `KEYS`
+fn key(data: &[u8], position: usize) -> usize {
+    (data[position - 2] as usize) << 8 | data[position - 1] as usize
+}
+
+// References are matched by the `WINDOW` bytes either side (found by `key`), around their 4-byte address field
 const ADDRESS_SIZE: usize = 4;
 // For pairing references to an already known address, which needs less evidence
 const MIN_PAIR_SCORE: f64 = 0.5;
@@ -189,8 +201,11 @@ impl<'a> References<'a> {
     }
 }
 
+// How many of the `WINDOW` bytes either side of the address field at `p` in `a` and `q` in `b` are the same
 fn similarity(a: &[u8], p: usize, b: &[u8], q: usize) -> usize {
-    witness::similarity(a, p, b, q, ADDRESS_SIZE)
+    let same = |x: &[u8], y: &[u8]| x.iter().zip(y).filter(|(i, j)| i == j).count();
+    let size = ADDRESS_SIZE;
+    same(&a[p - WINDOW..p], &b[q - WINDOW..q]) + same(&a[p + size..p + size + WINDOW], &b[q + size..q + size + WINDOW])
 }
 
 fn fraction(score: usize) -> f64 {
@@ -567,13 +582,7 @@ enum LevelSource {
     Shifted { neighbour: i64, shift: i64 },
     // No evidence, kept as it was
     Copied,
-    // The last level, from matching instructions seen accessing the value (`tomb-helper watch`).
-    // If the code alignment says otherwise, that's kept too as a warning.
-    Witness { votes: f64, code_disagrees: Option<i64> },
 }
-
-/// The new last offset suggested by witness instructions, with its vote
-type WitnessVote = Option<(i64, f64)>;
 
 /// With `recompiled`, the builds are from different compilers, so lining up their accesses is much less reliable, but
 /// structs are likely to be laid out the same
@@ -581,7 +590,6 @@ fn map_chain(
     chain: &[usize],
     new_base: usize,
     votes: &ChainVotes,
-    witness: WitnessVote,
     recompiled: bool,
 ) -> (Vec<usize>, Vec<LevelSource>) {
     let chain: Vec<i64> = chain.iter().map(|o| *o as i64).collect();
@@ -615,16 +623,6 @@ fn map_chain(
                 (_, Some((offset, weight))) if weight >= RECOMPILED_MIN_VOTES => Some((offset, weight)),
                 _ => None,
             };
-        }
-
-        // Instructions seen accessing the value itself are the best evidence for the last level
-        if let (true, Some((offset, weight))) = (level == chain.len() - 1, witness) {
-            mapped.push(offset);
-            sources.push(LevelSource::Witness {
-                votes: weight,
-                code_disagrees: code.map(|(o, _)| o).filter(|o| *o != offset),
-            });
-            continue;
         }
 
         if let Some((offset, weight)) = code {
@@ -702,10 +700,6 @@ fn describe(sources: &[LevelSource]) -> String {
                 neighbour
             ),
             LevelSource::Copied => "copied".to_string(),
-            LevelSource::Witness { votes, code_disagrees } => match code_disagrees {
-                Some(code) => format!("witness ({:.1}) but code says {:#X}", votes, code),
-                None => format!("witness ({:.1})", votes),
-            },
         })
         .collect::<Vec<_>>()
         .join(", ")
@@ -718,7 +712,6 @@ pub fn print_entry(
     image: &PeImage,
     version: &str,
     lines: &[(AddressType, Option<Vec<usize>>, bool, String)],
-    witnesses: &HashMap<AddressType, Vec<usize>>,
 ) {
     for (address_type, chain, sure, note) in lines {
         println!(
@@ -743,8 +736,6 @@ pub fn print_entry(
             .iter()
             .filter_map(|(t, chain, sure, _)| chain.as_ref().filter(|_| *sure).map(|c| (*t, hex(c))))
             .collect(),
-        witnesses: witnesses.iter().map(|(t, w)| (*t, hex(w))).collect(),
-        layout_witnesses: BTreeMap::new(),
         unverified: lines
             .iter()
             .filter_map(|(t, chain, sure, _)| chain.as_ref().filter(|_| !*sure).map(|c| (*t, hex(c))))
@@ -800,68 +791,14 @@ pub fn derive_lines(
     let mut entries: Vec<(&AddressType, &Vec<usize>)> = details.address_offsets.iter().collect();
     entries.sort_by_key(|(address_type, _)| **address_type);
 
-    // Each witness that matches votes for the last offset moving by as much as its displacement did. Only those whose
-    // displacement is the last offset say where it went: others reach the value through a pointer into the middle of
-    // its object (SOTTR's cutscene id is used through a pointer to a record holding it, `[r14+4]`, which says nothing
-    // about where that record is)
-    let mut witness_votes: HashMap<AddressType, WitnessVote> = HashMap::new();
-    for (address_type, rvas) in &details.witnesses {
-        let last = match details.address_offsets.get(address_type) {
-            Some(offsets) => *offsets.last().unwrap() as i64,
-            None => continue,
-        };
-        let matches = witness::match_witnesses(old, new, rvas);
-        let mut votes: HashMap<i64, f64> = HashMap::new();
-        let mut elsewhere = 0;
-        for m in matches.iter().flatten() {
-            if m.old_displacement != last {
-                elsewhere += 1;
-                continue;
-            }
-            *votes.entry(last + m.new_displacement - m.old_displacement).or_default() += m.score;
-        }
-        let ignored = if elsewhere > 0 {
-            format!(" ({} ignored, as they don't use its offset, {:#X})", elsewhere, last)
-        } else {
-            String::new()
-        };
-        println!(
-            "  {:?}: {}/{} witnesses matched -> {}{}",
-            address_type,
-            matches.iter().flatten().count(),
-            rvas.len(),
-            votes
-                .iter()
-                .map(|(o, v)| format!("{:#X} ({:.1})", o, v))
-                .collect::<Vec<_>>()
-                .join(", "),
-            ignored
-        );
-        witness_votes.insert(
-            *address_type,
-            votes.into_iter().max_by(|a, b| a.1.partial_cmp(&b.1).unwrap()),
-        );
-    }
-
     entries
         .into_iter()
         .map(|(address_type, offsets)| {
             let (derivation, votes) = &derived[&offsets[0]];
             match derivation.best() {
                 Some(new_base) => {
-                    let witness = witness_votes.get(address_type).cloned().flatten();
-                    let (chain, sources) = map_chain(offsets, new_base, votes, witness, derivation.normalised);
-                    let sure = derivation.confident()
-                        && !sources.iter().any(|s| {
-                            matches!(
-                                s,
-                                LevelSource::Copied
-                                    | LevelSource::Witness {
-                                        code_disagrees: Some(_),
-                                        ..
-                                    }
-                            )
-                        });
+                    let (chain, sources) = map_chain(offsets, new_base, votes, derivation.normalised);
+                    let sure = derivation.confident() && !sources.iter().any(|s| matches!(s, LevelSource::Copied));
                     (*address_type, Some(chain), sure, describe(&sources))
                 }
                 None => (*address_type, None, false, String::new()),
@@ -889,25 +826,12 @@ pub fn derive(from: &str, to: &str, from_version: Option<&str>) -> Result<()> {
     let lines = derive_lines(&old, &details, &new);
     println!(
         "\n// Derived from {} {}. Levels marked `code` were matched in the game's code, `shifted`\n\
-         // levels moved like a neighbouring field, `witness` levels came from matching instructions\n\
-         // seen accessing the value, and `copied` levels had no evidence.\n\
+         // levels moved like a neighbouring field, and `copied` levels had no evidence.\n\
          // Add this to the offsets file, fill in the version string, and check the values in game\n\
          // with `tomb-helper debug probe`.",
         details.name, details.version.version
     );
-    // Layout fields the old build has witnesses for, moved where those match
     let mut details = details;
-    for change in crate::layout_witness::derive_layout(&old, &details, &new) {
-        let how = format!("{}/{} witnesses matched", change.matched, change.witnesses);
-        match change.new {
-            Some(offset) if offset != change.old => {
-                println!("//   layout {}: {:#X} -> {:#X} ({})", change.name, change.old, offset, how);
-                details.layout = crate::layout_witness::with_field(&details.layout, &change.name, offset)?;
-            }
-            Some(_) => println!("//   layout {}: unchanged ({})", change.name, how),
-            None => println!("//   layout {}: [UNSURE] kept {:#X} ({})", change.name, change.old, how),
-        }
-    }
     // What the derived chains say of the layout
     let derived: crate::process_details::AddressOffsets =
         lines.iter().filter_map(|(t, chain, sure, _)| Some((*t, chain.clone().filter(|_| *sure)?))).collect();
@@ -916,7 +840,7 @@ pub fn derive(from: &str, to: &str, from_version: Option<&str>) -> Result<()> {
         println!("//   layout {}", note);
     }
     details.layout = layout;
-    print_entry(&details, &new, "TODO", &lines, &HashMap::new());
+    print_entry(&details, &new, "TODO", &lines);
     Ok(())
 }
 
@@ -970,22 +894,17 @@ mod tests {
         votes.entry(vec![1, 0xC60, 0x200]).or_default().insert(vec![2, 0xD70, 0x200], 1.0);
         votes.entry(vec![1, 0xC50]).or_default().insert(vec![2, 0xD60], 2.0);
 
-        let (chain, sources) = map_chain(&[1, 0xC60, 0x200], 2, &votes, None, false);
+        let (chain, sources) = map_chain(&[1, 0xC60, 0x200], 2, &votes, false);
         assert_eq!(chain, vec![2, 0xD70, 0x200]);
         assert_eq!(sources, vec![LevelSource::Code(4.0), LevelSource::Code(1.0)]);
 
         // 0xC58 is never accessed directly, but the field below it moved by 0x110
-        let (chain, sources) = map_chain(&[1, 0xC58], 2, &votes, None, false);
+        let (chain, sources) = map_chain(&[1, 0xC58], 2, &votes, false);
         assert_eq!(chain, vec![2, 0xD68]);
         assert_eq!(sources, vec![LevelSource::Shifted { neighbour: 0xC50, shift: 0x110 }]);
 
-        // A witness wins for the last level, but a disagreeing code match is reported
-        let (chain, sources) = map_chain(&[1, 0xC60, 0x200], 2, &votes, Some((0x210, 2.0)), false);
-        assert_eq!(chain, vec![2, 0xD70, 0x210]);
-        assert_eq!(sources[1], LevelSource::Witness { votes: 2.0, code_disagrees: Some(0x200) });
-
         // Nothing is known below 0xC60, so the last level is kept
-        let (chain, sources) = map_chain(&[1, 0xC60, 0x60, 0x8], 2, &votes, None, false);
+        let (chain, sources) = map_chain(&[1, 0xC60, 0x60, 0x8], 2, &votes, false);
         assert_eq!(chain, vec![2, 0xD70, 0x60 + 0x0, 0x8]);
         assert_eq!(sources[2], LevelSource::Copied);
     }

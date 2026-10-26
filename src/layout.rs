@@ -585,8 +585,42 @@ pub fn set_for(details: &ProcessDetails) {
     crate::game_memory::set_architecture(details.arch);
 }
 
+/// A field's offset in the layout, if it's set
+pub fn field_offset(layout: &Layout, name: &str) -> Option<usize> {
+    let (group, field) = name.split_once('.')?;
+    let value = serde_json::to_value(layout).ok()?;
+    let text = value.get(group)?.get(field)?.as_str()?;
+    usize::from_str_radix(text.trim_start_matches("0x"), 16).ok()
+}
+
+/// The layout with one field changed
+pub fn with_field(layout: &Layout, name: &str, offset: usize) -> anyhow::Result<Layout> {
+    use anyhow::Context;
+    let (group, field) = name.split_once('.').with_context(|| format!("{} isn't group.field", name))?;
+    let mut value = serde_json::to_value(layout)?;
+    let slot = value
+        .get_mut(group)
+        .and_then(|g| g.get_mut(field))
+        .with_context(|| format!("the layout has no {}", name))?;
+    *slot = serde_json::Value::String(format!("{:#X}", offset));
+    Ok(serde_json::from_value(value)?)
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn fields_are_found_and_changed_by_name() {
+        let layout = Layout::default();
+        assert_eq!(field_offset(&layout, "proxy.in_use_size"), Some(layout.proxy.in_use_size));
+        assert_eq!(field_offset(&layout, "proxy.nothing"), None);
+        // Unset optional fields have no offset
+        assert_eq!(field_offset(&layout, "proxy.body_owner"), None);
+        let changed = with_field(&layout, "proxy.in_use_size", 0x99).unwrap();
+        assert_eq!(changed.proxy.in_use_size, 0x99);
+        assert_eq!(changed.proxy.centre, layout.proxy.centre);
+        assert_eq!(with_field(&layout, "proxy.body_owner", 0xF8).unwrap().proxy.body_owner, Some(0xF8));
+    }
+
     use super::*;
 
     #[test]

@@ -73,10 +73,6 @@
         "InventoryPool": ["0x1F6FA90"],
         "TypePool": ["0x1EFEED0"]
       },
-      "layout_witnesses": {
-        "proxy.centre": ["0x170604", "0x175AB4", "0x58334B"],
-        "proxy.in_use_size": ["0x17589C", "0x583354"]
-      },
       "layout": {
         "instance": {"size": "0xD0", "header": "0xC0", "position": "0x0", "rotation": "0x20", "in_use": "0x40", "placement": null, "id": "0x50", "object_name": ["0x40", "0x4C"], "components": null, "transform": null, "component_data": "0x64", "game_object": "0x74", "inline_components": "0xA4"},
         "player": {"instance": null, "from_instance": ["0xA8", "0x14"], "fall_start": "0xF0C", "fall_start_copy": "0xF18"},
@@ -155,16 +151,6 @@
         "InstanceArray": ["0x24EEAD0"],
         "PlayerProbes": ["0x1A8C720"],
         "CollisionScene": ["0x2D57440", "0x10", "0x0"]
-      },
-      "witnesses": {
-        "XPosition": ["0x5B68A1", "0x84BF7C", "0x84C113", "0x113C61", "0x3DEDFC", "0x622FEB", "0x84B38D", "0x44C23E"],
-        "CameraSin": ["0x2927FC", "0x87B864", "0x480153", "0x2979DA", "0x297B83", "0x47FCEB", "0x87B806"]
-      },
-      "layout_witnesses": {
-        "camera.view": ["0x87AD69"],
-        "collision_mesh.triangles": ["0x191D1D"],
-        "instance.position": ["0x5B68A1", "0x565D19", "0x84B38D", "0x3DEDFC", "0x113C61", "0x84C113", "0x84BF7C", "0x581B09"],
-        "proxy.in_use_size": ["0x1DD0D2", "0x1DD105"]
       },
       "layout": {
         "player": {"fall_start": "0x1074", "fall_start_copy": "0x1080"},
@@ -327,19 +313,6 @@
         "CutsceneTimeline": ["0x14B3140", "0x60"],
         "CutsceneLength": ["0x14B3120", "0x0", "0x20"],
         "CutsceneId": ["0x36B2118", "0x0", "0xB78", "0x574"]
-      },
-      "witnesses": {
-        "XPosition": ["0x62E5A9", "0x12AFCC", "0x4358BC", "0x6B91E0", "0x4D4D84", "0x49AF8A", "0x63536D", "0x8BFD85"],
-        "CameraSin": ["0x2D1CD8", "0x9D7120", "0x2D8729", "0x2D88C7", "0x501F66", "0x9D70C3", "0x50233C"],
-        "CutscenePrompt": ["0x417CA2", "0x41B7EF", "0x41A821", "0x41B887"],
-        "CutsceneStatus": ["0x413E10"],
-        "CutsceneLength": ["0x41AD75"],
-        "CutsceneId": ["0xD2501C", "0xD2504B", "0xD253C2"]
-      },
-      "layout_witnesses": {
-        "camera.view": ["0x9D5F79"],
-        "proxy.centre": ["0x20DB82", "0x21D90C"],
-        "proxy.in_use_size": ["0x21D6E1", "0x21D717"]
       },
       "layout": {
         "instance": {"object_name": ["0x80", "0x8", "0x60", "0x8"]},

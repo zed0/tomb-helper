@@ -1,25 +1,18 @@
 //! `tomb-helper port`: adding a new patch of a game, or a new game, step by step, asking for what it needs from the
 //! game along the way. It runs the same steps as the separate commands: `update-offsets` (with the newest dump of the
 //! game's last build as `--from`), `check --fit` if any checks fail, `check --snapshot`, `debug find-cutscene-id --save`
-//! if the cutscene's id couldn't be derived for sure, and `watch --save` for the values and layout fields the game's
-//! other builds have witnesses for (or, for a new game, a few layout fields), so the next patch can be ported from this
-//! one.
+//! if the cutscene's id couldn't be derived for sure, `debug flight-fields --save`, and `debug find-fall-start --save`
+//! if the fall start isn't known. The dump `update-offsets` keeps is what the next patch is ported from.
 
 use anyhow::Result;
-use std::collections::BTreeSet;
 use std::io::{self, BufRead, Write};
 
 use crate::offsets_file::{known_process_details, OffsetsSource};
 use crate::process_details::{AddressType, ProcessDetails};
 use crate::update_offsets::NewGame;
 
-// Recording witnesses: time to switch back to the game (it pauses while alt-tabbed), and how long to record
+// Time to switch back to the game for the steps that need it running (it pauses while alt-tabbed)
 const SWITCH_SECONDS: u64 = 10;
-const RECORD_SECONDS: u64 = 8;
-// A cutscene's id is only touched at its camera cuts, so cutscenes are recorded for longer
-const CUTSCENE_RECORD_SECONDS: u64 = 30;
-// Layout fields to record for a game whose other builds have none, one from each structure that can be found
-const DEFAULT_LAYOUT_FIELDS: [&str; 4] = ["instance.position", "camera.view", "proxy.in_use_size", "collision_mesh.triangles"];
 
 /// `tomb-helper port [--exe <Game.exe>]`
 pub fn port(exe: Option<String>) -> Result<()> {
@@ -66,7 +59,7 @@ pub fn port(exe: Option<String>) -> Result<()> {
               the game (`tomb-helper check --replay`).");
     report(crate::snapshot::take(None, None));
 
-    // Its witnesses go through a pointer to the record holding it, so it often can't be derived for sure
+    // The code reaches it through a pointer to the record holding it, so it often can't be derived for sure
     let mut details = details;
     if details.unverified.contains_key(&AddressType::CutsceneId) {
         step("Finding the cutscene's id");
@@ -101,37 +94,6 @@ pub fn port(exe: Option<String>) -> Result<()> {
         }
     }
 
-    step("Recording what the next patch needs");
-    let (values, fields) = witnessed(&details);
-    if values.is_empty() {
-        println!("There are no values to record for {} (its other builds have no witnesses).", details.name);
-    }
-    for chunk in values.chunks(crate::watch::MAX_WATCHES) {
-        let names: Vec<&str> = chunk.iter().map(String::as_str).collect();
-        let cutscene = names.iter().any(|n| n.starts_with("Cutscene"));
-        let what = if cutscene { "start a cutscene, letting it play through a few camera cuts" } else { "move Lara around, with the camera turning" };
-        let seconds = if cutscene { CUTSCENE_RECORD_SECONDS } else { RECORD_SECONDS };
-        if wait_or_skip(&format!(
-            "Recording the instructions that use {}. Press Enter, then switch to the game within {}s and {}.",
-            names.join(", "),
-            SWITCH_SECONDS,
-            what
-        )) {
-            report(crate::watch::watch(&names, None, seconds, SWITCH_SECONDS, false, true));
-        }
-    }
-    for chunk in fields.chunks(crate::watch::MAX_WATCHES) {
-        let names: Vec<&str> = chunk.iter().map(String::as_str).collect();
-        if wait_or_skip(&format!(
-            "Recording the instructions that use the layout fields {}. Press Enter, then switch to the game within {}s and \
-             move Lara around, aiming and rolling, with the camera turning.",
-            names.join(", "),
-            SWITCH_SECONDS
-        )) {
-            report(crate::layout_witness::watch_layout(&names, None, RECORD_SECONDS, SWITCH_SECONDS, true));
-        }
-    }
-
     println!("\n=== Done ===");
     println!("{} {} is saved in {}.", details.name, details.version.version, OffsetsSource::new().path.display());
     if passing {
@@ -160,24 +122,6 @@ fn refreshed(details: &ProcessDetails) -> ProcessDetails {
 
 fn is_known(executable: &str) -> bool {
     known_process_details().iter().any(|d| d.executable_name.eq_ignore_ascii_case(executable))
-}
-
-// The values and layout fields to record: those the game's other builds have witnesses for (which is what `--from`
-// matches), or for a game with none, some layout fields to start with
-fn witnessed(details: &ProcessDetails) -> (Vec<String>, Vec<String>) {
-    let others: Vec<ProcessDetails> =
-        known_process_details().into_iter().filter(|d| d.executable_name == details.executable_name).collect();
-    let values: BTreeSet<String> = others
-        .iter()
-        .flat_map(|d| d.witnesses.keys())
-        .filter(|t| details.address_offsets.contains_key(t))
-        .map(|t| format!("{:?}", t))
-        .collect();
-    let mut fields: BTreeSet<String> = others.iter().flat_map(|d| d.layout_witnesses.keys().cloned()).collect();
-    if fields.is_empty() {
-        fields = DEFAULT_LAYOUT_FIELDS.iter().map(|f| f.to_string()).collect();
-    }
-    (values.into_iter().collect(), fields.into_iter().collect())
 }
 
 // A step that went wrong is reported, and the rest still run

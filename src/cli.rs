@@ -21,8 +21,8 @@ enum Command {
     /// Add a new patch of a game, or a new game, step by step (start here)
     ///
     /// Asks for what it needs from the game as it goes: finds and saves the offsets, fixes the layout if checks fail,
-    /// takes a snapshot, and records what the next patch will need. The other commands are its steps, for doing them
-    /// separately.
+    /// takes a snapshot, and finds the cutscene's id and flight mode's fields where they aren't known. The other commands
+    /// are its steps, for doing them separately.
     Port {
         /// A game that isn't in the offsets file yet, by its exe's name (e.g. Game.exe)
         #[arg(long, value_name = "EXE")]
@@ -81,29 +81,6 @@ enum Command {
         /// With --replay: save what each reports now as what it should report, after a change meant to change it
         #[arg(long, requires = "replay")]
         accept: bool,
-    },
-    /// Record the instructions that access up to 4 values (e.g. CutscenePrompt) or layout fields (e.g.
-    /// proxy.in_use_size)
-    ///
-    /// Attaches as a debugger for a few seconds. `update-offsets --from` matches these instructions in a new build to
-    /// find where an offset or a field went. --save keeps them in the version's entry in the offsets file (witnesses
-    /// for values, layout_witnesses for fields); otherwise they're printed.
-    Watch {
-        #[arg(required = true, num_args = 1..=4, value_name = "VALUE OR GROUP.FIELD")]
-        targets: Vec<String>,
-        #[arg(long)]
-        version: Option<String>,
-        #[arg(long, default_value_t = 15)]
-        seconds: u64,
-        /// Wait this many seconds first, so the game can be focused
-        #[arg(long, default_value_t = 0)]
-        delay: u64,
-        /// Only writes (of values)
-        #[arg(long)]
-        write: bool,
-        /// Keep the instructions in the version's entry in the offsets file next to the exe
-        #[arg(long)]
-        save: bool,
     },
     /// Tools for digging into the game, or into tomb-helper
     #[command(hide = true, subcommand)]
@@ -206,13 +183,21 @@ enum Debug {
         #[arg(long)]
         save: bool,
     },
-    /// Show where a build's witnesses for a value (or group.field) match in another build, with the code around both
-    MatchWitnesses {
-        from: String,
-        to: String,
-        name: String,
+    /// Record the instructions that access up to 4 values (e.g. CutscenePrompt) or layout fields (e.g.
+    /// proxy.in_use_size), attaching as a debugger for a few seconds
+    Watch {
+        #[arg(required = true, num_args = 1..=4, value_name = "VALUE OR GROUP.FIELD")]
+        targets: Vec<String>,
         #[arg(long)]
-        from_version: Option<String>,
+        version: Option<String>,
+        #[arg(long, default_value_t = 15)]
+        seconds: u64,
+        /// Wait this many seconds first, so the game can be focused
+        #[arg(long, default_value_t = 0)]
+        delay: u64,
+        /// Only writes (of values)
+        #[arg(long)]
+        write: bool,
     },
     /// Work out the layout of one build or game (exe or dump) from another's, by how each class's code uses its fields
     ClassLayout {
@@ -283,19 +268,6 @@ pub fn run() -> Result<()> {
                 crate::check::check(version)
             }
         }
-        Command::Watch { targets, version, seconds, delay, write, save } => {
-            let fields = targets.iter().filter(|t| t.contains('.')).count();
-            if fields == targets.len() {
-                if write {
-                    bail!("--write is for values, not layout fields");
-                }
-                crate::layout_witness::watch_layout(&strs(&targets), version, seconds, delay, save)
-            } else if fields == 0 {
-                crate::watch::watch(&strs(&targets), version, seconds, delay, write, save)
-            } else {
-                bail!("Watch values (e.g. CutscenePrompt) or layout fields (e.g. proxy.in_use_size), not both at once")
-            }
-        }
         Command::Debug(tool) => run_debug(tool),
     }
 }
@@ -317,8 +289,18 @@ fn run_debug(tool: Debug) -> Result<()> {
         Debug::ValueLayout { snapshot, group, version, to } => {
             crate::value_layout::print_value_layout(&snapshot, &group, version, to.as_deref())
         }
-        Debug::MatchWitnesses { from, to, name, from_version } => {
-            crate::witness::print_matches(&from, &to, &name, from_version.as_deref())
+        Debug::Watch { targets, version, seconds, delay, write } => {
+            let fields = targets.iter().filter(|t| t.contains('.')).count();
+            if fields == targets.len() {
+                if write {
+                    bail!("--write is for values, not layout fields");
+                }
+                crate::watch_fields::watch_fields(&strs(&targets), version, seconds, delay)
+            } else if fields == 0 {
+                crate::watch::watch(&strs(&targets), version, seconds, delay, write)
+            } else {
+                bail!("Watch values (e.g. CutscenePrompt) or layout fields (e.g. proxy.in_use_size), not both at once")
+            }
         }
         Debug::ClassLayout { from, to, from_version, to_version } => {
             crate::class_fields::print_class_layout(&from, &to, from_version.as_deref(), to_version.as_deref())

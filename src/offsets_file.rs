@@ -3,7 +3,7 @@
 //! rebuilding (and are reloaded while tomb-helper is running).
 //!
 //! `OffsetsFile`/`VersionEntry` are the JSON (`deny_unknown_fields`, to catch typos; offsets are `Hex` strings), with
-//! optional `image_size` (to tell stores apart), `witnesses`, `layout_witnesses`, a `layout` and an ignored
+//! optional `image_size` (to tell stores apart), a `layout` and an ignored
 //! `unverified`. `OffsetsSource` says which file is in use and whether it's `changed()`; `to_json` writes one line per
 //! offset list.
 
@@ -93,13 +93,6 @@ pub struct VersionEntry {
     pub bits: u32,
     // Pointer chains in the same form as `TrackedMemory`: the first is relative to the module base
     pub offsets: BTreeMap<AddressType, Vec<Hex>>,
-    // RVAs of instructions that access each value (`tomb-helper watch`), only used by `derive`
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub witnesses: BTreeMap<AddressType, Vec<Hex>>,
-    // RVAs of instructions that access each layout field (`group.field`, `tomb-helper watch <group.field>`), only used by
-    // `update-offsets --from` to work out where fields went in a new build
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub layout_witnesses: BTreeMap<String, Vec<Hex>>,
     // Offsets a tool found but couldn't confirm, for review. Not used.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub unverified: BTreeMap<AddressType, Vec<Hex>>,
@@ -144,8 +137,6 @@ impl VersionEntry {
             image_size: details.version.image_size,
             bits: if matches!(details.arch, Architecture::Arch64Bit) { 64 } else { 32 },
             offsets: details.address_offsets.iter().map(|(t, o)| (*t, to_hex(o))).collect(),
-            witnesses: details.witnesses.iter().map(|(t, w)| (*t, to_hex(w))).collect(),
-            layout_witnesses: details.layout_witnesses.iter().map(|(n, w)| (n.clone(), to_hex(w))).collect(),
             unverified: details.unverified.iter().map(|(t, o)| (*t, to_hex(o))).collect(),
             layout: details.layout.clone(),
         }
@@ -169,8 +160,6 @@ impl VersionEntry {
             },
             arch,
             address_offsets: self.offsets.iter().map(|(t, o)| (*t, from_hex(o))).collect(),
-            witnesses: self.witnesses.iter().map(|(t, w)| (*t, from_hex(w))).collect(),
-            layout_witnesses: self.layout_witnesses.iter().map(|(n, w)| (n.clone(), from_hex(w))).collect(),
             unverified: self.unverified.iter().map(|(t, o)| (*t, from_hex(o))).collect(),
             layout: self.layout.clone(),
         })

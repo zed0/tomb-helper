@@ -58,7 +58,7 @@ Each module's `//!` doc says what's in it and how it works; this is where to loo
 | `src/action.rs` | `Action`: everything a hotkey can be bound to |
 | `src/hotkeys.rs` | `KeyCode` (the keys' names in the config) and `Hotkeys`, polling the keys, repeating held ones |
 | `src/handler.rs` | The `Handler` trait every feature implements |
-| `offsets.json` | **Per-game-version offsets** (built into the exe), layouts, witnesses and `words` |
+| `offsets.json` | **Per-game-version offsets** (built into the exe), layouts and `words` |
 | `src/offsets_file.rs` | The offsets file's JSON, `OffsetsSource` (the file next to the exe overrides the built in one, hot reloaded) |
 | `src/process_details.rs` | Types: `AddressType` (the offsets file's keys), `ProcessDetails`, `VersionIdentifier` |
 | `src/find_process.rs` | Finding the game process and which version it is |
@@ -96,11 +96,11 @@ Each module's `//!` doc says what's in it and how it works; this is where to loo
 | `src/update_offsets.rs` | `update-offsets`: finding a build's offsets (`--exe` for a new game; derives from the last build's dump) |
 | `src/fit_layout.rs` | `check --fit`: searching for layout offsets `check` passes with |
 | `src/derive.rs` | Offsets for a new build by matching code references (`update-offsets --from`; `debug derive`, `trace`, `check-matching`) |
-| `src/normalised.rs`, `src/witness.rs` | Matching references between compilers, and witness instructions between builds |
+| `src/normalised.rs` | Matching references between compilers |
 | `src/code_trace.rs` | Tracing how code uses a static: the pointer chains it accesses |
 | `src/chains.rs` | `debug chains` and `debug probe`, live |
 | `src/watch.rs` | `watch` (and `debug watch-raw`, `debug disasm`): hardware breakpoints for the instructions accessing values |
-| `src/layout_witness.rs` | `watch <group.field>`: witnesses for layout fields, matched into new builds |
+| `src/watch_fields.rs` | `debug watch <group.field>`: the instructions accessing layout fields |
 | `src/pe_image.rs` | `PeImage`: an exe or dump in memory layout, or dumped from a process |
 
 ## Common changes
@@ -112,18 +112,17 @@ Each module's `//!` doc says what's in it and how it works; this is where to loo
   or detect them from the game itself (e.g. which RTTI classes its image has), rather than checking the pointer size
   or which game it is; read memory through `game_memory` and RTTI through `rtti`, which handle 32 and 64-bit.
 - **New patch / game:** `tomb-helper port` (`--exe Game.exe` for a new game) does all of it with prompts: `update-offsets`
-  (deriving from the newest dump of the game's last build), `check --fit` if needed, a snapshot, `watch --save`. Fix what's
+  (deriving from the newest dump of the game's last build), `check --fit` if needed, a snapshot, the cutscene id if
+  unsure, the flight fields, and the fall start if unknown (a lift). Fix what's
   left of that version's `layout` by hand until `check` passes (README "Porting the overlay"). It saves to `tomb-helper-offsets.json` next to the exe, which hot reloads; copy
   the entry into `offsets.json` once it works. Use `image_size` when the version string is shared between stores. Only
   include the `AddressType`s you've found — handlers needing missing ones won't load. New fields read from the game go in
   `Layout` (with ROTTR's value as the default), not constants, and if they're in an object with RTTI, in
   `class_fields::FIELD_CLASSES`: then `update-offsets` works out where they are in a new build from how the class's code
-  uses them (from the previous build, or for a new game the other games' dumps, which have to agree), after the layout
-  witnesses. Those are labelled "its class's code" in its summary; they've been right but for one in 11 checked, so
+  uses them (from the previous build, or for a new game the other games' dumps, which have to agree). Those are labelled "its class's code" in its summary; they've been right but for one in 11 checked, so
   `check` has to pass before they're trusted. `debug class-layout <from> <to>` shows how well it does between two dumps.
-  Witnesses only count where their displacement is the value's own offset (SOTTR's `CutsceneId` is used through a
-  pointer to a record, `[r14+4]`, so its witnesses can't say where the record went; `debug match-witnesses` shows what
-  they matched). Its chain is then held back as unverified, and `port` finds it while a cutscene plays: the cutscene's
+  SOTTR's `CutsceneId` is used through a pointer to a record (`[r14+4]`), so its chain can't be derived for sure; it's
+  held back as unverified, and `port` finds it while a cutscene plays: the cutscene's
   length picks its timing file entry, whose ids are the same in every build (`cutscene_id`). Deriving 234.1 and 492
   from each other gets everything else right (`player.instance` comes from `XPosition`'s chain).
   The games share their gameplay data, so with Lara standing somewhere ordinary her proxy's fields hold the same values
@@ -512,8 +511,7 @@ again (`derive` plus live checks).
   `steam_appid.txt`, 203160, so it runs from D: rather than Steam starting its own copy): `check` passes everything that
   runs. Its layout is Steam's but for Lara's proxy, a static at mod+0x117D200 that points at her instance through +0x10
   (Steam +0x18, which `update-offsets` found and moved itself). Its proxies' flags are at +0x8 (Steam +0x10), found
-  by sampling while aiming: the combat proxy's bit 0x2 is set and Lara's bit 0x20 clears while she aims. The Steam build's layout witnesses don't match into it (a different compiler, and witnesses match by
-  bytes).
+  by sampling while aiming: the combat proxy's bit 0x2 is set and Lara's bit 0x20 clears while she aims. 
 - v1.01.748's aim sweep works the same way as Steam's: `TypePool` is the weapon pool (mod+0x1F54FE0), a record per
   weapon *instance* keyed by its handle (instance +0x50, which is its own handle in both builds), whose data pointer is
   at +0x8 (Steam +0x10), tuning block at data+0x298. A rifle has two instances, only one of them with its real tuning
@@ -543,7 +541,7 @@ again (`derive` plus live checks).
 - The investigation tools the notes above name (`chains`, `probe`, `derive`, `discover`, `trace`, `watch-raw`, `disasm`,
   `check-matching`, `overlay-data`, `dump`, `export-offsets`, `class-fields`, `class-layout`) are `tomb-helper debug <tool>`; `fit-layout` is `check
   --fit`, `snapshot`/`check-snapshots`/`accept-snapshots` are `check --snapshot`/`--replay`/`--replay --accept`, and
-  `watch-layout` is `watch` with `group.field` names.
+  `watch` is `debug watch` (values, or `group.field` names).
 - `PositionHandler` "active" mode writes the cached position every tick, which is what lets Lara be
   moved/frozen — movement actions are no-ops while inactive.
 - `CutsceneHandler::skip` deliberately returns `Ok` when not in a cutscene (Space is also jump).

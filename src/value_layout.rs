@@ -10,7 +10,7 @@ use anyhow::{bail, Context, Result};
 use crate::components::{self, Components};
 use crate::game::Game;
 use crate::game_memory::{f32_at, resolve, vector_at, Handle};
-use crate::layout_witness::field_offset;
+use crate::layout::field_offset;
 use crate::process_details::{AddressType, ProcessDetails};
 use crate::snapshot::Snapshot;
 use nalgebra::{Quaternion, UnitQuaternion, Vector3};
@@ -291,7 +291,7 @@ pub fn apply(
         if current == Some(offset) {
             continue;
         }
-        if let Ok(changed) = crate::layout_witness::with_field(&layout, name, offset) {
+        if let Ok(changed) = crate::layout::with_field(&layout, name, offset) {
             layout = changed;
             settled.insert(name.to_string());
             notes.push(format!("{:<34} {:#X} -> {:#X} (the value in it, as in {})", name, current.unwrap_or(0), offset, versions.join(", ")));
@@ -355,7 +355,7 @@ pub fn print_value_layout(snapshot: &str, group: &str, version: Option<String>, 
     let mut stale = target_details.layout.clone();
     for (name, _) in fields(group) {
         if let (Some(_), Some(offset)) = (field_offset(&stale, name), field_offset(&source_details.layout, name)) {
-            stale = crate::layout_witness::with_field(&stale, name, offset)?;
+            stale = crate::layout::with_field(&stale, name, offset)?;
         }
     }
     let mut notes = vec![];

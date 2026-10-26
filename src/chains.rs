@@ -305,7 +305,7 @@ pub fn find_code_chains(version: Option<String>) -> Result<()> {
          // `tomb-helper debug probe` after restarting the game.",
         details.name, details.version.version
     );
-    print_entry(&details, &image, &details.version.version, &lines, &details.witnesses);
+    print_entry(&details, &image, &details.version.version, &lines);
     Ok(())
 }
 
