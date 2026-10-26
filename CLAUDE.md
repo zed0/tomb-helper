@@ -83,6 +83,7 @@ Each module's `//!` doc says what's in it and how it works; this is where to loo
 | `src/targets.rs` | What tomb-helper writes: chains built from the structures (or the offsets file's), checked before writing |
 | `src/tracked_memory.rs`, `src/tracked_position.rs` | Cached values at pointer chains, for the position and cutscene handlers |
 | `src/cutscene_handler.rs` | Cutscene skipping (SOTTR) and time saved |
+| `src/fall_start.rs` | Finding the fall start by lifting Lara a little twice (`debug find-fall-start`, run by `port`) |
 | `src/camera_fields.rs` | The camera's fields by what they have to be (inverse matrices, the first camera-to-world one, fov then aspect), for `update-offsets` and `check`; `debug camera-fields` |
 | `src/value_layout.rs` | A layout from the values in it: Lara's proxy's fields found by their values in another game's or build's snapshot (`debug value-layout`, used by `update-offsets`) |
 | `src/cutscene_id.rs` | Finding `CutsceneId` while a cutscene plays, by the timing file's ids (`debug find-cutscene-id`, run by `port`) |
@@ -135,7 +136,11 @@ Each module's `//!` doc says what's in it and how it works; this is where to loo
   one, and the lens's fov comes just before its aspect, after the near and far planes. Checked live in ROTTR, SOTTR
   492 and TR2013 Steam, and from ROTTR's and SOTTR's layouts it finds all of TR2013's. Fields that pass are kept (ROTTR's
   lens has two fov copies, and the first can be another pass's). `player.instance` comes from `XPosition`'s chain; 8
-  fields of the player point at Lara's instance in ROTTR and SOTTR, the right one the 4th in both.
+  fields of the player point at Lara's instance in ROTTR and SOTTR, the right one the 4th in both. The fall start is
+  found by lifting her 150 then 300 up (`fall_start`): the fields of her player object (RTTI `Player`, found from her
+  instance a pointer or two in) that follow both lifts are it and its copy. In TR2013 Steam that found the player at
+  [[instance + 0xA8] + 0x14] (as the aim sweep knew) and the fall start at 0xF0C and 0xF18, 0xC apart as SOTTR's are;
+  TR2013's position chain doesn't go through the player, hence `player.from_instance`. Not flown down yet.
 - **Add a new memory value:** add an `AddressType` variant, add offsets per version in `offsets.json`, read it with
   `Game` (`read_floats`, `require` and `game_memory`'s readers), or `TrackedMemory` in a handler that writes it.
 - **Writing a value:** anything a handler writes goes in `targets::WRITTEN`, with a check in `targets::verify` (what it

@@ -79,6 +79,19 @@ pub fn port(exe: Option<String>) -> Result<()> {
         }
     }
 
+    // The height she last left the ground at, which flight mode moves with her (or she dies from flying down)
+    if details.layout.player.fall_start.is_none() {
+        step("Finding where her fall starts");
+        if wait_or_skip(&format!(
+            "Where the height she last left the ground at is isn't known, so she's lifted a little twice to find it (she \
+             lands where she is). Have Lara standing on open ground, press Enter, then switch to the game within {}s.",
+            SWITCH_SECONDS
+        )) {
+            report(crate::fall_start::find_fall_start(None, SWITCH_SECONDS, true));
+            details = refreshed(&details);
+        }
+    }
+
     step("Recording what the next patch needs");
     let (values, fields) = witnessed(&details);
     if values.is_empty() {

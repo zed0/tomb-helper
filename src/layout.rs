@@ -132,9 +132,13 @@ group! {
     PlayerLayout {
         /// -> Lara's instance
         instance: Option<usize> = Some(0x31A8),
-        /// f32, the height she last left the ground at, which fall damage goes by, and a copy of it (SOTTR 0x1064, 0x1070)
+        /// f32, the height she last left the ground at, which fall damage goes by, and a copy of it (SOTTR 0x1064, 0x1070;
+        /// TR2013 Steam 0xF0C, 0xF18). Found by lifting her (`fall_start`)
         fall_start: Option<usize> = None,
         fall_start_copy: Option<usize> = None,
+        /// Pointers to follow from Lara's instance to the player object, where her position chain doesn't go through it
+        /// (TR2013 Steam: [[instance + 0xA8] + 0x14])
+        from_instance: Vec<usize> = vec![],
     }
 }
 

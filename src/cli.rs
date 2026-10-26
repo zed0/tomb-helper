@@ -170,6 +170,17 @@ enum Debug {
         #[arg(long)]
         to: Option<String>,
     },
+    /// Find where the height Lara last left the ground at is, by lifting her a little twice (the game has to be in front)
+    FindFallStart {
+        #[arg(long)]
+        version: Option<String>,
+        /// Wait this many seconds first, so the game can be focused
+        #[arg(long, default_value_t = 10)]
+        delay: u64,
+        /// Keep it in the version's entry in the offsets file next to the exe
+        #[arg(long)]
+        save: bool,
+    },
     /// Find the running game's camera fields by what they have to be (starting from its layout, or another version's)
     CameraFields {
         #[arg(long)]
@@ -292,6 +303,7 @@ fn run_debug(tool: Debug) -> Result<()> {
         Debug::ClassFields { image, class, field } => crate::class_fields::print_class_fields(&image, &class, field.as_deref()),
         Debug::FindCutsceneId { version, save } => crate::cutscene_id::find_cutscene_id(version, save),
         Debug::CameraFields { version, layout_of } => crate::camera_fields::print_camera_fields(version, layout_of.as_deref()),
+        Debug::FindFallStart { version, delay, save } => crate::fall_start::find_fall_start(version, delay, save),
         Debug::ValueLayout { snapshot, group, version, to } => {
             crate::value_layout::print_value_layout(&snapshot, &group, version, to.as_deref())
         }

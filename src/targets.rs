@@ -196,10 +196,15 @@ pub fn layout_from_chains(mut layout: crate::layout::Layout, offsets: &AddressOf
 
 // The chain to the pointer to the player object: her position chain less two offsets, if the one before her
 // instance's position is where the player points at her
+// (or, where the layout has a path from her instance to it, her instance's chain and then that)
 fn player(offsets: &AddressOffsets) -> Option<Vec<usize>> {
+    let layout = layout::current();
+    if !layout.player.from_instance.is_empty() {
+        return Some([lara_instance(offsets)?, layout.player.from_instance.clone()].concat());
+    }
     let chain = offsets.get(&AddressType::XPosition)?;
     let n = chain.len();
-    (n >= 3 && Some(chain[n - 2]) == layout::current().player.instance).then(|| chain[..n - 2].to_vec())
+    (n >= 3 && Some(chain[n - 2]) == layout.player.instance).then(|| chain[..n - 2].to_vec())
 }
 
 // The chain to the pointer to GameRender: `CameraView`'s less the view's offset
