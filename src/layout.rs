@@ -111,6 +111,9 @@ group! {
         /// -> component table, with a slot per component type (found by their RTTI class names, see `components`). None
         /// if there's no table (TR2013, whose instances hold their components themselves)
         components: Option<usize> = Some(0xD8),
+        /// Where there's no component table to point at: the start of the one in the instance itself, which runs to its
+        /// end (TR2013 0xA4: its ballistic, user data, soft body and game flag components), learnt by class the same way
+        inline_components: Option<usize> = None,
         /// -> cdc::TransformComponent, null for unused slots. None if instances don't point at theirs (TR2013), when
         /// objects are drawn unscaled.
         transform: Option<usize> = Some(0xE0),

@@ -124,20 +124,38 @@ pub fn structural(game: &Game, components: &mut Components, address_type: Addres
         components.get(game.handle, instance, class)?;
         components.known_slots().get(class).copied()
     };
-    chain_for(&game.offsets, address_type, slot)
+    // Her player object, found by its class in any game (where it isn't, the layout says how to get there)
+    let found_player = match address_type {
+        AddressType::FallStart | AddressType::FallStartCopy => lara_instance(&game.offsets)
+            .and_then(|prefix| resolve(game.handle, game.base_address, &[prefix, vec![0]].concat()))
+            .and_then(|instance| crate::fall_start::find_player(game, instance))
+            .map(|(_, path)| path),
+        _ => None,
+    };
+    chain_for(&game.offsets, address_type, slot, found_player)
 }
 
 // `structural`, with the slot of each of Lara's components learnt by `slot`
-fn chain_for(offsets: &AddressOffsets, address_type: AddressType, mut slot: impl FnMut(&str) -> Option<usize>) -> Option<Vec<usize>> {
+fn chain_for(
+    offsets: &AddressOffsets,
+    address_type: AddressType,
+    mut slot: impl FnMut(&str) -> Option<usize>,
+    found_player: Option<Vec<usize>>,
+) -> Option<Vec<usize>> {
     let layout = layout::current();
     let then = |prefix: Vec<usize>, rest: &[Option<usize>]| -> Option<Vec<usize>> {
         let rest: Option<Vec<usize>> = rest.iter().copied().collect();
         Some(prefix.into_iter().chain(rest?).collect())
     };
-    // The chain to the pointer to one of her components, in her component table
+    // The chain to the pointer to one of her components, in her component table (or the one in her instance)
     let mut component = |class: &str| -> Option<Vec<usize>> {
-        let table = layout.instance.components?;
-        Some([lara_instance(offsets)?, vec![table, slot(class)? * pointer_size()]].concat())
+        let instance = lara_instance(offsets)?;
+        let slot = slot(class)? * pointer_size();
+        match (layout.instance.components, layout.instance.inline_components) {
+            (Some(table), _) => Some([instance, vec![table, slot]].concat()),
+            (None, Some(start)) => Some([instance, vec![start + slot]].concat()),
+            (None, None) => None,
+        }
     };
     let (proxy_layout, body, shape) = (&layout.proxy, &layout.body, &layout.physics_shape);
     if let AddressType::Velocity = address_type {
@@ -158,8 +176,8 @@ fn chain_for(offsets: &AddressOffsets, address_type: AddressType, mut slot: impl
         then(chain, rest)
     };
     match address_type {
-        AddressType::FallStart => then(player(offsets)?, &[layout.player.fall_start]),
-        AddressType::FallStartCopy => then(player(offsets)?, &[layout.player.fall_start_copy]),
+        AddressType::FallStart => then(player(offsets, found_player)?, &[layout.player.fall_start]),
+        AddressType::FallStartCopy => then(player(offsets, found_player)?, &[layout.player.fall_start_copy]),
         AddressType::ProxyCentre => in_proxy(&[Some(proxy_layout.centre)]),
         AddressType::ProxyResolvedCentre => in_proxy(&[proxy_layout.resolved_centre]),
         // Only where which bit is its collision is known, as that's what flight mode changes
@@ -204,11 +222,12 @@ pub fn layout_from_chains(mut layout: crate::layout::Layout, offsets: &AddressOf
 
 // The chain to the pointer to the player object: her position chain less two offsets, if the one before her
 // instance's position is where the player points at her
-// (or, where the layout has a path from her instance to it, her instance's chain and then that)
-fn player(offsets: &AddressOffsets) -> Option<Vec<usize>> {
+// (or, given the path from her instance to it, or where the layout has one, her instance's chain and then that)
+fn player(offsets: &AddressOffsets, found: Option<Vec<usize>>) -> Option<Vec<usize>> {
     let layout = layout::current();
-    if !layout.player.from_instance.is_empty() {
-        return Some([lara_instance(offsets)?, layout.player.from_instance.clone()].concat());
+    let path = found.or_else(|| Some(layout.player.from_instance.clone()).filter(|p| !p.is_empty()));
+    if let Some(path) = path {
+        return Some([lara_instance(offsets)?, path].concat());
     }
     let chain = offsets.get(&AddressType::XPosition)?;
     let n = chain.len();
@@ -436,7 +455,7 @@ mod tests {
         ];
         let slot = |class: &str| (class == components::PROXY).then(|| 39);
         for (address_type, chain) in found_by_hand {
-            assert_eq!(chain_for(&details.address_offsets, address_type, slot), Some(chain), "{:?}", address_type);
+            assert_eq!(chain_for(&details.address_offsets, address_type, slot, None), Some(chain), "{:?}", address_type);
         }
     }
 

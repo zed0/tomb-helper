@@ -126,8 +126,11 @@ pub fn place_capsules(
 // with. It holds the shape in use and the one it's changing to, and the physics capsule it's swept as. Other proxies'
 // bodies are attached to it: the camera (radius 30, moving from 15 in front of her to 30 behind when she aims) and her
 // weapon (a thin rod). Both only collide while she aims.
-// How far along the body list to look for bodies attached to Lara's
-const MAX_BODIES_SEARCHED: usize = 16;
+// How far along the body list to look for bodies attached to Lara's: they follow hers, right after it in ROTTR and
+// SOTTR, 20 bodies on in TR2013 (its combat proxy's), so the search goes on until this many in a row aren't, or the list
+// ends or loops back to hers
+const MAX_BODIES_SEARCHED: usize = 1024;
+const MAX_BODIES_BETWEEN: usize = 32;
 const MAX_CONTACTS: usize = 8;
 // Contacts this close to a capsule's surface are on it
 const CONTACT_TOLERANCE: f32 = 2.0;
@@ -233,18 +236,16 @@ pub fn read_proxy(handle: Handle, proxy: usize, standalone: &[usize]) -> io::Res
         let (a, b) = (capsule.a.vector(), capsule.b.vector());
         contacts.iter().any(|c| (distance_to_segment(c, &a, &b) - capsule.radius).abs() <= CONTACT_TOLERANCE)
     };
-    let mut attached = body.map_or(vec![], |body| read_attached_capsules(handle, body));
+    let (mut attached, attached_bodies) = body.map_or((vec![], vec![]), |body| read_attached_capsules(handle, body));
     // They only collide while she aims, when the camera's touching flag is always set as it overlaps her capsule
     // (and the weapon's can only be set then)
     let mut attached_active = attached.iter().any(|a| a.touching);
     // Ones found on their own say whether they collide in their flags, and are only touching if on a contact
     for &other in standalone {
         if let Ok((capsule, collides)) = read_attached_proxy(handle, other) {
-            // It may have been found through her body too (TR2013's combat proxy's body is in her list, but further
-            // along than is searched)
-            let same = |a: &AttachedProxy| (a.capsule.a.vector() - capsule.a.vector()).norm() < PROXY_SAME_SHAPE
-                && (a.capsule.b.vector() - capsule.b.vector()).norm() < PROXY_SAME_SHAPE;
-            if !attached.iter().any(same) {
+            // It's usually found through her body too (TR2013's combat proxy), when it's only its flags that count
+            let its_body = layout.body.and_then(|offset| read_pointer_or_null(handle, other + offset).ok());
+            if !its_body.map_or(false, |b| attached_bodies.contains(&b)) {
                 attached.push(AttachedProxy { capsule, touching: false });
             }
             attached_active |= collides;
@@ -325,26 +326,36 @@ fn segment_distance(a: Vector3<f32>, b: Vector3<f32>, c: Vector3<f32>, d: Vector
     ((a + u * s) - (c + v * t)).norm()
 }
 
-// The capsules of bodies attached (directly or not) to `body`, which follow it in the list
-fn read_attached_capsules(handle: Handle, body: usize) -> Vec<AttachedProxy> {
+// The capsules of bodies attached (directly or not) to `body`, which follow it in the list, and those bodies
+fn read_attached_capsules(handle: Handle, body: usize) -> (Vec<AttachedProxy>, Vec<usize>) {
     let layout = &layout::current().body;
     let mut family = vec![body];
     let mut capsules = vec![];
     let mut current = body;
+    let mut since_family = 0;
     for _ in 0..MAX_BODIES_SEARCHED {
         current = match read_pointer_or_null(handle, current + layout.next) {
             Ok(next) if next != 0 && next != body => next,
             _ => break,
         };
         match read_pointer_or_null(handle, current + layout.parent) {
-            Ok(parent) if family.contains(&parent) => family.push(current),
-            _ => continue,
+            Ok(parent) if family.contains(&parent) => {
+                family.push(current);
+                since_family = 0;
+            }
+            _ => {
+                since_family += 1;
+                if since_family >= MAX_BODIES_BETWEEN {
+                    break;
+                }
+                continue;
+            }
         }
         if let Some((capsule, _, touching)) = read_physics_capsule(handle, current) {
             capsules.push(AttachedProxy { capsule, touching });
         }
     }
-    capsules
+    (capsules, family.split_off(1))
 }
 
 // The capsule, its centre, and whether it's touching something

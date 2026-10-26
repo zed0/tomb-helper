@@ -76,7 +76,7 @@
         "proxy.in_use_size": ["0x17589C", "0x583354"]
       },
       "layout": {
-        "instance": {"size": "0xD0", "header": "0xC0", "position": "0x0", "rotation": "0x20", "in_use": "0x40", "placement": null, "id": "0x50", "object_name": ["0x40", "0x4C"], "components": null, "transform": null, "component_data": "0x64", "game_object": "0x74", "ballistic": "0xA4"},
+        "instance": {"size": "0xD0", "header": "0xC0", "position": "0x0", "rotation": "0x20", "in_use": "0x40", "placement": null, "id": "0x50", "object_name": ["0x40", "0x4C"], "components": null, "transform": null, "component_data": "0x64", "game_object": "0x74", "inline_components": "0xA4"},
         "player": {"instance": null, "from_instance": ["0xA8", "0x14"], "fall_start": "0xF0C", "fall_start_copy": "0xF18"},
         "ballistic": {"velocity": "0x10"},
         "body": {"shape": "0x0", "next": "0x38", "parent": "0x44"},

@@ -140,7 +140,8 @@ Each module's `//!` doc says what's in it and how it works; this is where to loo
   found by lifting her 150 then 300 up (`fall_start`): the fields of her player object (RTTI `Player`, found from her
   instance a pointer or two in) that follow both lifts are it and its copy. In TR2013 Steam that found the player at
   [[instance + 0xA8] + 0x14] (as the aim sweep knew) and the fall start at 0xF0C and 0xF18, 0xC apart as SOTTR's are;
-  TR2013's position chain doesn't go through the player, hence `player.from_instance`. Flown down in TR2013 and lived.
+  TR2013's position chain doesn't go through the player, so `targets` finds it by its class from her instance in every
+  game, with the layout's path (`player.from_instance`, or through `XPosition`) where that search can't read. Flown down in TR2013 and lived.
 - TR2013 Steam has every flight value SOTTR has but the body's gaps and previous centre, found live:
   velocity at her instance +0xA4 -> `cdc::BallisticComponent` +0x10 (fell by ~1 a frame during a lift, 0 on landing);
   `PlayerProxy` flags +0x10 (0xB3 standing, 0x93 in the air: SOTTR's 0x4B3/0x1493, same low byte), whose bit 0x1 gates
@@ -157,6 +158,12 @@ Each module's `//!` doc says what's in it and how it works; this is where to loo
   at +0x71 (0x2F). Unlike SOTTR's it isn't swept towards her: the proxy's set-transform (+0x175800, with no test of the
   collision bit) works out her centre from her feet and places the body there (+0x1EF960 -> +0x1F2D70, written at
   +0x1333AB), so there are no gaps to clear and it can't be left behind a wall.
+- The combat proxy's body is attached to hers like ROTTR's camera and weapon, so the overlay finds it through her body
+  list as in ROTTR (searching until 32 bodies in a row aren't attached); `CombatProxy` is still read for its flags, and
+  isn't drawn twice (by its body). Still not found the same way: Lara (TR2013 has no `PlayerComponent`; her proxy points
+  back at her instance, +0x18), hit capsules (there's a `CollideComponent`, but no fixed route to it from the record was
+  found: one that held for her held for 20 of 141 instances) and model bounds (no `DrawableComponent`; her record +0x94
+  leads to a `RenderModelInstance`).
 - **Add a new memory value:** add an `AddressType` variant, add offsets per version in `offsets.json`, read it with
   `Game` (`read_floats`, `require` and `game_memory`'s readers), or `TrackedMemory` in a handler that writes it.
 - **Writing a value:** anything a handler writes goes in `targets::WRITTEN`, with a check in `targets::verify` (what it
@@ -372,7 +379,9 @@ again (`derive` plus live checks).
   - Instances: a static array of 0xD0 byte records (mod+0x1D24910.., ~1263 in use), found as every
     `cdc::TransformComponent`'s +0x10 points into it. +0x0 position (+0x10 last frame's), +0x20 Euler rotation (+0x30
     last frame's), +0x70 -> the game object (Lara's is an `NsPlayerBase`; others `NsInstance`/`NsUberObjectBase`), +0x88
-    -> `cdc::SceneEntity`, +0xA4..+0xB8 component pointers in the record itself (no component table). Lara was record 2
+    -> `cdc::SceneEntity`, +0xA4..+0xD0 a component table in the record itself (`instance.inline_components`: ballistic,
+    user data, soft body, game flags, `GameInstanceData`; fixed slots, right for every instance that has them, learnt by
+    class like ROTTR's, without the back pointer check: only some point back, at +0x10). Lara was record 2
     (mod+0x1D24AB0), which the position chains reach. In the offsets file (`InstanceArray` [0x1D24910], layout: header
     +0xC0 (link indices, set up to the end), in_use +0x40 (-> object type, whose +0x4C -> name, e.g. "laracroft"), id
     +0x48 (not quite unique), no placement/components/transform). +0x64 -> component data: +0x8 count, 0xC byte

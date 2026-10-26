@@ -84,35 +84,37 @@ impl Components {
 
     /// The instance's component of the class, if it has one
     pub fn get(&mut self, handle: Handle, instance: usize, class: &str) -> Option<usize> {
-        let table = read_pointer(handle, instance.wrapping_add(layout::current().instance.components?))?;
+        let table = Table::of(handle, instance)?;
         if !self.slots.contains_key(class) {
-            if self.scans_left == 0 || !self.scanned.insert(table) {
+            if self.scans_left == 0 || !self.scanned.insert(table.address) {
                 return None;
             }
             self.scans_left -= 1;
-            self.learn(handle, instance, table);
+            self.learn(handle, instance, &table);
         }
         let slot = *self.slots.get(class)?;
-        let component = read_pointer(handle, table.wrapping_add(slot * pointer_size()))?;
-        let back = read_pointer(handle, component.wrapping_add(layout::current().component.instance))?;
-        if back != instance || self.classes.name(handle, component).as_deref() != Some(class) {
+        if slot >= table.slots {
+            return None;
+        }
+        let component = read_pointer(handle, table.address.wrapping_add(slot * pointer_size()))?;
+        if !table.is_back_pointer(handle, component, instance) || self.classes.name(handle, component).as_deref() != Some(class) {
             return None;
         }
         Some(component)
     }
 
     /// Learns the slot of every component in the table
-    fn learn(&mut self, handle: Handle, instance: usize, table: usize) {
-        let back_offset = layout::current().component.instance;
+    fn learn(&mut self, handle: Handle, instance: usize, table: &Table) {
         let size = pointer_size();
-        for first in (0..MAX_SLOTS).step_by(SLOTS_PER_READ) {
-            let mut bytes = vec![0u8; SLOTS_PER_READ * size];
-            if handle.copy_address(table.wrapping_add(first * size), &mut bytes).is_err() {
+        for first in (0..table.slots).step_by(SLOTS_PER_READ) {
+            let count = SLOTS_PER_READ.min(table.slots - first);
+            let mut bytes = vec![0u8; count * size];
+            if handle.copy_address(table.address.wrapping_add(first * size), &mut bytes).is_err() {
                 return;
             }
             for (i, pointer) in bytes.chunks_exact(size).enumerate() {
                 let component = pointer_from(pointer);
-                if component == 0 || read_pointer(handle, component.wrapping_add(back_offset)) != Some(instance) {
+                if component == 0 || !table.is_back_pointer(handle, component, instance) {
                     continue;
                 }
                 if let Some(name) = self.classes.name(handle, component) {
@@ -120,6 +122,32 @@ impl Components {
                 }
             }
         }
+    }
+}
+
+/// Where an instance's component slots are: a table it points at, or (where there's none) one in the instance itself
+pub struct Table {
+    pub address: usize,
+    pub slots: usize,
+    inline: bool,
+}
+
+impl Table {
+    pub fn of(handle: Handle, instance: usize) -> Option<Table> {
+        let layout = &layout::current().instance;
+        if let Some(offset) = layout.components {
+            let address = read_pointer(handle, instance.wrapping_add(offset))?;
+            return Some(Table { address, slots: MAX_SLOTS, inline: false });
+        }
+        let offset = layout.inline_components?;
+        let slots = layout.size.checked_sub(offset)? / pointer_size();
+        Some(Table { address: instance.wrapping_add(offset), slots, inline: true })
+    }
+
+    // Whether the component is the instance's: a table elsewhere can be shorter than the slots used, so a slot can hold
+    // something else, but one in the instance holds only its own (and not all of TR2013's point back at it)
+    fn is_back_pointer(&self, handle: Handle, component: usize, instance: usize) -> bool {
+        self.inline || read_pointer(handle, component.wrapping_add(layout::current().component.instance)) == Some(instance)
     }
 }
 
