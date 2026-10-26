@@ -171,8 +171,9 @@ Each module's `//!` doc says what's in it and how it works; this is where to loo
   value), its code tests the collision bit (+0x108AD7) and copies the collision result into +0x60 as Steam's does, the
   camera collision is Steam's path ([GameRender] +0x5F0, +0xA2C, +0x914; tested at +0x4D4AE3), and lifting her found
   the player at [[instance + 0xA4] + 0xC] and the fall start at +0xF0C/+0xF18, Steam's offsets.
-- ROTTR Steam has all of SOTTR's flight values but the fall start, found live the same ways (in its entry, not the
-  defaults, as SOTTR's resolved centre differs): flags +0x18 (0x4B3 standing, as SOTTR's), whose bit 0x1 has its proxy
+- ROTTR Steam has all of SOTTR's flight values, found live the same ways (in its entry, not the defaults, as SOTTR's
+  resolved centre differs): the fall start at player +0x1074 and +0x1080 (lifting her, the player through her position
+  chain, 0xC apart as in the others); flags +0x18 (0x4B3 standing, as SOTTR's), whose bit 0x1 has its proxy
   code (+0x1DB4E6) copy her centre (+0x30) into +0x70, the resolved centre; velocity +0x20 in its ballistic component
   (TR2013's layout 0x10 on); camera collision [[[GameRender] +0x680 (`CameraComponent`)] +0xAB0
   (`ExplorationCameraController`, pointed at directly as in TR2013, not through SOTTR's camera stack)] +0xBB8, a byte

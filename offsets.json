@@ -167,6 +167,7 @@
         "proxy.in_use_size": ["0x1DD0D2", "0x1DD105"]
       },
       "layout": {
+        "player": {"fall_start": "0x1074", "fall_start_copy": "0x1080"},
         "proxy": {"movement_collides": "0x1", "resolved_centre": "0x70"},
         "body": {"gap": "0x0"},
         "physics_shape": {"previous_centre": "0xA0", "gap": "0x10"},
