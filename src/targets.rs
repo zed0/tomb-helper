@@ -447,7 +447,9 @@ mod tests {
             (AddressType::ProxyShapePreviousCentre, [&body[..], &[0x20, 0xA0]].concat()),
             (AddressType::ProxyShapeGap, [&body[..], &[0x20, 0x10]].concat()),
             (AddressType::ProxyBodyGap, [&body[..], &[0x0]].concat()),
-            (AddressType::CameraCollision, vec![0x36ABA00, 0x450, 0xF08, 0x20, 0xDF8]),
+            // Found by hand through the camera stack's entry (0xF08, 0x20), which isn't always there; the camera
+            // component also points at the controller directly
+            (AddressType::CameraCollision, vec![0x36ABA00, 0x450, 0xD40, 0xDF8]),
         ];
         let slot = |class: &str| match class {
             components::PROXY => Some(Slot::Table(39)),

@@ -188,11 +188,12 @@ Each module's `//!` doc says what's in it and how it works; this is where to loo
   `cdc::GeomSphere` (inline or pointed to) that the most byte compares in the code use; the previous link is the offset
   near `body.next` that leads back from each body's next. Velocity is found during the lift, the vector in her ballistic
   component whose vertical part is under -0.5 while she falls and 0 once she's landed. With ROTTR's fields removed it
-  found all four as they'd been found by hand; not run on the others yet.
+  found all four as they'd been found by hand. In SOTTR 492 it agreed but for the camera, which it found directly (above),
+  and confirmed the previous link +0x40.
 - The body list is walked whole from its start (`body.previous`, checked as it's followed) about every 5s, or when a
   remembered body stops being attached: ~5us a read, so a whole walk is ~5ms, too slow for every tick. TR2013: 437
   bodies, +0x3C previous, starting 14 before hers; ROTTR: 733, +0x38 previous (707/707 checked), 25 before hers;
-  SOTTR's +0x40 is a guess.
+  SOTTR: +0x40 (found by `flight_fields`).
 - Components are learnt in both an instance's tables, the one it points at and the one in it (`instance.inline_components`;
   ROTTR and SOTTR have both, from +0xE0: transform, hierarchy, ballistic +0xF0, user data, game flags; TR2013 only the
   one in it), each class's slot remembered as an index or an offset (`components::Slot`). So velocity is found the same
@@ -384,8 +385,9 @@ again (`derive` plus live checks).
   where it was, and once it's set again the body only moves towards her (body +0x0 and shape +0x10 are how far it has
   left, zero normally), stopping at walls: it stayed ~1000 away, and she could jump through walls until the game was
   restarted. Setting the shape's centres to the proxy's and zeroing those two after the flight puts it back on her.
-- The camera: `GameRender`+0x450 -> Lara's `CameraComponent`, +0xF08 -> the active camera stack entry, +0x20 -> its
-  controller (`ExplorationCameraController`), whose collision struct at +0xDF0 (`cdc::GeomSphere` at +0x20, radius 10)
+- The camera: `GameRender`+0x450 -> Lara's `CameraComponent`, +0xD40 -> its `ExplorationCameraController` (as found
+  first, through +0xF08 -> the active camera stack entry, +0x20, but that isn't always there: once it held floats, so
+  `flight_fields` takes the direct pointer, as in ROTTR and TR2013), whose collision struct at +0xDF0 (`cdc::GeomSphere` at +0x20, radius 10)
   has an enabled byte at +0x8 that every collision pass checks (+0x8AF920, +0x8AFF30, +0x8B0D80): zeroed, the camera
   goes through walls. Below ground it also follows her proxy's resolved centre, so that needs the proxy's collision off.
 - Still left: a small jitter in the air (probably her falling animation).
