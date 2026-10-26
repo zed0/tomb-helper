@@ -2,7 +2,8 @@
 //! mode moves with her), by lifting her: put her a little way up in the air and the game sets it to the height she was
 //! put at as she falls, so the fields that follow two lifts of different heights are it (SOTTR has two copies). It's
 //! looked for in her player object (RTTI `Player`), found from her instance a few pointers in, and only works while
-//! the game runs (it pauses when it isn't in front). The drops are small, and she lands where she was.
+//! the game runs (it pauses when it isn't in front). The drops are small, and she lands where she was. Her velocity is
+//! found along the way: the vector in her ballistic component that's falling while she drops, and 0 once she's landed.
 //! `debug find-fall-start [--delay N]`.
 
 use anyhow::{bail, Context, Result};
@@ -25,6 +26,11 @@ const PLAYER_SPAN: usize = 0x4000;
 const SEARCH_SPAN: usize = 0x200;
 // A fall start this close to the height she was lifted to is it
 const TOLERANCE: f32 = 20.0;
+// How much of her ballistic component is looked through for her velocity, how fast she has to be falling in it while
+// she drops, and how still once she's landed
+const BALLISTIC_SPAN: usize = 0x80;
+const FALLING: f32 = -0.5;
+const STILL: f32 = 0.01;
 
 /// Her player object: the object of class `Player` her instance points to, directly or through one more pointer
 pub fn find_player(game: &Game, instance: usize) -> Option<(usize, Vec<usize>)> {
@@ -50,19 +56,20 @@ pub fn find_player(game: &Game, instance: usize) -> Option<(usize, Vec<usize>)> 
     None
 }
 
-// Lara's instance: what her position chain leads into
-fn lara_instance(game: &Game) -> Option<usize> {
+/// Lara's instance: what her position chain leads into
+pub fn lara_instance(game: &Game) -> Option<usize> {
     let chain = game.offsets.get(&AddressType::XPosition)?;
     let (_, prefix) = chain.split_last()?;
     resolve(game.handle, game.base_address, &[prefix, &[0]].concat())
 }
 
-/// What `find` found: the player object and how it was reached from her instance, and the offsets in it that followed
-/// both lifts
+/// What `find` found: the player object and how it was reached from her instance, the offsets in it that followed
+/// both lifts, and her velocity's offset in her ballistic component
 pub struct Found {
     pub player: usize,
     pub path: Vec<usize>,
     pub offsets: Vec<usize>,
+    pub velocity: Option<usize>,
 }
 
 /// The layout with the fall start (and its copy, if there are two) where `found` says, and the path from her instance
@@ -70,6 +77,9 @@ pub struct Found {
 pub fn with_found(game: &Game, mut layout: crate::layout::Layout, found: &Found) -> crate::layout::Layout {
     layout.player.fall_start = found.offsets.first().copied();
     layout.player.fall_start_copy = found.offsets.get(1).copied();
+    if found.velocity.is_some() {
+        layout.ballistic.velocity = found.velocity;
+    }
     // Through the position chain (where the player points at her at `player.instance`), if that gets there
     let chain = game.offsets.get(&AddressType::XPosition).cloned().unwrap_or_default();
     let through_chain = (chain.len() >= 3 && Some(chain[chain.len() - 2]) == layout.player.instance)
@@ -107,6 +117,15 @@ pub fn find(game: &Game, handle: ProcessHandle, arch: Architecture) -> Result<Fo
         let mut bytes = vec![0u8; PLAYER_SPAN];
         game.handle.copy_address(player, &mut bytes).ok().map(|_| bytes)
     };
+    let mut components = crate::components::Components::new(game.base_address);
+    components.allow_scans(usize::MAX);
+    let ballistic = components.get(game.handle, instance, crate::components::BALLISTIC);
+    let read_ballistic = || -> Option<Vec<u8>> {
+        let mut bytes = vec![0u8; BALLISTIC_SPAN];
+        game.handle.copy_address(ballistic?, &mut bytes).ok().map(|_| bytes)
+    };
+    // Her velocity: a vector whose vertical part is falling while she drops and is still once she's landed
+    let mut velocity: Option<Vec<usize>> = None;
     let mut followed: Option<Vec<usize>> = None;
     for lift in LIFTS {
         z.fetch_from_game(handle).context("her height couldn't be read")?;
@@ -122,7 +141,19 @@ pub fn find(game: &Game, handle: ProcessHandle, arch: Architecture) -> Result<Fo
             let _ = z.apply_to_game(handle);
             bail!("she didn't fall after being lifted, so the game isn't running: switch to it while this runs");
         }
+        let falling = read_ballistic();
         std::thread::sleep(FALL_TIME - MOVING_TIME);
+        let landed = read_ballistic();
+        if let (Some(falling), Some(landed)) = (falling, landed) {
+            let here: Vec<usize> = (0..BALLISTIC_SPAN - 11)
+                .step_by(4)
+                .filter(|&o| f32_at(&falling, o + 8) < FALLING && f32_at(&landed, o + 8).abs() < STILL)
+                .collect();
+            velocity = Some(match velocity {
+                Some(before) => before.into_iter().filter(|o| here.contains(o)).collect(),
+                None => here,
+            });
+        }
         let bytes = read_player().context("her player object couldn't be read")?;
         let here: Vec<usize> =
             (0..PLAYER_SPAN - 3).step_by(4).filter(|&o| (f32_at(&bytes, o) - lifted).abs() <= TOLERANCE).collect();
@@ -135,7 +166,8 @@ pub fn find(game: &Game, handle: ProcessHandle, arch: Architecture) -> Result<Fo
     if offsets.is_empty() {
         bail!("no field of her player object followed both lifts");
     }
-    Ok(Found { player, path, offsets })
+    let velocity = velocity.and_then(|v| v.first().copied());
+    Ok(Found { player, path, offsets, velocity })
 }
 
 /// `debug find-fall-start [--delay N] [--save]` (and `port`)
@@ -161,6 +193,13 @@ pub fn find_fall_start(version: Option<String>, delay: u64, save: bool) -> Resul
     }
     if found.offsets.len() > 2 {
         println!("More than two followed, so only the first two are kept (the fall start, and its copy)");
+    }
+    match found.velocity {
+        Some(offset) => {
+            let note = if details.layout.ballistic.velocity == Some(offset) { " (the layout's)" } else { "" };
+            println!("Her velocity is at +{:#X} in her ballistic component{}", offset, note);
+        }
+        None => println!("Her velocity wasn't found in her ballistic component"),
     }
     if save {
         details.layout = with_found(&game, details.layout.clone(), &found);

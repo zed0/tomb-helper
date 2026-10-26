@@ -170,6 +170,15 @@ enum Debug {
         #[arg(long)]
         to: Option<String>,
     },
+    /// Find the layout fields flight mode writes through from the running game's structures and code: her proxy's
+    /// collision bit and resolved centre, the camera's collision switch, the body list's previous link
+    FlightFields {
+        #[arg(long)]
+        version: Option<String>,
+        /// Keep them in the version's entry in the offsets file next to the exe
+        #[arg(long)]
+        save: bool,
+    },
     /// Find where the height Lara last left the ground at is, by lifting her a little twice (the game has to be in front)
     FindFallStart {
         #[arg(long)]
@@ -304,6 +313,7 @@ fn run_debug(tool: Debug) -> Result<()> {
         Debug::FindCutsceneId { version, save } => crate::cutscene_id::find_cutscene_id(version, save),
         Debug::CameraFields { version, layout_of } => crate::camera_fields::print_camera_fields(version, layout_of.as_deref()),
         Debug::FindFallStart { version, delay, save } => crate::fall_start::find_fall_start(version, delay, save),
+        Debug::FlightFields { version, save } => crate::flight_fields::find_flight_fields(version, save),
         Debug::ValueLayout { snapshot, group, version, to } => {
             crate::value_layout::print_value_layout(&snapshot, &group, version, to.as_deref())
         }

@@ -79,12 +79,21 @@ pub fn port(exe: Option<String>) -> Result<()> {
         }
     }
 
-    // The height she last left the ground at, which flight mode moves with her (or she dies from flying down)
+    // What flight mode writes through: found from the structures and code, so it's checked for every build
+    step("Finding flight mode's fields");
+    println!("Her proxy's collision bit and resolved centre, the camera's collision switch and the body list's links, from \
+              the game's structures and code (Lara standing, the game can stay paused)...");
+    report(crate::flight_fields::find_flight_fields(None, true));
+    details = refreshed(&details);
+
+    // The height she last left the ground at, which flight mode moves with her (or she dies from flying down), and her
+    // velocity on the way
     if details.layout.player.fall_start.is_none() {
         step("Finding where her fall starts");
         if wait_or_skip(&format!(
-            "Where the height she last left the ground at is isn't known, so she's lifted a little twice to find it (she \
-             lands where she is). Have Lara standing on open ground, press Enter, then switch to the game within {}s.",
+            "Where the height she last left the ground at is isn't known, so she's lifted a little twice to find it (and \
+             her velocity; she lands where she is). Have Lara standing on open ground, press Enter, then switch to the game \
+             within {}s.",
             SWITCH_SECONDS
         )) {
             report(crate::fall_start::find_fall_start(None, SWITCH_SECONDS, true));

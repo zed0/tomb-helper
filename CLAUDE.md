@@ -83,7 +83,8 @@ Each module's `//!` doc says what's in it and how it works; this is where to loo
 | `src/targets.rs` | What tomb-helper writes: chains built from the structures (or the offsets file's), checked before writing |
 | `src/tracked_memory.rs`, `src/tracked_position.rs` | Cached values at pointer chains, for the position and cutscene handlers |
 | `src/cutscene_handler.rs` | Cutscene skipping (SOTTR) and time saved |
-| `src/fall_start.rs` | Finding the fall start by lifting Lara a little twice (`debug find-fall-start`, run by `port`) |
+| `src/fall_start.rs` | Finding the fall start (and her velocity) by lifting Lara a little twice (`debug find-fall-start`, run by `port`) |
+| `src/flight_fields.rs` | Finding the other fields flight mode writes through from the structures and code: the proxy's collision bit and resolved centre, the camera's switch, the body list's previous link (`debug flight-fields`, run by `port`) |
 | `src/camera_fields.rs` | The camera's fields by what they have to be (inverse matrices, the first camera-to-world one, fov then aspect), for `update-offsets` and `check`; `debug camera-fields` |
 | `src/value_layout.rs` | A layout from the values in it: Lara's proxy's fields found by their values in another game's or build's snapshot (`debug value-layout`, used by `update-offsets`) |
 | `src/cutscene_id.rs` | Finding `CutsceneId` while a cutscene plays, by the timing file's ids (`debug find-cutscene-id`, run by `port`) |
@@ -180,6 +181,14 @@ Each module's `//!` doc says what's in it and how it works; this is where to loo
   before its -> `cdc::GeomSphere` (+0xBC8) that three compares in its code test (+0x7DF18C, +0x7DF2F0, +0x7DF847); and
   its body and shape have SOTTR's gaps (body +0x0, shape +0x10, zero standing) and previous centre (shape +0xA0), so it
   gets SOTTR's after-flight fix-up (not flown yet, so not known to be needed).
+- `port` finds all of that itself now, the same way in every game (`flight_fields`, read only, every port; the lift
+  only where the fall start isn't known): the resolved centre is the proxy's field that's a store through the same
+  register within a few instructions of a byte test of a single bit at `proxy.flags`, and holds her centre exactly
+  while she stands (that bit is the collision bit); the camera switch is a set byte in the 0x40 before the controller's
+  `cdc::GeomSphere` (inline or pointed to) that the most byte compares in the code use; the previous link is the offset
+  near `body.next` that leads back from each body's next. Velocity is found during the lift, the vector in her ballistic
+  component whose vertical part is under -0.5 while she falls and 0 once she's landed. With ROTTR's fields removed it
+  found all four as they'd been found by hand; not run on the others yet.
 - The body list is walked whole from its start (`body.previous`, checked as it's followed) about every 5s, or when a
   remembered body stops being attached: ~5us a read, so a whole walk is ~5ms, too slow for every tick. TR2013: 437
   bodies, +0x3C previous, starting 14 before hers; ROTTR: 733, +0x38 previous (707/707 checked), 25 before hers;

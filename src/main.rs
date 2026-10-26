@@ -55,6 +55,7 @@ mod port;
 mod position;
 mod process_details;
 mod fall_start;
+mod flight_fields;
 mod find_process;
 mod fit_layout;
 mod game;
