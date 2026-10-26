@@ -188,8 +188,9 @@ Each module's `//!` doc says what's in it and how it works; this is where to loo
   `cdc::GeomSphere` (inline or pointed to) that the most byte compares in the code use; the previous link is the offset
   near `body.next` that leads back from each body's next. Velocity is found during the lift, the vector in her ballistic
   component whose vertical part is under -0.5 while she falls and 0 once she's landed. With ROTTR's fields removed it
-  found all four as they'd been found by hand. In SOTTR 492 it agreed but for the camera, which it found directly (above),
-  and confirmed the previous link +0x40.
+  found all four as they'd been found by hand, and so it did in TR2013 Steam and 748 (whose camera switch has only one
+  compare with its full displacement; the other readers go through the struct). In SOTTR 492 and 234.1 it agreed but
+  for the camera, which it found directly (above), and confirmed the previous link +0x40.
 - The body list is walked whole from its start (`body.previous`, checked as it's followed) about every 5s, or when a
   remembered body stops being attached: ~5us a read, so a whole walk is ~5ms, too slow for every tick. TR2013: 437
   bodies, +0x3C previous, starting 14 before hers; ROTTR: 733, +0x38 previous (707/707 checked), 25 before hers;
