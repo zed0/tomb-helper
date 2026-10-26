@@ -140,7 +140,16 @@ Each module's `//!` doc says what's in it and how it works; this is where to loo
   found by lifting her 150 then 300 up (`fall_start`): the fields of her player object (RTTI `Player`, found from her
   instance a pointer or two in) that follow both lifts are it and its copy. In TR2013 Steam that found the player at
   [[instance + 0xA8] + 0x14] (as the aim sweep knew) and the fall start at 0xF0C and 0xF18, 0xC apart as SOTTR's are;
-  TR2013's position chain doesn't go through the player, hence `player.from_instance`. Not flown down yet.
+  TR2013's position chain doesn't go through the player, hence `player.from_instance`. Flown down in TR2013 and lived.
+- TR2013 Steam has every flight value SOTTR has except the body ones (its proxy has no physics body), found live:
+  velocity at her instance +0xA4 -> `cdc::BallisticComponent` +0x10 (fell by ~1 a frame during a lift, 0 on landing);
+  `PlayerProxy` flags +0x10 (0xB3 standing, 0x93 in the air: SOTTR's 0x4B3/0x1493, same low byte), whose bit 0x1 gates
+  the proxy update (+0x1705E0) copying the collision result ([proxy+0x108]+0x80) into +0x60, the resolved centre (which
+  lagged +0x20 a frame during the lift); camera collision at [[[GameRender]+0x5F0 (`CameraComponent`)]+0xA2C
+  (`ExplorationCameraController`)]+0x914, a struct at +0x910 (vtable, enabled byte, 15, 15, 30, -> a `cdc::GeomSphere`
+  query), whose byte is read every frame by three tests that skip collision when it's 0 (+0x511572, +0x511DCC,
+  +0x520BF7), like SOTTR's three passes. targets builds the proxy's fields from `PlayerProxy` where there's no
+  component table. Not flown with them yet.
 - **Add a new memory value:** add an `AddressType` variant, add offsets per version in `offsets.json`, read it with
   `Game` (`read_floats`, `require` and `game_memory`'s readers), or `TrackedMemory` in a handler that writes it.
 - **Writing a value:** anything a handler writes goes in `targets::WRITTEN`, with a check in `targets::verify` (what it

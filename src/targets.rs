@@ -146,20 +146,28 @@ fn chain_for(offsets: &AddressOffsets, address_type: AddressType, mut slot: impl
             .or_else(|| Some([lara_instance(offsets)?, vec![layout.instance.ballistic?]].concat()))?;
         return then(ballistic, &[layout.ballistic.velocity]);
     }
-    let mut proxy = || component(components::PROXY);
+    // A field of her proxy: through the pointer to it in her component table, or where there's none (TR2013), in the
+    // `PlayerProxy` its chain leads to
+    let mut in_proxy = |rest: &[Option<usize>]| -> Option<Vec<usize>> {
+        if let Some(pointer) = component(components::PROXY) {
+            return then(pointer, rest);
+        }
+        let (first, rest) = rest.split_first()?;
+        let mut chain = offsets.get(&AddressType::PlayerProxy)?.clone();
+        *chain.last_mut()? += (*first)?;
+        then(chain, rest)
+    };
     match address_type {
         AddressType::FallStart => then(player(offsets)?, &[layout.player.fall_start]),
         AddressType::FallStartCopy => then(player(offsets)?, &[layout.player.fall_start_copy]),
-        AddressType::ProxyCentre => then(proxy()?, &[Some(proxy_layout.centre)]),
-        AddressType::ProxyResolvedCentre => then(proxy()?, &[proxy_layout.resolved_centre]),
+        AddressType::ProxyCentre => in_proxy(&[Some(proxy_layout.centre)]),
+        AddressType::ProxyResolvedCentre => in_proxy(&[proxy_layout.resolved_centre]),
         // Only where which bit is its collision is known, as that's what flight mode changes
-        AddressType::ProxyFlags if proxy_layout.movement_collides.is_some() => then(proxy()?, &[proxy_layout.flags]),
-        AddressType::ProxyShapeCentre => then(proxy()?, &[proxy_layout.body, Some(body.shape), Some(shape.centre)]),
-        AddressType::ProxyShapePreviousCentre => {
-            then(proxy()?, &[proxy_layout.body, Some(body.shape), shape.previous_centre])
-        }
-        AddressType::ProxyShapeGap => then(proxy()?, &[proxy_layout.body, Some(body.shape), shape.gap]),
-        AddressType::ProxyBodyGap => then(proxy()?, &[proxy_layout.body, body.gap]),
+        AddressType::ProxyFlags if proxy_layout.movement_collides.is_some() => in_proxy(&[proxy_layout.flags]),
+        AddressType::ProxyShapeCentre => in_proxy(&[proxy_layout.body, Some(body.shape), Some(shape.centre)]),
+        AddressType::ProxyShapePreviousCentre => in_proxy(&[proxy_layout.body, Some(body.shape), shape.previous_centre]),
+        AddressType::ProxyShapeGap => in_proxy(&[proxy_layout.body, Some(body.shape), shape.gap]),
+        AddressType::ProxyBodyGap => in_proxy(&[proxy_layout.body, body.gap]),
         AddressType::CameraCollision if !layout.camera.collision.is_empty() => {
             Some(game_render(offsets)?.into_iter().chain(layout.camera.collision.iter().copied()).collect())
         }
