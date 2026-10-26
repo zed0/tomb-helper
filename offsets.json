@@ -207,7 +207,7 @@
         "CutsceneId": ["0x360E0D0", "0x0", "0x120", "0x10", "0x1D4"]
       },
       "layout": {
-        "instance": {"object_name": ["0x80", "0x8", "0x60", "0x8"], "ballistic": "0xF0"},
+        "instance": {"object_name": ["0x80", "0x8", "0x60", "0x8"]},
         "player": {"instance": "0x33C8", "fall_start": "0x1064", "fall_start_copy": "0x1070"},
         "ballistic": {"velocity": "0x20"},
         "drawable": {"instance_drawable": "0xA8", "model_instance": "0x78", "mesh": "0x38"},
@@ -335,7 +335,7 @@
         "proxy.in_use_size": ["0x21D6E1", "0x21D717"]
       },
       "layout": {
-        "instance": {"object_name": ["0x80", "0x8", "0x60", "0x8"], "ballistic": "0xF0"},
+        "instance": {"object_name": ["0x80", "0x8", "0x60", "0x8"]},
         "player": {"instance": "0x33E8", "fall_start": "0x1064", "fall_start_copy": "0x1070"},
         "ballistic": {"velocity": "0x20"},
         "drawable": {"instance_drawable": "0xA8", "model_instance": "0x78", "mesh": "0x38"},

@@ -140,10 +140,13 @@ Each module's `//!` doc says what's in it and how it works; this is where to loo
   found by lifting her 150 then 300 up (`fall_start`): the fields of her player object (RTTI `Player`, found from her
   instance a pointer or two in) that follow both lifts are it and its copy. In TR2013 Steam that found the player at
   [[instance + 0xA8] + 0x14] (as the aim sweep knew) and the fall start at 0xF0C and 0xF18, 0xC apart as SOTTR's are;
-  TR2013's position chain doesn't go through the player, so `targets` finds it by its class from her instance in every
-  game, with the layout's path (`player.from_instance`, or through `XPosition`) where that search can't read. Flown down in TR2013 and lived.
+  TR2013's position chain doesn't go through the player, so `targets` finds it by its class from her instance, else
+  the layout's way: in ROTTR (and SOTTR) nothing within three pointers of her instance leads to the player (her user
+  data doesn't), only the player to her (`player.instance`, through `XPosition`), so both stay, and `fall_start` takes
+  whichever gets there. Flown down in TR2013 and lived.
 - TR2013 Steam has every flight value SOTTR has but the body's gaps and previous centre, found live:
-  velocity at her instance +0xA4 -> `cdc::BallisticComponent` +0x10 (fell by ~1 a frame during a lift, 0 on landing);
+  velocity at her instance +0xA4 -> `cdc::BallisticComponent` +0x10 (fell by ~1 a frame during a lift, 0 on landing;
+  it's in the table in her instance, as ROTTR's and SOTTR's are at +0xF0, +0x20 into theirs, the same layout 0x10 on);
   `PlayerProxy` flags +0x10 (0xB3 standing, 0x93 in the air: SOTTR's 0x4B3/0x1493, same low byte), whose bit 0x1 gates
   the proxy update (+0x1705E0) copying the collision result ([proxy+0x108]+0x80) into +0x60, the resolved centre (which
   lagged +0x20 a frame during the lift); camera collision at [[[GameRender]+0x5F0 (`CameraComponent`)]+0xA2C
@@ -168,10 +171,16 @@ Each module's `//!` doc says what's in it and how it works; this is where to loo
   starts at +0xA0 (Steam +0xA4; same slots, so velocity is ballistic +0x10, whose start matches Steam's value for
   value), its code tests the collision bit (+0x108AD7) and copies the collision result into +0x60 as Steam's does, the
   camera collision is Steam's path ([GameRender] +0x5F0, +0xA2C, +0x914; tested at +0x4D4AE3), and lifting her found
-  the player at [[instance + 0xA4] + 0xC] and the fall start at +0xF0C/+0xF18, Steam's offsets. The list (437 bodies,
-  +0x3C previous, starting 14 before hers) is walked whole from its start (`body.previous`, checked as it's followed;
-  SOTTR's 0x40 is a guess) about every 5s, or when a remembered body stops being attached: ~5us a read, so a whole walk
-  is ~5ms (ROTTR's ~1300 bodies ~13ms), too slow for every tick. Still not found the same way: Lara (TR2013 has no `PlayerComponent`; her proxy points
+  the player at [[instance + 0xA4] + 0xC] and the fall start at +0xF0C/+0xF18, Steam's offsets.
+- The body list is walked whole from its start (`body.previous`, checked as it's followed) about every 5s, or when a
+  remembered body stops being attached: ~5us a read, so a whole walk is ~5ms, too slow for every tick. TR2013: 437
+  bodies, +0x3C previous, starting 14 before hers; ROTTR: 733, +0x38 previous (707/707 checked), 25 before hers;
+  SOTTR's +0x40 is a guess.
+- Components are learnt in both an instance's tables, the one it points at and the one in it (`instance.inline_components`;
+  ROTTR and SOTTR have both, from +0xE0: transform, hierarchy, ballistic +0xF0, user data, game flags; TR2013 only the
+  one in it), each class's slot remembered as an index or an offset (`components::Slot`). So velocity is found the same
+  way in every game, and the layout's `instance.ballistic` is gone (older offsets files' are left out when read).
+- Still not found the same way: Lara (TR2013 has no `PlayerComponent`; her proxy points
   back at her instance, +0x18), hit capsules (there's a `CollideComponent`, but no fixed route to it from the record was
   found: one that held for her held for 20 of 141 instances) and model bounds (no `DrawableComponent`; her record +0x94
   leads to a `RenderModelInstance`).

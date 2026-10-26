@@ -10,7 +10,7 @@
 //! offset less to her player object. The camera's collision is a path (`camera.collision`) from GameRender, which
 //! `CameraView`'s chain starts at. Each is checked by the RTTI class of the object it's in, where that's known.
 
-use crate::components::{self, Components};
+use crate::components::{self, Components, Slot};
 use crate::game::Game;
 use crate::game_memory::{pointer_size, read_floats, read_u32, resolve};
 use crate::layout;
@@ -118,7 +118,7 @@ pub fn find(game: &Game, components: &mut Components, address_type: AddressType)
 
 /// The chain to the value from the game's structures, if they say where it is
 pub fn structural(game: &Game, components: &mut Components, address_type: AddressType) -> Option<Vec<usize>> {
-    let slot = |class: &str| -> Option<usize> {
+    let slot = |class: &str| -> Option<Slot> {
         let prefix = lara_instance(&game.offsets)?;
         let instance = resolve(game.handle, game.base_address, &[prefix, vec![0]].concat())?;
         components.get(game.handle, instance, class)?;
@@ -139,7 +139,7 @@ pub fn structural(game: &Game, components: &mut Components, address_type: Addres
 fn chain_for(
     offsets: &AddressOffsets,
     address_type: AddressType,
-    mut slot: impl FnMut(&str) -> Option<usize>,
+    mut slot: impl FnMut(&str) -> Option<Slot>,
     found_player: Option<Vec<usize>>,
 ) -> Option<Vec<usize>> {
     let layout = layout::current();
@@ -150,19 +150,15 @@ fn chain_for(
     // The chain to the pointer to one of her components, in her component table (or the one in her instance)
     let mut component = |class: &str| -> Option<Vec<usize>> {
         let instance = lara_instance(offsets)?;
-        let slot = slot(class)? * pointer_size();
-        match (layout.instance.components, layout.instance.inline_components) {
-            (Some(table), _) => Some([instance, vec![table, slot]].concat()),
-            (None, Some(start)) => Some([instance, vec![start + slot]].concat()),
-            (None, None) => None,
+        match slot(class)? {
+            Slot::Table(index) => Some([instance, vec![layout.instance.components?, index * pointer_size()]].concat()),
+            Slot::Inline(offset) => Some([instance, vec![offset]].concat()),
         }
     };
     let (proxy_layout, body, shape) = (&layout.proxy, &layout.body, &layout.physics_shape);
     if let AddressType::Velocity = address_type {
-        // Her cdc::BallisticComponent: in her component table, or where the layout says her instance points at it
-        let ballistic = component(components::BALLISTIC)
-            .or_else(|| Some([lara_instance(offsets)?, vec![layout.instance.ballistic?]].concat()))?;
-        return then(ballistic, &[layout.ballistic.velocity]);
+        // Her cdc::BallisticComponent, which is in the table in her instance in every game
+        return then(component(components::BALLISTIC)?, &[layout.ballistic.velocity]);
     }
     // A field of her proxy: through the pointer to it in her component table, or where there's none (TR2013), in the
     // `PlayerProxy` its chain leads to
@@ -453,7 +449,11 @@ mod tests {
             (AddressType::ProxyBodyGap, [&body[..], &[0x0]].concat()),
             (AddressType::CameraCollision, vec![0x36ABA00, 0x450, 0xF08, 0x20, 0xDF8]),
         ];
-        let slot = |class: &str| (class == components::PROXY).then(|| 39);
+        let slot = |class: &str| match class {
+            components::PROXY => Some(Slot::Table(39)),
+            components::BALLISTIC => Some(Slot::Inline(0xF0)),
+            _ => None,
+        };
         for (address_type, chain) in found_by_hand {
             assert_eq!(chain_for(&details.address_offsets, address_type, slot, None), Some(chain), "{:?}", address_type);
         }

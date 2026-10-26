@@ -111,9 +111,10 @@ group! {
         /// -> component table, with a slot per component type (found by their RTTI class names, see `components`). None
         /// if there's no table (TR2013, whose instances hold their components themselves)
         components: Option<usize> = Some(0xD8),
-        /// Where there's no component table to point at: the start of the one in the instance itself, which runs to its
-        /// end (TR2013 0xA4: its ballistic, user data, soft body and game flag components), learnt by class the same way
-        inline_components: Option<usize> = None,
+        /// The start of the component table in the instance itself, which runs to its end, learnt by class the same way
+        /// (ROTTR 0xE0: transform, hierarchy, ballistic, user data and game flags; TR2013, with no other, 0xA4: ballistic,
+        /// user data, soft body and game flags)
+        inline_components: Option<usize> = Some(0xE0),
         /// -> cdc::TransformComponent, null for unused slots. None if instances don't point at theirs (TR2013), when
         /// objects are drawn unscaled.
         transform: Option<usize> = Some(0xE0),
@@ -123,9 +124,6 @@ group! {
         /// -> the game object, whose RTTI class says whether it's a trigger and holds its shape (see `trigger_object`).
         /// None where triggers are components (ROTTR, SOTTR); TR2013 has it.
         game_object: Option<usize> = None,
-        /// -> cdc::BallisticComponent (Lara's velocity, `ballistic`), where it isn't found in the component table. SOTTR
-        /// has it at 0xF0
-        ballistic: Option<usize> = None,
     }
 }
 
@@ -148,8 +146,8 @@ group! {
 group! {
     /// cdc::BallisticComponent, which moves Lara
     BallisticLayout {
-        /// 3 floats, integrated with gravity each frame (SOTTR 0x20)
-        velocity: Option<usize> = None,
+        /// 3 floats, integrated with gravity each frame (ROTTR and SOTTR 0x20, TR2013 0x10)
+        velocity: Option<usize> = Some(0x20),
     }
 }
 

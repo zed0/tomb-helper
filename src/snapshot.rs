@@ -94,14 +94,18 @@ pub struct Snapshot {
 impl Snapshot {
     pub fn copy_address(&self, address: usize, buffer: &mut [u8]) -> io::Result<()> {
         let image_start = self.header.base_address;
-        if address >= image_start && address + buffer.len() <= image_start + self.image.data.len() {
+        // A garbage pointer near the top of memory mustn't wrap round into range
+        let end = address
+            .checked_add(buffer.len())
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, format!("{:#X} isn't in the snapshot", address)))?;
+        if address >= image_start && end <= image_start + self.image.data.len() {
             let offset = address - image_start;
             buffer.copy_from_slice(&self.image.data[offset..offset + buffer.len()]);
             return Ok(());
         }
         let i = self.regions.partition_point(|(start, _)| *start <= address);
         match i.checked_sub(1).map(|i| &self.regions[i]) {
-            Some((start, bytes)) if address + buffer.len() <= start + bytes.len() => {
+            Some((start, bytes)) if end <= start + bytes.len() => {
                 buffer.copy_from_slice(&bytes[address - start..address - start + buffer.len()]);
                 Ok(())
             }

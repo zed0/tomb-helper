@@ -82,10 +82,25 @@ pub fn with_found(game: &Game, mut layout: crate::layout::Layout, found: &Found)
     layout
 }
 
+// Her player object where her position chain goes through it (ROTTR, SOTTR: [.., player, `player.instance`, position]),
+// which is the only way there where her instance doesn't point at it
+fn player_in_chain(game: &Game) -> Option<usize> {
+    let chain = game.offsets.get(&AddressType::XPosition)?;
+    let n = chain.len();
+    if n < 3 || Some(chain[n - 2]) != crate::layout::current().player.instance {
+        return None;
+    }
+    let player = resolve(game.handle, game.base_address, &[&chain[..n - 2], &[0]].concat())?;
+    let mut classes = Classes::new(game.base_address);
+    (classes.name(game.handle, player).as_deref() == Some(PLAYER)).then(|| player)
+}
+
 /// Lifts Lara twice and finds the fields of her player object that followed
 pub fn find(game: &Game, handle: ProcessHandle, arch: Architecture) -> Result<Found> {
     let instance = lara_instance(game).context("Lara's instance wasn't found through her position chain")?;
-    let (player, path) = find_player(game, instance).context("her player object wasn't found from her instance")?;
+    let (player, path) = find_player(game, instance)
+        .or_else(|| player_in_chain(game).map(|player| (player, vec![])))
+        .context("her player object wasn't found from her instance or her position chain")?;
     let z_chain = game.offsets.get(&AddressType::ZPosition).context("the version has no ZPosition")?.clone();
     let mut z = TrackedMemory::<f32>::new(0.0, z_chain, arch, game.base_address);
     let read_player = || -> Option<Vec<u8>> {
@@ -134,7 +149,11 @@ pub fn find_fall_start(version: Option<String>, delay: u64, save: bool) -> Resul
     let game = Game::new(Handle::Live(pid, handle), base_address, &details.address_offsets);
     let found = find(&game, handle, details.arch)?;
     let path: Vec<String> = found.path.iter().map(|o| format!("{:#X}", o)).collect();
-    println!("Her player object is [instance + {}]", path.join("] + "));
+    if path.is_empty() {
+        println!("Her player object is the one her position chain goes through");
+    } else {
+        println!("Her player object is [instance + {}]", path.join("] + "));
+    }
     let known = [details.layout.player.fall_start, details.layout.player.fall_start_copy];
     for offset in &found.offsets {
         let note = if known.contains(&Some(*offset)) { " (the layout's)" } else { "" };

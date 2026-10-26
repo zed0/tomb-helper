@@ -179,12 +179,14 @@ impl VersionEntry {
 
 // What older offsets files can have that's no longer used, which is left out when they're read (rather than failing
 // as an unknown field): where in a version entry, and the key
-const RETIRED: [(&[&str], &str); 4] = [
+const RETIRED: [(&[&str], &str); 5] = [
     // TR2013's combat proxy is found through Lara's proxy's body
     (&["offsets"], "CombatProxy"),
     (&["witnesses"], "CombatProxy"),
     (&["unverified"], "CombatProxy"),
     (&["layout", "proxy"], "attached"),
+    // Lara's ballistic component is found in the table in her instance
+    (&["layout", "instance"], "ballistic"),
 ];
 
 pub fn parse(json: &str) -> Result<Vec<ProcessDetails>> {

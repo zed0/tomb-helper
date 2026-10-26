@@ -45,10 +45,27 @@ const SCANS_PER_REFRESH: usize = 48;
 // Tables already looked through are remembered (so each refresh looks at new ones) up to this many
 const MAX_SCANNED: usize = 100_000;
 
+/// Where a component class's slot is: an index in the table the instance points at, or an offset in the instance
+/// itself (the table in it, `instance.inline_components`)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Slot {
+    Table(usize),
+    Inline(usize),
+}
+
+impl std::fmt::Display for Slot {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Slot::Table(index) => write!(f, "{}", index),
+            Slot::Inline(offset) => write!(f, "+{:#X}", offset),
+        }
+    }
+}
+
 pub struct Components {
     pub classes: Classes,
     // Learnt slot of each component class
-    slots: HashMap<String, usize>,
+    slots: HashMap<String, Slot>,
     scans_left: usize,
     // Tables already looked through, which aren't looked through again
     scanned: HashSet<usize>,
@@ -78,25 +95,25 @@ impl Components {
     }
 
     /// The slots learnt so far, by class
-    pub fn known_slots(&self) -> &HashMap<String, usize> {
+    pub fn known_slots(&self) -> &HashMap<String, Slot> {
         &self.slots
     }
 
     /// The instance's component of the class, if it has one
     pub fn get(&mut self, handle: Handle, instance: usize, class: &str) -> Option<usize> {
-        let table = Table::of(handle, instance)?;
         if !self.slots.contains_key(class) {
-            if self.scans_left == 0 || !self.scanned.insert(table.address) {
+            let tables = Table::all(handle, instance);
+            if self.scans_left == 0 || tables.is_empty() || !self.scanned.insert(instance) {
                 return None;
             }
             self.scans_left -= 1;
-            self.learn(handle, instance, &table);
+            for table in &tables {
+                self.learn(handle, instance, table);
+            }
         }
         let slot = *self.slots.get(class)?;
-        if slot >= table.slots {
-            return None;
-        }
-        let component = read_pointer(handle, table.address.wrapping_add(slot * pointer_size()))?;
+        let table = Table::all(handle, instance).into_iter().find(|t| t.has(slot))?;
+        let component = read_pointer(handle, table.address_of(instance, slot))?;
         if !table.is_back_pointer(handle, component, instance) || self.classes.name(handle, component).as_deref() != Some(class) {
             return None;
         }
@@ -118,36 +135,62 @@ impl Components {
                     continue;
                 }
                 if let Some(name) = self.classes.name(handle, component) {
-                    self.slots.entry(name).or_insert(first + i);
+                    self.slots.entry(name).or_insert(table.slot(first + i));
                 }
             }
         }
     }
 }
 
-/// Where an instance's component slots are: a table it points at, or (where there's none) one in the instance itself
+/// Where some of an instance's component slots are: a table it points at, or the one in the instance itself
 pub struct Table {
     pub address: usize,
     pub slots: usize,
-    inline: bool,
+    // Where it starts in the instance, if it's in it
+    inline: Option<usize>,
 }
 
 impl Table {
-    pub fn of(handle: Handle, instance: usize) -> Option<Table> {
+    /// The instance's tables: the one it points at first, then the one in it, where the layout has them
+    pub fn all(handle: Handle, instance: usize) -> Vec<Table> {
         let layout = &layout::current().instance;
-        if let Some(offset) = layout.components {
-            let address = read_pointer(handle, instance.wrapping_add(offset))?;
-            return Some(Table { address, slots: MAX_SLOTS, inline: false });
+        let mut tables = vec![];
+        if let Some(address) = layout.components.and_then(|offset| read_pointer(handle, instance.wrapping_add(offset))) {
+            tables.push(Table { address, slots: MAX_SLOTS, inline: None });
         }
-        let offset = layout.inline_components?;
-        let slots = layout.size.checked_sub(offset)? / pointer_size();
-        Some(Table { address: instance.wrapping_add(offset), slots, inline: true })
+        if let Some(offset) = layout.inline_components {
+            let slots = layout.size.saturating_sub(offset) / pointer_size();
+            tables.push(Table { address: instance.wrapping_add(offset), slots, inline: Some(offset) });
+        }
+        tables
+    }
+
+    fn slot(&self, index: usize) -> Slot {
+        match self.inline {
+            Some(offset) => Slot::Inline(offset + index * pointer_size()),
+            None => Slot::Table(index),
+        }
+    }
+
+    fn has(&self, slot: Slot) -> bool {
+        match (slot, self.inline) {
+            (Slot::Table(index), None) => index < self.slots,
+            (Slot::Inline(offset), Some(start)) => offset >= start && (offset - start) / pointer_size() < self.slots,
+            _ => false,
+        }
+    }
+
+    fn address_of(&self, instance: usize, slot: Slot) -> usize {
+        match slot {
+            Slot::Table(index) => self.address.wrapping_add(index * pointer_size()),
+            Slot::Inline(offset) => instance.wrapping_add(offset),
+        }
     }
 
     // Whether the component is the instance's: a table elsewhere can be shorter than the slots used, so a slot can hold
     // something else, but one in the instance holds only its own (and not all of TR2013's point back at it)
     fn is_back_pointer(&self, handle: Handle, component: usize, instance: usize) -> bool {
-        self.inline || read_pointer(handle, component.wrapping_add(layout::current().component.instance)) == Some(instance)
+        self.inline.is_some() || read_pointer(handle, component.wrapping_add(layout::current().component.instance)) == Some(instance)
     }
 }
 
