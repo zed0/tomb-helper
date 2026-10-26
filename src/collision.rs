@@ -319,8 +319,9 @@ pub fn read_proxy(
         .map(|(capsule, _, touching)| AttachedProxy { capsule, touching })
         .collect();
     // They only collide while she aims, when the camera's touching flag is always set as it overlaps her capsule
-    // (and the weapon's can only be set then)
-    let mut attached_active = attached.iter().any(|a| a.touching);
+    // (and the weapon's can only be set then), or where proxies' flags say so (TR2013), their flags
+    let mut attached_active = attached.iter().any(|a| a.touching)
+        || attached_bodies.iter().any(|&b| owner_collides(handle, b) == Some(true));
     // Ones found on their own say whether they collide in their flags, and are only touching if on a contact
     for &other in standalone {
         if let Ok((capsule, collides)) = read_attached_proxy(handle, other) {
@@ -344,6 +345,21 @@ pub fn read_proxy(
         attached,
         attached_active,
     })
+}
+
+/// The proxy a body belongs to, where the layout says how to find it (TR2013)
+pub fn owner_proxy(handle: Handle, body: usize) -> Option<usize> {
+    let all = layout::current();
+    let proxy = read_pointer_or_null(handle, body + all.body.owner?).ok()?.checked_sub(all.proxy.body_owner?)?;
+    // It's the body's proxy if that has the body (so a wrong offset finds nothing rather than something else)
+    (read_pointer_or_null(handle, proxy + all.proxy.body?).ok()? == body).then(|| proxy)
+}
+
+// Whether the proxy a body belongs to collides, by its flags, where they say so (TR2013)
+fn owner_collides(handle: Handle, body: usize) -> Option<bool> {
+    let all = layout::current();
+    let proxy = owner_proxy(handle, body)?;
+    Some(read_u32(handle, proxy + all.proxy.flags?)? as usize & all.proxy.collides != 0)
 }
 
 /// A proxy attached to Lara's that's found on its own (TR2013's combat proxy): its shape in use, and whether it collides,

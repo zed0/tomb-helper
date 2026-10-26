@@ -149,7 +149,7 @@ fn run_report(handle: Handle, base_address: usize, details: ProcessDetails, repo
         Some(position) => {
             check_probes(&game, report, position);
             check_proxy(&game, report, &mut components, lara, position);
-            check_combat_proxy(&game, report, position);
+            check_combat_proxy(&game, report, &mut components, lara, position);
             check_aim_sweep(&game, report, &mut components, lara, position);
             match lara {
                 Some(lara) => check_capsules(&game, report, &mut components, lara, position),
@@ -453,10 +453,11 @@ fn check_probes(game: &Game, report: &mut Report, lara: &Position) {
     }
 }
 
-// The combat proxy, where it's found on its own (TR2013): it should be near Lara, in front of her while she aims
-fn check_combat_proxy(game: &Game, report: &mut Report, position: &Position) {
-    let proxy = match game.standalone_proxies().first() {
-        Some(&p) => p,
+// The combat proxy, where proxies attached to Lara's are found as proxies (TR2013): it should be near Lara, in front of
+// her while she aims
+fn check_combat_proxy(game: &Game, report: &mut Report, components: &mut Components, lara: Option<usize>, position: &Position) {
+    let proxy = match game.lara_proxy(components, lara).and_then(|proxy| game.attached_proxies(proxy).first().copied()) {
+        Some(p) => p,
         None => return,
     };
     match collision::read_attached_proxy(game.handle, proxy) {
@@ -522,10 +523,11 @@ fn check_proxy(game: &Game, report: &mut Report, components: &mut Components, la
                     "movement capsule",
                     within(shape.radius, PROXY_RADIUS) && centre.distance(position) < NEAR_LARA,
                     format!(
-                        "radius {:.1}, {:.0} from Lara, {} attached proxies",
+                        "radius {:.1}, {:.0} from Lara, {} attached proxies{}",
                         shape.radius,
                         centre.distance(position),
-                        capsules.attached.len()
+                        capsules.attached.len(),
+                        if capsules.attached_active { " (colliding)" } else { "" }
                     ),
                 );
             }

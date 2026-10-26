@@ -91,6 +91,26 @@ impl Game {
         self.resolve(AddressType::CombatProxy).into_iter().collect()
     }
 
+    /// The proxies attached to Lara's `proxy`: those its body's attached bodies belong to (where the layout says how to
+    /// find them, TR2013), then any found on their own
+    pub fn attached_proxies(&self, proxy: usize) -> Vec<usize> {
+        let layout = crate::layout::current();
+        let body = layout.proxy.body.and_then(|offset| read_pointer(self.handle, proxy + offset)).filter(|&b| b != 0);
+        let mut proxies: Vec<usize> = match body {
+            Some(body) => {
+                let mut remembered = self.attached_bodies.lock().unwrap_or_else(|e| e.into_inner());
+                remembered.of(self.handle, body).iter().filter_map(|&b| collision::owner_proxy(self.handle, b)).collect()
+            }
+            None => vec![],
+        };
+        for other in self.standalone_proxies() {
+            if !proxies.contains(&other) {
+                proxies.push(other);
+            }
+        }
+        proxies
+    }
+
     /// TR2013's aim sweep while Lara has a weapon out, found from her proxy, and whether it's pushing her. None if the
     /// game doesn't have the offsets, or there's no weapon out
     pub fn aim_sweep(&self, proxy: usize) -> Option<AttachedProxy> {

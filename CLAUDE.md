@@ -159,7 +159,11 @@ Each module's `//!` doc says what's in it and how it works; this is where to loo
   collision bit) works out her centre from her feet and places the body there (+0x1EF960 -> +0x1F2D70, written at
   +0x1333AB), so there are no gaps to clear and it can't be left behind a wall.
 - The combat proxy's body is attached to hers like ROTTR's camera and weapon, so the overlay finds it through her body
-  list as in ROTTR; `CombatProxy` is still read for its flags, and isn't drawn twice (by its body). The list (437 bodies,
+  list as in ROTTR, and its proxy through the body's owner (+0x48 -> proxy +0xF8, `body.owner`/`proxy.body_owner`,
+  checked by the proxy pointing back at the body), whose flags say whether it collides. So TR2013 Steam has no
+  `CombatProxy` any more (nor the layout's `proxy.attached`); v1.01.748 keeps its chain until its body is checked live:
+  its code loads +0x108/+0x10C right after testing its collision bit (flags +0x8) as Steam's does (+0x10), and its
+  proxy fields from the centre on are Steam's, so it's been given Steam's body layout. The list (437 bodies,
   +0x3C previous, starting 14 before hers) is walked whole from its start (`body.previous`, checked as it's followed;
   SOTTR's 0x40 is a guess) about every 5s, or when a remembered body stops being attached: ~5us a read, so a whole walk
   is ~5ms (ROTTR's ~1300 bodies ~13ms), too slow for every tick. Still not found the same way: Lara (TR2013 has no `PlayerComponent`; her proxy points

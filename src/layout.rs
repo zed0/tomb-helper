@@ -321,8 +321,9 @@ group! {
         /// -> the instance it belongs to (every component's back pointer, `component.instance`; TR2013's static proxy has
         /// it elsewhere, where `discover` finds Lara's proxy by it)
         instance: Option<usize> = Some(0x8),
-        /// -> the first proxy attached to it that's found on its own, not through its body (`CombatProxy`, TR2013)
-        attached: Option<usize> = None,
+        /// Where its bodies' `body.owner` points into it (ROTTR 0x120), set where its flags say whether it collides
+        /// (`collides`, TR2013 0xF8): then an attached body's proxy is found from it, and its flags read
+        body_owner: Option<usize> = None,
     }
 }
 
@@ -336,6 +337,8 @@ group! {
         /// followed). None to start at Lara's
         previous: Option<usize> = Some(0x38),
         parent = 0x48,
+        /// -> into the proxy it belongs to, at `proxy.body_owner` (TR2013 0x48)
+        owner: Option<usize> = Some(0x50),
         /// 4 floats, how far it has left to go to get to its proxy, zero normally (SOTTR 0x0)
         gap: Option<usize> = None,
     }

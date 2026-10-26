@@ -120,8 +120,8 @@ pub fn find_statics(handle: Handle, base_address: usize, image: &PeImage) -> BTr
         }
         None => println!("Instance array: NOT FOUND"),
     }
-    // Where Lara's proxy is a static (TR2013, whose instances have no component table to find it in), and the attached
-    // one found from it
+    // Where Lara's proxy is a static (TR2013, whose instances have no component table to find it in; the proxies attached
+    // to it are found through its body)
     if let (None, Some(instance_offset)) = (layout.instance.components, layout.proxy.instance) {
         match find_player_proxy(handle, image, base_address, instance_offset) {
             Some(proxy) => {
@@ -130,9 +130,6 @@ pub fn find_statics(handle: Handle, base_address: usize, image: &PeImage) -> BTr
                     println!("  (through +{:X}, not +{:X} as in the layout)", proxy.instance_offset, instance_offset);
                 }
                 found.insert(AddressType::PlayerProxy, vec![proxy.rva]);
-                if let Some(attached) = layout.proxy.attached {
-                    found.insert(AddressType::CombatProxy, vec![proxy.rva + attached, 0]);
-                }
             }
             None => println!("Lara's proxy: NOT FOUND"),
         }
