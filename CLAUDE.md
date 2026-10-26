@@ -164,8 +164,7 @@ Each module's `//!` doc says what's in it and how it works; this is where to loo
 - The combat proxy's body is attached to hers like ROTTR's camera and weapon, so the overlay finds it through her body
   list as in ROTTR, and its proxy through the body's owner (+0x48 -> proxy +0xF8, `body.owner`/`proxy.body_owner`,
   checked by the proxy pointing back at the body), whose flags say whether it collides (checked aiming at a wall). So
-  there's no `CombatProxy` offset any more (nor the layout's `proxy.attached`; older offsets files' are left out when
-  read). v1.01.748's body is at +0x10C too, found from its code (it loads +0x108/+0x10C right after testing its
+  there's no `CombatProxy` offset any more (nor the layout's `proxy.attached`). v1.01.748's body is at +0x10C too, found from its code (it loads +0x108/+0x10C right after testing its
   collision bit, flags +0x8, as Steam's does at +0x10) and checked live, with Steam's body layout.
 - v1.01.748 has all of Steam's flight values now, found the same ways and checked live: its record's component table
   starts at +0xA0 (Steam +0xA4; same slots, so velocity is ballistic +0x10, whose start matches Steam's value for
@@ -179,7 +178,7 @@ Each module's `//!` doc says what's in it and how it works; this is where to loo
 - Components are learnt in both an instance's tables, the one it points at and the one in it (`instance.inline_components`;
   ROTTR and SOTTR have both, from +0xE0: transform, hierarchy, ballistic +0xF0, user data, game flags; TR2013 only the
   one in it), each class's slot remembered as an index or an offset (`components::Slot`). So velocity is found the same
-  way in every game, and the layout's `instance.ballistic` is gone (older offsets files' are left out when read).
+  way in every game, and the layout's `instance.ballistic` is gone.
 - Still not found the same way: Lara (TR2013 has no `PlayerComponent`; her proxy points
   back at her instance, +0x18), hit capsules (there's a `CollideComponent`, but no fixed route to it from the record was
   found: one that held for her held for 20 of 141 instances) and model bounds (no `DrawableComponent`; her record +0x94

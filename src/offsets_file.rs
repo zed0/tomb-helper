@@ -177,29 +177,8 @@ impl VersionEntry {
     }
 }
 
-// What older offsets files can have that's no longer used, which is left out when they're read (rather than failing
-// as an unknown field): where in a version entry, and the key
-const RETIRED: [(&[&str], &str); 5] = [
-    // TR2013's combat proxy is found through Lara's proxy's body
-    (&["offsets"], "CombatProxy"),
-    (&["witnesses"], "CombatProxy"),
-    (&["unverified"], "CombatProxy"),
-    (&["layout", "proxy"], "attached"),
-    // Lara's ballistic component is found in the table in her instance
-    (&["layout", "instance"], "ballistic"),
-];
-
 pub fn parse(json: &str) -> Result<Vec<ProcessDetails>> {
-    let mut value: serde_json::Value = serde_json::from_str(json)?;
-    for version in value.get_mut("versions").and_then(|v| v.as_array_mut()).into_iter().flatten() {
-        for (path, key) in RETIRED {
-            let object = path.iter().try_fold(&mut *version, |v, part| v.get_mut(*part)).and_then(|v| v.as_object_mut());
-            if object.and_then(|o| o.remove(key)).is_some() {
-                eprintln!("Leaving out {}.{} from the offsets file, as it's no longer used", path.join("."), key);
-            }
-        }
-    }
-    let file: OffsetsFile = serde_json::from_value(value)?;
+    let file: OffsetsFile = serde_json::from_str(json)?;
     file.words.validate()?;
     crate::words::set(file.words.clone());
     file.versions.iter().map(VersionEntry::to_details).collect()
@@ -317,18 +296,6 @@ mod tests {
             "offsets": {"XPositon": ["0x10"]}
         }]}"#;
         assert!(parse(json).is_err());
-    }
-
-    #[test]
-    fn leaves_out_retired_keys() {
-        let json = r#"{"versions": [{
-            "game": "Game", "executable": "Game.exe", "version": "v1", "bits": 32,
-            "offsets": {"XPosition": ["0x10"], "CombatProxy": ["0x20", "0x0"]},
-            "layout": {"proxy": {"attached": "0x788", "flags": "0x8"}}
-        }]}"#;
-        let versions = parse(json).unwrap();
-        assert_eq!(versions[0].address_offsets.len(), 1);
-        assert_eq!(versions[0].layout.proxy.flags, Some(0x8));
     }
 
     #[test]
