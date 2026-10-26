@@ -159,8 +159,10 @@ Each module's `//!` doc says what's in it and how it works; this is where to loo
   collision bit) works out her centre from her feet and places the body there (+0x1EF960 -> +0x1F2D70, written at
   +0x1333AB), so there are no gaps to clear and it can't be left behind a wall.
 - The combat proxy's body is attached to hers like ROTTR's camera and weapon, so the overlay finds it through her body
-  list as in ROTTR (searching until 32 bodies in a row aren't attached); `CombatProxy` is still read for its flags, and
-  isn't drawn twice (by its body). Still not found the same way: Lara (TR2013 has no `PlayerComponent`; her proxy points
+  list as in ROTTR; `CombatProxy` is still read for its flags, and isn't drawn twice (by its body). The list (437 bodies,
+  +0x3C previous, starting 14 before hers) is walked whole from its start (`body.previous`, checked as it's followed;
+  SOTTR's 0x40 is a guess) about every 5s, or when a remembered body stops being attached: ~5us a read, so a whole walk
+  is ~5ms (ROTTR's ~1300 bodies ~13ms), too slow for every tick. Still not found the same way: Lara (TR2013 has no `PlayerComponent`; her proxy points
   back at her instance, +0x18), hit capsules (there's a `CollideComponent`, but no fixed route to it from the record was
   found: one that held for her held for 20 of 141 instances) and model bounds (no `DrawableComponent`; her record +0x94
   leads to a `RenderModelInstance`).

@@ -332,6 +332,9 @@ group! {
         /// -> shape
         shape = 0x20,
         next = 0x30,
+        /// The other way, to walk the list from its start (TR2013 0x3C; SOTTR's 0x40 is a guess, checked as it's
+        /// followed). None to start at Lara's
+        previous: Option<usize> = Some(0x38),
         parent = 0x48,
         /// 4 floats, how far it has left to go to get to its proxy, zero normally (SOTTR 0x0)
         gap: Option<usize> = None,

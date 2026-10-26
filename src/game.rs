@@ -15,16 +15,24 @@ use std::io;
 /// Lara is the nearest instance with a PlayerComponent, out of this many
 pub const LARA_CANDIDATES: usize = 8;
 
-#[derive(Clone)]
 pub struct Game {
     pub handle: Handle,
     pub base_address: usize,
     pub offsets: AddressOffsets,
+    // The bodies attached to Lara's, remembered between reads of her proxy
+    attached_bodies: std::sync::Mutex<collision::AttachedBodies>,
+}
+
+// A copy finds the attached bodies for itself
+impl Clone for Game {
+    fn clone(&self) -> Game {
+        Game::new(self.handle, self.base_address, &self.offsets)
+    }
 }
 
 impl Game {
     pub fn new(handle: Handle, base_address: usize, offsets: &AddressOffsets) -> Game {
-        Game { handle, base_address, offsets: offsets.clone() }
+        Game { handle, base_address, offsets: offsets.clone(), attached_bodies: Default::default() }
     }
 
     /// Whether the version has offsets for this
@@ -95,7 +103,8 @@ impl Game {
 
     /// Lara's proxy's shapes and those of the proxies attached to it, with the aim sweep drawn as one of them
     pub fn lara_proxies(&self, proxy: usize) -> io::Result<ProxyCapsules> {
-        let mut proxies = collision::read_proxy(self.handle, proxy, &self.standalone_proxies())?;
+        let mut remembered = self.attached_bodies.lock().unwrap_or_else(|e| e.into_inner());
+        let mut proxies = collision::read_proxy(self.handle, proxy, &self.standalone_proxies(), Some(&mut remembered))?;
         if let Some(rod) = self.aim_sweep(proxy) {
             proxies.attached.push(rod);
         }

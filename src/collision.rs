@@ -12,6 +12,7 @@ use crate::ui_ipc_data::{Capsule, Probe};
 use nalgebra::{Quaternion, UnitQuaternion, Vector3};
 use process_memory::CopyAddress;
 use std::io;
+use std::time::{Duration, Instant};
 
 // Lara's (and characters') hit capsules ("DefensiveCapsule_head", ...) are listed in their CollideComponent, each
 // attached to a bone of their skeleton. The TransformComponent's bone matrices (unlike its own matrix) are kept up to
@@ -126,11 +127,12 @@ pub fn place_capsules(
 // with. It holds the shape in use and the one it's changing to, and the physics capsule it's swept as. Other proxies'
 // bodies are attached to it: the camera (radius 30, moving from 15 in front of her to 30 behind when she aims) and her
 // weapon (a thin rod). Both only collide while she aims.
-// How far along the body list to look for bodies attached to Lara's: they follow hers, right after it in ROTTR and
-// SOTTR, 20 bodies on in TR2013 (its combat proxy's), so the search goes on until this many in a row aren't, or the list
-// ends or loops back to hers
-const MAX_BODIES_SEARCHED: usize = 1024;
-const MAX_BODIES_BETWEEN: usize = 32;
+// The bodies attached to Lara's are found by walking the whole body list (437 bodies in TR2013, ~1300 in ROTTR, at
+// two reads each), so the ones found are remembered (bodies stay put) and the list walked again only when one stops
+// being attached to hers, or this often, for new ones
+const BODIES_REWALK: Duration = Duration::from_secs(5);
+// A list longer than this is taken to be garbage (or a loop)
+const MAX_BODIES: usize = 100_000;
 const MAX_CONTACTS: usize = 8;
 // Contacts this close to a capsule's surface are on it
 const CONTACT_TOLERANCE: f32 = 2.0;
@@ -188,9 +190,80 @@ struct ProxyCapsule {
     capsule: Capsule,
 }
 
-// The shapes of a proxy (Lara's cdc::ProxyComponent) in world space. `standalone` are proxies attached to it that
-// aren't found through its physics body (TR2013's combat proxy).
-pub fn read_proxy(handle: Handle, proxy: usize, standalone: &[usize]) -> io::Result<ProxyCapsules> {
+/// The bodies attached to Lara's, as found by the last walk of the body list
+#[derive(Default)]
+pub struct AttachedBodies {
+    // Hers, and those attached to it (directly or not)
+    of: usize,
+    bodies: Vec<usize>,
+    walked: Option<Instant>,
+}
+
+impl AttachedBodies {
+    /// Those attached to `body`, walking the body list again if they may have changed
+    pub fn of(&mut self, handle: Handle, body: usize) -> &[usize] {
+        let parent = layout::current().body.parent;
+        let still_attached = || {
+            let family: Vec<usize> = std::iter::once(body).chain(self.bodies.iter().copied()).collect();
+            self.bodies.iter().all(|&b| read_pointer_or_null(handle, b + parent).map_or(false, |p| family.contains(&p)))
+        };
+        let fresh = self.walked.map_or(false, |at| at.elapsed() < BODIES_REWALK);
+        if self.of != body || !fresh || !still_attached() {
+            self.bodies = walk_attached(handle, body);
+            self.of = body;
+            self.walked = Some(Instant::now());
+        }
+        &self.bodies
+    }
+}
+
+// Every body attached (directly or not) to `body`, from the whole body list: from its start where the list links back
+// (checked as it goes, so a wrong `body.previous` only means starting at hers)
+fn walk_attached(handle: Handle, body: usize) -> Vec<usize> {
+    let layout = &layout::current().body;
+    let link = |at: usize, offset: usize| read_pointer_or_null(handle, at + offset).ok().filter(|&p| p != 0);
+    let mut start = body;
+    if let Some(previous) = layout.previous {
+        for _ in 0..MAX_BODIES {
+            match link(start, previous) {
+                Some(before) if before != body && link(before, layout.next) == Some(start) => start = before,
+                _ => break,
+            }
+        }
+    }
+    // Each body's parent, then those whose parent is hers or one of those, until no more are
+    let mut parents = vec![];
+    let mut current = Some(start);
+    while let Some(at) = current {
+        if parents.len() >= MAX_BODIES {
+            break;
+        }
+        if let Some(parent) = link(at, layout.parent) {
+            parents.push((at, parent));
+        }
+        current = link(at, layout.next).filter(|&next| next != start);
+    }
+    let mut family = vec![body];
+    loop {
+        let more: Vec<usize> =
+            parents.iter().filter(|(b, p)| !family.contains(b) && family.contains(p)).map(|&(b, _)| b).collect();
+        if more.is_empty() {
+            break;
+        }
+        family.extend(more);
+    }
+    family.split_off(1)
+}
+
+// The shapes of a proxy (Lara's cdc::ProxyComponent) in world space, with those of the proxies attached to it (when
+// `attached` is given: the bodies remembered as attached to hers). `standalone` are proxies attached to it that are
+// found on their own (TR2013's combat proxy), whose flags say whether they collide.
+pub fn read_proxy(
+    handle: Handle,
+    proxy: usize,
+    standalone: &[usize],
+    attached_bodies: Option<&mut AttachedBodies>,
+) -> io::Result<ProxyCapsules> {
     let layout = &layout::current().proxy;
     let shapes = proxy_shapes(layout);
     let mut bytes = vec![0u8; layout.size];
@@ -236,7 +309,15 @@ pub fn read_proxy(handle: Handle, proxy: usize, standalone: &[usize]) -> io::Res
         let (a, b) = (capsule.a.vector(), capsule.b.vector());
         contacts.iter().any(|c| (distance_to_segment(c, &a, &b) - capsule.radius).abs() <= CONTACT_TOLERANCE)
     };
-    let (mut attached, attached_bodies) = body.map_or((vec![], vec![]), |body| read_attached_capsules(handle, body));
+    let attached_bodies = match (body, attached_bodies) {
+        (Some(body), Some(remembered)) => remembered.of(handle, body).to_vec(),
+        _ => vec![],
+    };
+    let mut attached: Vec<AttachedProxy> = attached_bodies
+        .iter()
+        .filter_map(|&b| read_physics_capsule(handle, b))
+        .map(|(capsule, _, touching)| AttachedProxy { capsule, touching })
+        .collect();
     // They only collide while she aims, when the camera's touching flag is always set as it overlaps her capsule
     // (and the weapon's can only be set then)
     let mut attached_active = attached.iter().any(|a| a.touching);
@@ -269,7 +350,7 @@ pub fn read_proxy(handle: Handle, proxy: usize, standalone: &[usize]) -> io::Res
 /// from its flags
 pub fn read_attached_proxy(handle: Handle, proxy: usize) -> io::Result<(Capsule, bool)> {
     let layout = &layout::current().proxy;
-    let capsule = read_proxy(handle, proxy, &[])?
+    let capsule = read_proxy(handle, proxy, &[], None)?
         .shapes
         .first()
         .copied()
@@ -324,38 +405,6 @@ fn segment_distance(a: Vector3<f32>, b: Vector3<f32>, c: Vector3<f32>, d: Vector
         s = ((uv * t - uw) / uu).clamp(0.0, 1.0);
     }
     ((a + u * s) - (c + v * t)).norm()
-}
-
-// The capsules of bodies attached (directly or not) to `body`, which follow it in the list, and those bodies
-fn read_attached_capsules(handle: Handle, body: usize) -> (Vec<AttachedProxy>, Vec<usize>) {
-    let layout = &layout::current().body;
-    let mut family = vec![body];
-    let mut capsules = vec![];
-    let mut current = body;
-    let mut since_family = 0;
-    for _ in 0..MAX_BODIES_SEARCHED {
-        current = match read_pointer_or_null(handle, current + layout.next) {
-            Ok(next) if next != 0 && next != body => next,
-            _ => break,
-        };
-        match read_pointer_or_null(handle, current + layout.parent) {
-            Ok(parent) if family.contains(&parent) => {
-                family.push(current);
-                since_family = 0;
-            }
-            _ => {
-                since_family += 1;
-                if since_family >= MAX_BODIES_BETWEEN {
-                    break;
-                }
-                continue;
-            }
-        }
-        if let Some((capsule, _, touching)) = read_physics_capsule(handle, current) {
-            capsules.push(AttachedProxy { capsule, touching });
-        }
-    }
-    (capsules, family.split_off(1))
 }
 
 // The capsule, its centre, and whether it's touching something
