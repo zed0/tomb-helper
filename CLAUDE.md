@@ -171,6 +171,14 @@ Each module's `//!` doc says what's in it and how it works; this is where to loo
   value), its code tests the collision bit (+0x108AD7) and copies the collision result into +0x60 as Steam's does, the
   camera collision is Steam's path ([GameRender] +0x5F0, +0xA2C, +0x914; tested at +0x4D4AE3), and lifting her found
   the player at [[instance + 0xA4] + 0xC] and the fall start at +0xF0C/+0xF18, Steam's offsets.
+- ROTTR Steam has all of SOTTR's flight values but the fall start, found live the same ways (in its entry, not the
+  defaults, as SOTTR's resolved centre differs): flags +0x18 (0x4B3 standing, as SOTTR's), whose bit 0x1 has its proxy
+  code (+0x1DB4E6) copy her centre (+0x30) into +0x70, the resolved centre; velocity +0x20 in its ballistic component
+  (TR2013's layout 0x10 on); camera collision [[[GameRender] +0x680 (`CameraComponent`)] +0xAB0
+  (`ExplorationCameraController`, pointed at directly as in TR2013, not through SOTTR's camera stack)] +0xBB8, a byte
+  before its -> `cdc::GeomSphere` (+0xBC8) that three compares in its code test (+0x7DF18C, +0x7DF2F0, +0x7DF847); and
+  its body and shape have SOTTR's gaps (body +0x0, shape +0x10, zero standing) and previous centre (shape +0xA0), so it
+  gets SOTTR's after-flight fix-up (not flown yet, so not known to be needed).
 - The body list is walked whole from its start (`body.previous`, checked as it's followed) about every 5s, or when a
   remembered body stops being attached: ~5us a read, so a whole walk is ~5ms, too slow for every tick. TR2013: 437
   bodies, +0x3C previous, starting 14 before hers; ROTTR: 733, +0x38 previous (707/707 checked), 25 before hers;
