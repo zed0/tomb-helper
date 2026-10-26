@@ -218,7 +218,7 @@
         "player": {"instance": "0x33C8", "fall_start": "0x1064", "fall_start_copy": "0x1070"},
         "ballistic": {"velocity": "0x20"},
         "drawable": {"instance_drawable": "0xA8", "model_instance": "0x78", "mesh": "0x38"},
-        "camera": {"view": "0x2F0", "collision": ["0x450", "0xF08", "0x20", "0xDF8"]},
+        "camera": {"view": "0x2F0", "collision": ["0x450", "0xD40", "0xDF8"]},
         "trigger_shape": {"shape": "0xA0"},
         "collide": {"shapes": "0x78", "shape_count": "0x80"},
         "body": {"next": "0x38", "previous": "0x40", "parent": "0x50", "gap": "0x0"},
