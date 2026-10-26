@@ -163,7 +163,12 @@ Each module's `//!` doc says what's in it and how it works; this is where to loo
   checked by the proxy pointing back at the body), whose flags say whether it collides (checked aiming at a wall). So
   there's no `CombatProxy` offset any more (nor the layout's `proxy.attached`; older offsets files' are left out when
   read). v1.01.748's body is at +0x10C too, found from its code (it loads +0x108/+0x10C right after testing its
-  collision bit, flags +0x8, as Steam's does at +0x10) and checked live, with Steam's body layout. The list (437 bodies,
+  collision bit, flags +0x8, as Steam's does at +0x10) and checked live, with Steam's body layout.
+- v1.01.748 has all of Steam's flight values now, found the same ways and checked live: its record's component table
+  starts at +0xA0 (Steam +0xA4; same slots, so velocity is ballistic +0x10, whose start matches Steam's value for
+  value), its code tests the collision bit (+0x108AD7) and copies the collision result into +0x60 as Steam's does, the
+  camera collision is Steam's path ([GameRender] +0x5F0, +0xA2C, +0x914; tested at +0x4D4AE3), and lifting her found
+  the player at [[instance + 0xA4] + 0xC] and the fall start at +0xF0C/+0xF18, Steam's offsets. The list (437 bodies,
   +0x3C previous, starting 14 before hers) is walked whole from its start (`body.previous`, checked as it's followed;
   SOTTR's 0x40 is a guess) about every 5s, or when a remembered body stops being attached: ~5us a read, so a whole walk
   is ~5ms (ROTTR's ~1300 bodies ~13ms), too slow for every tick. Still not found the same way: Lara (TR2013 has no `PlayerComponent`; her proxy points
