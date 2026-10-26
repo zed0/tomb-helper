@@ -35,10 +35,6 @@ pub enum AddressType {
     // Lara's movement proxy (see `collision::read_proxy`), for a game where it isn't found through her components:
     // TR2013 keeps it in a static
     PlayerProxy,
-    // The combat proxy, attached to Lara's, which collides while she aims, where it isn't found through her proxy's
-    // physics body. That's how it's found in TR2013 Steam, so only v1.01.748 still has this, until its body offset
-    // (+0x10C, from its code) is checked live; then it can go
-    CombatProxy,
     // TR2013: pools of inventory and type records (see `aim_sweep`), to find the tuning of the weapon Lara has out
     InventoryPool,
     TypePool,

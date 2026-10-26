@@ -160,10 +160,10 @@ Each module's `//!` doc says what's in it and how it works; this is where to loo
   +0x1333AB), so there are no gaps to clear and it can't be left behind a wall.
 - The combat proxy's body is attached to hers like ROTTR's camera and weapon, so the overlay finds it through her body
   list as in ROTTR, and its proxy through the body's owner (+0x48 -> proxy +0xF8, `body.owner`/`proxy.body_owner`,
-  checked by the proxy pointing back at the body), whose flags say whether it collides. So TR2013 Steam has no
-  `CombatProxy` any more (nor the layout's `proxy.attached`); v1.01.748 keeps its chain until its body is checked live:
-  its code loads +0x108/+0x10C right after testing its collision bit (flags +0x8) as Steam's does (+0x10), and its
-  proxy fields from the centre on are Steam's, so it's been given Steam's body layout. The list (437 bodies,
+  checked by the proxy pointing back at the body), whose flags say whether it collides (checked aiming at a wall). So
+  there's no `CombatProxy` offset any more (nor the layout's `proxy.attached`; older offsets files' are left out when
+  read). v1.01.748's body is at +0x10C too, found from its code (it loads +0x108/+0x10C right after testing its
+  collision bit, flags +0x8, as Steam's does at +0x10) and checked live, with Steam's body layout. The list (437 bodies,
   +0x3C previous, starting 14 before hers) is walked whole from its start (`body.previous`, checked as it's followed;
   SOTTR's 0x40 is a guess) about every 5s, or when a remembered body stops being attached: ~5us a read, so a whole walk
   is ~5ms (ROTTR's ~1300 bodies ~13ms), too slow for every tick. Still not found the same way: Lara (TR2013 has no `PlayerComponent`; her proxy points
@@ -402,8 +402,8 @@ again (`derive` plus live checks).
     (normal + distance, then the point at +0x10). Aiming at a wall she faced, every live contact was on the combat
     proxy (`collision::read_proxy`'s `standalone`), none on hers.
   - The combat proxy is another `cdc::ProxyComponent` in the same static pool (0x7B0 apart; it was at mod+0x11175B0 one
-    session and mod+0x1113FE0 the next, the slot zeroed), found through Lara's proxy +0x788 (`CombatProxy` [0x1113FB8,
-    0x0]; its own +0x788 is null, so maybe a list of attached proxies), belonging to the "combatproxy" instance and
+    session and mod+0x1113FE0 the next, the slot zeroed), pointed to by Lara's proxy +0x788 (its own +0x788 is
+    null, so maybe a list of attached proxies; found through her body now, see below), belonging to the "combatproxy" instance and
     attached to Lara's (+0xF8): radius 30, length 30, offset (0, 30, 90), with her facing. Its
     flags' bit 0x2 (`proxy.collides`) is set while she aims. The wall she faced while aiming was at local +y, so +y is
     forward then, and it's in front of her, pushing her off walls she faces (it only seemed to with some walls, probably

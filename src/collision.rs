@@ -256,14 +256,8 @@ fn walk_attached(handle: Handle, body: usize) -> Vec<usize> {
 }
 
 // The shapes of a proxy (Lara's cdc::ProxyComponent) in world space, with those of the proxies attached to it (when
-// `attached` is given: the bodies remembered as attached to hers). `standalone` are proxies attached to it that are
-// found on their own (TR2013's combat proxy), whose flags say whether they collide.
-pub fn read_proxy(
-    handle: Handle,
-    proxy: usize,
-    standalone: &[usize],
-    attached_bodies: Option<&mut AttachedBodies>,
-) -> io::Result<ProxyCapsules> {
+// `attached_bodies` is given: the bodies remembered as attached to hers)
+pub fn read_proxy(handle: Handle, proxy: usize, attached_bodies: Option<&mut AttachedBodies>) -> io::Result<ProxyCapsules> {
     let layout = &layout::current().proxy;
     let shapes = proxy_shapes(layout);
     let mut bytes = vec![0u8; layout.size];
@@ -320,19 +314,8 @@ pub fn read_proxy(
         .collect();
     // They only collide while she aims, when the camera's touching flag is always set as it overlaps her capsule
     // (and the weapon's can only be set then), or where proxies' flags say so (TR2013), their flags
-    let mut attached_active = attached.iter().any(|a| a.touching)
+    let attached_active = attached.iter().any(|a| a.touching)
         || attached_bodies.iter().any(|&b| owner_collides(handle, b) == Some(true));
-    // Ones found on their own say whether they collide in their flags, and are only touching if on a contact
-    for &other in standalone {
-        if let Ok((capsule, collides)) = read_attached_proxy(handle, other) {
-            // It's usually found through her body too (TR2013's combat proxy), when it's only its flags that count
-            let its_body = layout.body.and_then(|offset| read_pointer_or_null(handle, other + offset).ok());
-            if !its_body.map_or(false, |b| attached_bodies.contains(&b)) {
-                attached.push(AttachedProxy { capsule, touching: false });
-            }
-            attached_active |= collides;
-        }
-    }
     for proxy in &mut attached {
         let touching_lara = shapes.first().map_or(false, |lara| capsules_overlap(&proxy.capsule, lara));
         proxy.touching = on_contact(&proxy.capsule) || (proxy.touching && !touching_lara);
@@ -362,11 +345,11 @@ fn owner_collides(handle: Handle, body: usize) -> Option<bool> {
     Some(read_u32(handle, proxy + all.proxy.flags?)? as usize & all.proxy.collides != 0)
 }
 
-/// A proxy attached to Lara's that's found on its own (TR2013's combat proxy): its shape in use, and whether it collides,
-/// from its flags
+/// A proxy attached to Lara's (TR2013's combat proxy, found through its body): its shape in use, and whether it
+/// collides, from its flags
 pub fn read_attached_proxy(handle: Handle, proxy: usize) -> io::Result<(Capsule, bool)> {
     let layout = &layout::current().proxy;
-    let capsule = read_proxy(handle, proxy, &[], None)?
+    let capsule = read_proxy(handle, proxy, None)?
         .shapes
         .first()
         .copied()

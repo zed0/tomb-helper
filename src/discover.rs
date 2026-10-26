@@ -5,7 +5,7 @@
 //! It finds GameRender (the camera), TR9MultibodyClient (-> CollisionSceneClient, or `collision_scene.in_client` where
 //! it has no RTTI), the instance array (the longest run of slots with a nonzero header whose transforms are
 //! TransformComponents, or without transforms whose objects have names) and, where Lara's proxy is a static (TR2013),
-//! `PlayerProxy` and `CombatProxy`; `--save` writes them to the offsets file.
+//! `PlayerProxy` (the proxies attached to hers are found through its body); `--save` writes them to the offsets file.
 
 use anyhow::{Context, Result};
 use crate::game_memory::{pointer_from, pointer_size, Handle};

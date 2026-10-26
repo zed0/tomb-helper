@@ -1,7 +1,7 @@
 //! The game (running, or a snapshot of it) and where things are in it, from its version's offsets: how the overlay and
 //! `check` both find Lara and her collision, so that `check` tests what the overlay draws.
 //!
-//! Finding things in the game belongs here (`find_lara`, `lara_proxy`, `standalone_proxies`, `aim_sweep`,
+//! Finding things in the game belongs here (`find_lara`, `lara_proxy`, `attached_proxies`, `aim_sweep`,
 //! `lara_proxies`, `probes`, `read_floats`, `lara_position`), rather than in the overlay and `check` separately.
 
 use crate::collision::{self, AttachedProxy, ProxyCapsules};
@@ -85,30 +85,18 @@ impl Game {
         }
     }
 
-    /// Proxies attached to hers that are found on their own rather than through her proxy's body (TR2013's combat
-    /// proxy, `CombatProxy`)
-    pub fn standalone_proxies(&self) -> Vec<usize> {
-        self.resolve(AddressType::CombatProxy).into_iter().collect()
-    }
-
-    /// The proxies attached to Lara's `proxy`: those its body's attached bodies belong to (where the layout says how to
-    /// find them, TR2013), then any found on their own
+    /// The proxies attached to Lara's `proxy`: those its body's attached bodies belong to, where the layout says how to
+    /// find them (TR2013's combat proxy)
     pub fn attached_proxies(&self, proxy: usize) -> Vec<usize> {
         let layout = crate::layout::current();
         let body = layout.proxy.body.and_then(|offset| read_pointer(self.handle, proxy + offset)).filter(|&b| b != 0);
-        let mut proxies: Vec<usize> = match body {
+        match body {
             Some(body) => {
                 let mut remembered = self.attached_bodies.lock().unwrap_or_else(|e| e.into_inner());
                 remembered.of(self.handle, body).iter().filter_map(|&b| collision::owner_proxy(self.handle, b)).collect()
             }
             None => vec![],
-        };
-        for other in self.standalone_proxies() {
-            if !proxies.contains(&other) {
-                proxies.push(other);
-            }
         }
-        proxies
     }
 
     /// TR2013's aim sweep while Lara has a weapon out, found from her proxy, and whether it's pushing her. None if the
@@ -124,7 +112,7 @@ impl Game {
     /// Lara's proxy's shapes and those of the proxies attached to it, with the aim sweep drawn as one of them
     pub fn lara_proxies(&self, proxy: usize) -> io::Result<ProxyCapsules> {
         let mut remembered = self.attached_bodies.lock().unwrap_or_else(|e| e.into_inner());
-        let mut proxies = collision::read_proxy(self.handle, proxy, &self.standalone_proxies(), Some(&mut remembered))?;
+        let mut proxies = collision::read_proxy(self.handle, proxy, Some(&mut remembered))?;
         if let Some(rod) = self.aim_sweep(proxy) {
             proxies.attached.push(rod);
         }

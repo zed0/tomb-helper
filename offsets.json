@@ -18,7 +18,6 @@
         "InstanceArray": ["0x1D7C630"],
         "PlayerProbes": ["0x1B7CB00"],
         "PlayerProxy": ["0x117D200"],
-        "CombatProxy": ["0x117D988", "0x0"],
         "InventoryPool": ["0x1FC5BA0"],
         "TypePool": ["0x1F54FE0"],
         "CollisionScene": ["0x1E33278", "0x10", "0x0"]
