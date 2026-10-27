@@ -176,6 +176,11 @@ Each module's `//!` doc says what's in it and how it works; this is where to loo
   value), its code tests the collision bit (+0x108AD7) and copies the collision result into +0x60 as Steam's does, the
   camera collision is Steam's path ([GameRender] +0x5F0, +0xA2C, +0x914; tested at +0x4D4AE3), and lifting her found
   the player at [[instance + 0xA4] + 0xC] and the fall start at +0xF0C/+0xF18, Steam's offsets.
+- TR2013 Epic (v1.01.0.0) is Steam's build with its statics moved (mostly by 0x1930) and Steam's layout: `port` found
+  it all from Steam's dump (`update-offsets` takes ~10 minutes on it), but for `InventoryPool`, unverified between
+  0x1F6E160 and +4, which its handle entries (record, -1, id, 0) and first record (-> Lara's instance) settled.
+  Its fall start's two copies differed (25 and 88 below her) where Steam's always matched; the fields round them are
+  Steam's. Flown and the overlay checked in game.
 - ROTTR Steam has all of SOTTR's flight values, found live the same ways (in its entry, not the defaults, as SOTTR's
   resolved centre differs): the fall start at player +0x1074 and +0x1080 (lifting her, the player through her position
   chain, 0xC apart as in the others); flags +0x18 (0x4B3 standing, as SOTTR's), whose bit 0x1 has its proxy
@@ -184,7 +189,9 @@ Each module's `//!` doc says what's in it and how it works; this is where to loo
   (`ExplorationCameraController`, pointed at directly as in TR2013, not through SOTTR's camera stack)] +0xBB8, a byte
   before its -> `cdc::GeomSphere` (+0xBC8) that three compares in its code test (+0x7DF18C, +0x7DF2F0, +0x7DF847); and
   its body and shape have SOTTR's gaps (body +0x0, shape +0x10, zero standing) and previous centre (shape +0xA0), so it
-  gets SOTTR's after-flight fix-up (not flown yet, so not known to be needed).
+  gets SOTTR's after-flight fix-up (whether it's needed isn't known). ROTTR Epic 1027 has the same layout and was
+  ported by `port` from Steam's dump, but for its position chain, which pointed at her instance directly so the player
+  (and fall start) couldn't be found; it goes through the player as Steam's does. Flown and the overlay checked in game.
 - `port` finds all of that itself now, the same way in every game (`flight_fields`, read only, every port; the lift
   only where the fall start isn't known): the resolved centre is the proxy's field that's a store through the same
   register within a few instructions of a byte test of a single bit at `proxy.flags`, and holds her centre exactly
