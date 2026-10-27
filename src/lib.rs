@@ -127,9 +127,9 @@ const MAX_MESH_RADIUS: f32 = 5000.0;
 // Meshes Lara doesn't collide with, whichever way they face
 const DETAILED_COLOUR: [f32; 4] = [0.85, 0.4, 1.0, 0.5];
 const SURFACE_FILL_ALPHA: f32 = 0.12;
-// Range of the slider for how quickly meshes fade with distance
+// Range of the slider for how quickly what's drawn fades with distance
 const MAX_FADE_STRENGTH: f32 = 8.0;
-// Triangles faded more than this aren't drawn
+// Anything faded more than this isn't drawn
 const MIN_OPACITY: f32 = 0.005;
 // When culling hidden triangles, they're rasterised into a buffer this many times smaller than the screen, keeping
 // the nearest at each pixel, and only those nearest somewhere are drawn. Smaller triangles can be missed.
@@ -304,7 +304,8 @@ impl Projector {
     }
 }
 
-fn draw_box(ui: &Ui, draw_list: &DrawListMut, projector: &Projector, object: &ObjectBox) {
+// Faded by its distance from Lara over `object_radius`
+fn draw_box(ui: &Ui, draw_list: &DrawListMut, projector: &Projector, ui_data: &UiData, settings: &UiSettings, object: &ObjectBox) {
     let colour = match (object.category, object.kind) {
         (ObjectCategory::Interactable, _) => INTERACTABLE_COLOUR,
         (ObjectCategory::Npc, _) => NPC_COLOUR,
@@ -324,6 +325,12 @@ fn draw_box(ui: &Ui, draw_list: &DrawListMut, projector: &Projector, object: &Ob
             )
         })
         .collect();
+    let world: Vec<Vector3<f32>> = local.iter().map(|&p| (model * p.push(1.0)).xyz()).collect();
+    let opacity = fade(settings, box_distance(&ui_data.position.vector(), &world), ui_data.object_radius);
+    if opacity < MIN_OPACITY {
+        return;
+    }
+    let colour = with_opacity(colour, opacity);
     let corners: Vec<Vector4<f32>> = local.iter().map(|&point| projector.to_clip(&model, point)).collect();
 
     for a in 0..8 {
@@ -337,7 +344,6 @@ fn draw_box(ui: &Ui, draw_list: &DrawListMut, projector: &Projector, object: &Ob
     }
 
     // Centred above its highest point in the world (it can be tilted), like the trigger labels
-    let world: Vec<Vector3<f32>> = local.iter().map(|&p| (model * p.push(1.0)).xyz()).collect();
     let (low, high) = world.iter().fold((world[0], world[0]), |(low, high), p| (low.inf(p), high.sup(p)));
     let top = Vector3::new((low.x + high.x) / 2.0, (low.y + high.y) / 2.0, high.z);
     if let Some(point) = projector.project(top) {
@@ -398,12 +404,25 @@ fn with_opacity(colour: [f32; 4], opacity: f32) -> [f32; 4] {
     [colour[0], colour[1], colour[2], colour[3] * opacity]
 }
 
+// How much fainter to draw something this far from where it's drawn round, by (1 - distance / radius) ^ strength, if
+// fading with distance is on
+fn fade(settings: &UiSettings, distance: f32, radius: f32) -> f32 {
+    if !settings.fade_with_distance.get() {
+        return 1.0;
+    }
+    let t = (distance / radius.max(1.0)).min(1.0);
+    (1.0 - t).powf(settings.fade_strength.get())
+}
+
+// How far the point is from the nearest part of the box round the points
+fn box_distance(point: &Vector3<f32>, points: &[Vector3<f32>]) -> f32 {
+    let (min, max) = points.iter().fold((points[0], points[0]), |(min, max), p| (min.inf(p), max.sup(p)));
+    (min - point).sup(&(point - max)).sup(&Vector3::zeros()).norm()
+}
+
 // How far the point is from the nearest part of the box round the triangle, like the exe's choice of triangles
 fn triangle_distance(point: &Vector3<f32>, triangle: &Triangle) -> f32 {
-    let corners = triangle.corners.map(|c| c.vector());
-    let min = corners[0].inf(&corners[1]).inf(&corners[2]);
-    let max = corners[0].sup(&corners[1]).sup(&corners[2]);
-    (min - point).sup(&(point - max)).sup(&Vector3::zeros()).norm()
+    box_distance(point, &triangle.corners.map(|c| c.vector()))
 }
 
 // The triangle's corners in clip space, unless it's seen from behind or can't be on screen
@@ -631,8 +650,6 @@ fn draw_meshes(
     let coarse_meshes = collision && settings.coarse_meshes.get();
     let detailed_meshes = collision && settings.detailed_meshes.get();
     let mesh_opacity = settings.mesh_opacity.get();
-    let fade_with_distance = settings.fade_with_distance.get();
-    let fade_strength = settings.fade_strength.get();
     let radii = [settings.coarse_radius.get(), settings.detailed_radius.get()];
 
     let flags = unsafe { &mut (*imgui::sys::igGetBackgroundDrawList()).Flags };
@@ -647,12 +664,7 @@ fn draw_meshes(
         if !((triangle.detailed && detailed_meshes) || (!triangle.detailed && coarse_meshes)) {
             continue;
         }
-        let mut opacity = mesh_opacity;
-        if fade_with_distance {
-            let radius = radii[triangle.detailed as usize].max(1.0);
-            let t = (triangle_distance(&centre, triangle) / radius).min(1.0);
-            opacity *= (1.0 - t).powf(fade_strength);
-        }
+        let opacity = mesh_opacity * fade(settings, triangle_distance(&centre, triangle), radii[triangle.detailed as usize]);
         if opacity < MIN_OPACITY {
             continue;
         }
@@ -687,21 +699,28 @@ fn draw_objects(ui: &Ui, draw_list: &DrawListMut, projector: &Projector, ui_data
             ObjectCategory::Named => true,
         };
         if shown {
-            draw_box(ui, draw_list, projector, object);
+            draw_box(ui, draw_list, projector, ui_data, settings, object);
         }
     }
 }
 
-// Trigger volumes filled in faintly, outlined (white if Lara's in them) and labelled above
+// Trigger volumes filled in faintly, outlined (white if Lara's in them) and labelled above, each part faded by its
+// distance from Lara over `object_radius`
 fn draw_triggers(ui: &Ui, draw_list: &DrawListMut, projector: &Projector, ui_data: &UiData, settings: &UiSettings) {
     let trigger_opacity = settings.trigger_opacity.get();
     let by_action = settings.triggers_by_action.get();
+    let lara = ui_data.position.vector();
+    let faded = |points: &[Vector3<f32>]| fade(settings, box_distance(&lara, points), ui_data.object_radius);
     if trigger_opacity > 0.0 {
         let face_count = count(ui_data.trigger_face_count, ui_data.trigger_faces.len());
         for face in &ui_data.trigger_faces[..face_count] {
             let world = face.corners.map(|c| c.vector());
+            let opacity = trigger_opacity * faded(&world);
+            if opacity < MIN_OPACITY {
+                continue;
+            }
             if let Some(corners) = face_on_screen(projector, world) {
-                let fill = with_opacity(trigger_colour(by_action, face.category, face.action), trigger_opacity);
+                let fill = with_opacity(trigger_colour(by_action, face.category, face.action), opacity);
                 let polygon = projector.project_polygon(&corners);
                 for i in 2..polygon.len() {
                     draw_list.add_triangle(polygon[0], polygon[i - 1], polygon[i], fill).filled(true).build();
@@ -711,15 +730,26 @@ fn draw_triggers(ui: &Ui, draw_list: &DrawListMut, projector: &Projector, ui_dat
     }
     let line_count = count(ui_data.trigger_line_count, ui_data.trigger_lines.len());
     for line in &ui_data.trigger_lines[..line_count] {
+        let (a, b) = (line.a.vector(), line.b.vector());
+        let opacity = faded(&[a, b]);
+        if opacity < MIN_OPACITY {
+            continue;
+        }
         let colour = if line.inside { INSIDE_TRIGGER_COLOUR } else { trigger_colour(by_action, line.category, line.action) };
-        draw_world_line(draw_list, projector, line.a.vector(), line.b.vector(), colour);
+        draw_world_line(draw_list, projector, a, b, with_opacity(colour, opacity));
     }
     for label in &ui_data.triggers[..count(ui_data.trigger_count, ui_data.triggers.len())] {
-        if let Some(point) = projector.project(label.position.vector()) {
+        let position = label.position.vector();
+        let opacity = faded(&[position]);
+        if opacity < MIN_OPACITY {
+            continue;
+        }
+        if let Some(point) = projector.project(position) {
             // Above the top of the volume, centred
             let size = ui.calc_text_size(label.name());
             let point = [point[0] - size[0] / 2.0, point[1] - size[1]];
-            draw_list.add_text(point, trigger_colour(by_action, label.category, label.action), label.name());
+            let colour = with_opacity(trigger_colour(by_action, label.category, label.action), opacity);
+            draw_list.add_text(point, colour, label.name());
         }
     }
 }
@@ -831,6 +861,13 @@ impl TombHelperHud {
                 if ui.collapsing_header("Overlay", TreeNodeFlags::DEFAULT_OPEN) {
                     checkbox(ui, &keyed("On", hotkey(ui_data, HotkeyLabel::Overlay)), &settings.overlay);
                     ui.text(format!("{} objects", object_count));
+                    // Collision meshes fade out by the edge of their radius, objects and triggers by `object_radius`'s
+                    checkbox(ui, "Fade with distance from Lara", &settings.fade_with_distance);
+                    if settings.fade_with_distance.get() {
+                        ui.indent();
+                        slider(ui, "Fade strength", 1.0, MAX_FADE_STRENGTH, "%.1f", &settings.fade_strength);
+                        ui.unindent();
+                    }
                     for (label, control, setting) in [
                         ("Interactable objects", HotkeyLabel::Interactables, &settings.interactables),
                         ("Characters and animals", HotkeyLabel::Npcs, &settings.npcs),
@@ -959,8 +996,6 @@ fn collision_settings(ui: &Ui, ui_data: &UiData, settings: &UiSettings) {
         ui.unindent();
     }
     slider(ui, "Opacity", 0.0, 1.0, "%.2f", &settings.mesh_opacity);
-    checkbox(ui, "Fade with distance from Lara", &settings.fade_with_distance);
-    slider(ui, "Fade strength", 1.0, MAX_FADE_STRENGTH, "%.1f", &settings.fade_strength);
     checkbox(ui, "Hide triangles behind others", &settings.cull_hidden);
     checkbox(ui, "Round where Lara's aiming, while she aims", &settings.follow_aim);
 }

@@ -162,11 +162,11 @@ fn default_collision_mesh_other_kinds() -> u32 {
     all & !(crate::layout::CollisionInstanceLayout::default().player_kind as u32)
 }
 
-fn default_collision_mesh_fade() -> bool {
+fn default_fade() -> bool {
     true
 }
 
-fn default_collision_mesh_fade_strength() -> f32 {
+fn default_fade_strength() -> f32 {
     2.0
 }
 
@@ -244,11 +244,12 @@ pub struct OverlayConfig {
     // Which kinds of collision (bits of the meshes' filters) those are, all but Lara's (0x2) by default
     #[serde(default = "default_collision_mesh_other_kinds")]
     pub collision_mesh_other_kinds: u32,
-    // Draw the collision meshes fainter further from Lara, by (1 - distance / radius) ^ strength (to start with)
-    #[serde(default = "default_collision_mesh_fade")]
-    pub collision_mesh_fade: bool,
-    #[serde(default = "default_collision_mesh_fade_strength")]
-    pub collision_mesh_fade_strength: f32,
+    // Draw the collision meshes, objects and triggers fainter further from Lara, by (1 - distance / radius) ^ strength
+    // (to start with), where the radius is the meshes' or `object_radius`. Once only for the meshes, hence the aliases.
+    #[serde(default = "default_fade", alias = "collision_mesh_fade")]
+    pub fade: bool,
+    #[serde(default = "default_fade_strength", alias = "collision_mesh_fade_strength")]
+    pub fade_strength: f32,
     // Show boxes round things Lara can interact with, and trigger volumes (to start with)
     #[serde(default = "default_interactables")]
     pub interactables: bool,

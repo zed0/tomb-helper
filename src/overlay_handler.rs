@@ -588,8 +588,8 @@ fn initialise_settings(settings: &UiSettings, config: &OverlayConfig) {
     settings.detailed_radius.set(config.detailed_collision_mesh_radius);
     settings.mesh_opacity.set(config.collision_opacity);
     settings.trigger_opacity.set(config.trigger_opacity);
-    settings.fade_with_distance.set(config.collision_mesh_fade);
-    settings.fade_strength.set(config.collision_mesh_fade_strength);
+    settings.fade_with_distance.set(config.fade);
+    settings.fade_strength.set(config.fade_strength);
     settings.cull_hidden.set(config.collision_mesh_cull_hidden);
     settings.follow_aim.set(config.collision_mesh_follow_aim);
     settings.interactables.set(config.interactables);
@@ -721,6 +721,7 @@ impl Handler for OverlayHandler {
         let kind_counts = self.collision_meshes.kind_counts;
         let helper_state = self.helper_state.clone();
         let hotkeys = self.hotkeys;
+        let object_radius = self.config.object_radius;
         self.ui_memory_manager.get_mut().update(|val| {
             val.position_tools = helper_state.position_tools;
             val.has_saved_position = helper_state.saved_position.is_some();
@@ -729,6 +730,7 @@ impl Handler for OverlayHandler {
             val.hotkeys = hotkeys;
             val.mesh_centre = mesh_centre;
             val.aiming = aim_point.is_some();
+            val.object_radius = object_radius;
             val.position = position;
             val.camera_view = camera_view;
             val.camera_projection = camera_projection;

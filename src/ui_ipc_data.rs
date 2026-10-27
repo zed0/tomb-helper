@@ -325,6 +325,8 @@ pub struct UiData {
     // Where the collision meshes are drawn round (Lara, or where she's aiming), and whether she's aiming at it
     pub mesh_centre: Position,
     pub aiming: bool,
+    // How far from Lara objects and triggers are shown (`config.overlay.object_radius`), which they fade out by
+    pub object_radius: f32,
     // Row-major world-to-view and projection matrices as stored by the game (row vectors)
     pub camera_view: [f32; 16],
     pub camera_projection: [f32; 16],
@@ -437,7 +439,8 @@ pub struct UiSettings {
     pub detailed_radius: F32Setting,
     // Scales how opaque the meshes and Lara's collision are drawn (0 to 1)
     pub mesh_opacity: F32Setting,
-    // Draw the meshes fainter further from Lara, by (1 - distance / radius) to the power of the strength
+    // Draw the meshes, objects and triggers fainter further from Lara, by (1 - distance / radius) to the power of the
+    // strength (the meshes' radius, or `UiData::object_radius`)
     pub fade_with_distance: BoolSetting,
     pub fade_strength: F32Setting,
     // Only draw the triangles not hidden behind others
