@@ -11,7 +11,7 @@ User docs (hotkeys, config, cutscene timing generation) live in `README.md`.
 | bin `tomb-helper` | `src/main.rs` | `tomb-helper.exe` | Main external process: finds game, runs handlers, listens to hotkeys |
 | lib `tomb_helper_ui` (cdylib) | `src/lib.rs` | `tomb_helper_ui.dll` | ImGui overlay injected *into* the game (DX12 via `hudhook`; built for `i686-pc-windows-msvc` it's DX11 for TR2013, `tomb_helper_ui32.dll`, which `build.rs` builds with a second cargo and copies next to the exe; `TOMB_HELPER_SKIP_TR2013` skips it) |
 
-- The bin and lib share `src/ui_ipc_data.rs` and `src/position.rs` by each declaring them with `mod` —
+- The bin and lib share `src/ui_ipc_data.rs`, `src/position.rs` and `src/logging.rs` by each declaring them with `mod` —
   they're compiled into both, so `UiData` must stay `#[repr(C)]` with identical layout on both sides, including in the
   32-bit overlay for TR2013: nothing in the shared memory may be pointer sized (`u64` addresses, `u32` counts).
 - `hudhook` (0.9.x) is patched (`[patch.'crates-io']`) to the `vtable-hooks` branch of github.com/zed0/hudhook,
@@ -59,6 +59,7 @@ Each module's `//!` doc says what's in it and how it works; this is where to loo
 | `build.rs` | Builds the 32-bit overlay with a second cargo (its own target folder) and copies it next to the exe |
 | `src/cli.rs` | The command line tools: `port`, `update-offsets`, `check` (`--fit`, `--snapshot`, `--replay`), `watch`, and the rest under the hidden `debug` |
 | `src/port.rs` | `port`: adding a patch or game step by step, with prompts (the other commands' steps in order) |
+| `src/logging.rs` | `tomb-helper.log` next to the exe (shared with the DLL, which logs through `tracing`): the exe's `println!`/`eprintln!` are its macros, which log too; panics; 50MB then rotated to `.1` |
 | `src/config.rs` | `tomb-helper.json`: hotkeys, cutscene files, the overlay's starting settings |
 | `src/action.rs` | `Action`: everything a hotkey can be bound to |
 | `src/hotkeys.rs` | `KeyCode` (the keys' names in the config) and `Hotkeys`, polling the keys, repeating held ones |

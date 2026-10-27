@@ -6,7 +6,8 @@
 //! triggers, and Lara's collision. It reads the camera from the game itself each frame, at addresses the exe sends, as
 //! the exe's copy lags and made everything judder as the camera turned. It ejects itself when the exe says to, or stops
 //! updating. Opens a console only if `config.overlay.console`, and hooks DirectX through its vtables rather than by
-//! patching its functions unless `config.overlay.hooks` is `"inline"`.
+//! patching its functions unless `config.overlay.hooks` is `"inline"`. Its logs (and panics) go to `tomb-helper.log`
+//! next to it, as the exe's do (`logging`).
 
 use imgui::*;
 use hudhook::*;
@@ -17,9 +18,11 @@ use hudhook::hooks::dx11::ImguiDx11Hooks as GameHooks;
 use hudhook::hooks::dx12::ImguiDx12Hooks as GameHooks;
 use crate::ui_ipc_data::{hotkey, projection_from_lens, BoolSetting, BoxKind, HotkeyLabel, Capsule, F32Setting, ObjectBox, ObjectCategory, Probe, SharedMemoryManager, SurfaceKind, Triangle, TriggerCategory, U32Setting, UiData, UiSettings, REQUEST_RESTORE_POSITION, REQUEST_STORE_POSITION, REQUEST_TOGGLE_FLYING, TRIGGER_ACTIONS, COLLISION_KINDS};
 use crate::position::Position;
-use crate::tracing::{error, warn};
+use crate::tracing::{error, info, warn};
 
 // Shared with the exe, which uses the other half of them
+#[allow(dead_code)]
+mod logging;
 #[allow(dead_code)]
 mod ui_ipc_data;
 #[allow(dead_code)]
@@ -548,12 +551,24 @@ impl TombHelperHud {
             }
         }
 
-        tracing_subscriber::fmt()
-            .with_thread_ids(true)
-            .with_file(true)
-            .with_line_number(true)
-            .with_thread_names(true)
+        // To the console (if there is one) and the log file
+        use tracing_subscriber::prelude::*;
+        tracing_subscriber::registry()
+            .with(tracing_subscriber::fmt::layer()
+                .with_thread_ids(true)
+                .with_file(true)
+                .with_line_number(true)
+                .with_thread_names(true))
+            .with(tracing_subscriber::fmt::layer()
+                .with_ansi(false)
+                .without_time()
+                .with_thread_ids(true)
+                .with_file(true)
+                .with_line_number(true)
+                .with_writer(logging::make_writer))
             .init();
+        let game = std::env::current_exe().ok().and_then(|exe| exe.file_name().map(|n| n.to_string_lossy().into_owned()));
+        info!("overlay loaded into {}", game.unwrap_or_default());
 
         Self {
             ui_memory_manager,
@@ -802,6 +817,7 @@ pub unsafe extern "system" fn DllMain(
     if reason == hudhook::windows::Win32::System::SystemServices::DLL_PROCESS_ATTACH {
         let hmodule_raw = hmodule.0 as usize;
         std::thread::spawn(move || {
+            logging::log_panics();
             let hud = TombHelperHud::new();
             let method = if hud.ui_data.vtable_hooks { HookMethod::VTable } else { HookMethod::Inline };
             if let Err(e) = Hudhook::builder()

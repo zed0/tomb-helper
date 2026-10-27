@@ -24,6 +24,9 @@ use std::{thread, time};
 use signal_hook::consts::SIGINT;
 use signal_hook::flag;
 
+// First, so its `println!` and the rest, which log too, are the ones every module after it uses
+#[macro_use]
+mod logging;
 mod action;
 mod config;
 mod cutscene_handler;
@@ -87,6 +90,9 @@ const SEARCH_INTERVAL: time::Duration = time::Duration::from_millis(100);
 const OFFSETS_CHECK_INTERVAL: time::Duration = time::Duration::from_millis(500);
 
 fn main() {
+    logging::log_panics();
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    logging::write(logging::Stream::Out, &format!("tomb-helper {} started {:?}\n", env!("CARGO_PKG_VERSION"), args));
     if std::env::args().len() > 1 {
         if let Err(e) = cli::run() {
             eprintln!("{:#}", e);

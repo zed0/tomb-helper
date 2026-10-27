@@ -21,6 +21,9 @@ Current features:
   (it has the overlay's DLLs next to `tomb-helper.exe`; the exe on its own works too, without the overlay)
 - Open a `cmd` prompt in the directory it was downloaded to (you can type `cmd<enter>` in the Windows Explorer address bar)
 - Run `tomb-helper.exe`
+- Everything it prints, and what the overlay logs from inside the game (including panics, with a backtrace), is also
+  written to `tomb-helper.log` next to `tomb-helper.exe`: include it when reporting a problem or crash. Once it reaches
+  50MB it's moved to `tomb-helper.log.1` (replacing the previous one), so the two never take more than 100MB.
 
 ## Supported versions
 
