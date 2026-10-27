@@ -22,7 +22,8 @@ Current features:
 - Open a `cmd` prompt in the directory it was downloaded to (you can type `cmd<enter>` in the Windows Explorer address bar)
 - Run `tomb-helper.exe`
 - Everything it prints, and what the overlay logs from inside the game (including panics, with a backtrace), is also
-  written to `tomb-helper.log` next to `tomb-helper.exe`: include it when reporting a problem or crash. Once it reaches
+  written to `tomb-helper.log` next to `tomb-helper.exe`, each line marked with where it came from (`[tomb-helper 1234]`
+  or `[overlay in ROTTR.exe 5678]`, with the process id): include it when reporting a problem or crash. Once it reaches
   50MB it's moved to `tomb-helper.log.1` (replacing the previous one), so the two never take more than 100MB.
 
 ## Supported versions

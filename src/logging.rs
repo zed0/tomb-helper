@@ -1,6 +1,7 @@
 //! The log file, `tomb-helper.log` next to the exe, for reporting crashes: the exe and the overlays injected into the
 //! game (shared with the DLL, which finds it next to itself, as it's injected from beside the exe) all append to it.
-//! Each line is prefixed with the time, the module and its process id. Once it reaches `MAX_SIZE` it's moved to
+//! Each line starts with the time and where it came from, e.g. `[tomb-helper 1234]` or `[overlay in ROTTR.exe 5678]`
+//! (the process id), then `!` if it went to stderr. Once it reaches `MAX_SIZE` it's moved to
 //! `tomb-helper.log.1` (replacing the last one) and a new one started, so the two together stay under 100MB.
 //!
 //! The exe's `println!`/`eprintln!` (and `print!`/`eprint!`) are this module's macros, which print as usual and log
@@ -84,13 +85,17 @@ fn timestamp() -> String {
 impl Log {
     fn new() -> Self {
         let module = this_module();
-        let name = module
-            .as_ref()
-            .and_then(|m| m.file_stem())
-            .map_or("tomb-helper".into(), |s| s.to_string_lossy().into_owned());
+        let exe = std::env::current_exe().ok();
+        // The exe, or an overlay injected into a game: "tomb-helper" or "overlay in ROTTR.exe"
+        let name = if module.is_none() || module == exe {
+            "tomb-helper".to_string()
+        } else {
+            let game = exe.as_ref().and_then(|e| e.file_name()).map_or("?".into(), |n| n.to_string_lossy());
+            format!("overlay in {}", game)
+        };
         Log {
             path: module.map(|m| m.with_file_name(LOG_FILE)),
-            source: format!("{}[{}]", name, std::process::id()),
+            source: format!("[{} {}]", name, std::process::id()),
             file: None,
             partial: [String::new(), String::new()],
         }
@@ -221,7 +226,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join(LOG_FILE);
         let _ = std::fs::remove_file(&path);
-        let mut log = Log { path: Some(path.clone()), source: "test[1]".into(), file: None, partial: Default::default() };
+        let mut log = Log { path: Some(path.clone()), source: "[test 1]".into(), file: None, partial: Default::default() };
         log.write(Stream::Out, "Continue? ");
         log.write(Stream::Err, "an error\nand another\n");
         log.write(Stream::Out, "yes\n");
@@ -229,9 +234,9 @@ mod tests {
         let text = std::fs::read_to_string(&path).unwrap();
         let lines: Vec<&str> = text.lines().collect();
         assert_eq!(lines.len(), 3);
-        assert!(lines[0].ends_with(" test[1] ! an error"));
-        assert!(lines[1].ends_with(" test[1] ! and another"));
-        assert!(lines[2].ends_with(" test[1] Continue? yes"));
+        assert!(lines[0].ends_with(" [test 1] ! an error"));
+        assert!(lines[1].ends_with(" [test 1] ! and another"));
+        assert!(lines[2].ends_with(" [test 1] Continue? yes"));
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

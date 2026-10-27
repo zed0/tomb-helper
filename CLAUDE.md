@@ -59,7 +59,7 @@ Each module's `//!` doc says what's in it and how it works; this is where to loo
 | `build.rs` | Builds the 32-bit overlay with a second cargo (its own target folder) and copies it next to the exe |
 | `src/cli.rs` | The command line tools: `port`, `update-offsets`, `check` (`--fit`, `--snapshot`, `--replay`), `watch`, and the rest under the hidden `debug` |
 | `src/port.rs` | `port`: adding a patch or game step by step, with prompts (the other commands' steps in order) |
-| `src/logging.rs` | `tomb-helper.log` next to the exe (shared with the DLL, which logs through `tracing`): the exe's `println!`/`eprintln!` are its macros, which log too; panics; 50MB then rotated to `.1` |
+| `src/logging.rs` | `tomb-helper.log` next to the exe (shared with the DLL, which logs through `tracing`): the exe's `println!`/`eprintln!` are its macros, which log too; panics; lines marked `[tomb-helper pid]` or `[overlay in Game.exe pid]`; 50MB then rotated to `.1` |
 | `src/config.rs` | `tomb-helper.json`: hotkeys, cutscene files, the overlay's starting settings |
 | `src/action.rs` | `Action`: everything a hotkey can be bound to |
 | `src/hotkeys.rs` | `KeyCode` (the keys' names in the config) and `Hotkeys`, polling the keys, repeating held ones |
