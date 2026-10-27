@@ -280,14 +280,38 @@
       "bits": 64,
       "offsets": {
         "Version": ["0x35179A0", "0x108", "0x258", "0x0"],
-        "XPosition": ["0x1451F78", "0x10"],
-        "YPosition": ["0x1451F78", "0x14"],
-        "ZPosition": ["0x1451F78", "0x18"],
+        "XPosition": ["0x149A098", "0x0", "0x33E8", "0x10"],
+        "YPosition": ["0x149A098", "0x0", "0x33E8", "0x14"],
+        "ZPosition": ["0x149A098", "0x0", "0x33E8", "0x18"],
+        "CameraSin": ["0x34FD940", "0x70"],
+        "CameraCos": ["0x34FD940", "0x74"],
+        "CameraView": ["0x34FD940", "0x2F0"],
+        "CameraLens": ["0x34FD940", "0x30"],
+        "InstanceArray": ["0x2E63080"],
+        "PlayerProbes": ["0x2221480"],
+        "CollisionScene": ["0x341AFA0", "0x10", "0x0"],
         "CutscenePrompt": ["0x1497AC0", "0x10"],
         "CutsceneStatus": ["0x1497AC0", "0x129"],
         "CutsceneTimeline": ["0x1497AC0", "0x60"],
         "CutsceneLength": ["0x1497AA0", "0x0", "0x20"],
         "CutsceneId": ["0x3503F78", "0x0", "0xB78", "0x574"]
+      },
+      "layout": {
+        "instance": {"object_name": ["0x80", "0x8", "0x60", "0x8"]},
+        "player": {"instance": "0x33E8", "fall_start": "0x1064", "fall_start_copy": "0x1070"},
+        "ballistic": {"velocity": "0x20"},
+        "drawable": {"instance_drawable": "0xA8", "model_instance": "0x78", "mesh": "0x38"},
+        "camera": {"view": "0x2F0", "collision": ["0x450", "0xD40", "0xDF8"]},
+        "trigger_shape": {"shape": "0xA0"},
+        "collide": {"shapes": "0x78", "shape_count": "0x80"},
+        "body": {"next": "0x38", "previous": "0x40", "parent": "0x50", "gap": "0x0"},
+        "physics_shape": {"previous_centre": "0xA0", "gap": "0x10"},
+        "proxy": {
+          "centre": "0x70", "in_use_size": "0xA0", "in_use_offset": "0xB0", "in_use_local_rotation": "0xE0", "in_use_rotation": "0xF0",
+          "next_size": "0x120", "next_offset": "0x130", "next_local_rotation": "0x150", "next_rotation": "0x160",
+          "body": "0x1A8", "size": "0x1B0", "contact_count": "0x1C4", "second_contact_count": "0x1CC", "contacts": "0x200",
+          "flags": "0x18", "movement_collides": "0x1", "resolved_centre": "0xC0"
+        }
       }
     },
     {

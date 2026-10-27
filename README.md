@@ -35,7 +35,7 @@ Current features:
 | Rise of the Tomb Raider | (Epic Games) v1.0 build 1027.0_64 | ✓ | | |
 | Shadow of the Tomb Raider | v1.0 build 234.1_64 | ✓ | ✓ | ✓ |
 | Shadow of the Tomb Raider | v1.0 build 298.0_64, 458.0_64, 489.0_64 | ✓ | ✓ | |
-| Shadow of the Tomb Raider | (Epic Games) v1.0 build 492.0_64 | ✓ | ✓ | |
+| Shadow of the Tomb Raider | (Epic Games) v1.0 build 492.0_64 | ✓ | ✓ | ✓ |
 | Shadow of the Tomb Raider | (Steam) v1.0 build 492.0_64 | ✓ | ✓ | ✓ |
 
 Cutscene skipping is only for Shadow of the Tomb Raider because the other two games let you skip cutscenes whenever you like, so they don't need it.
