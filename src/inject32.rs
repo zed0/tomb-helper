@@ -4,7 +4,6 @@
 
 use process_memory::CopyAddress;
 use process_memory::Pid;
-use std::convert::TryInto;
 use std::ffi::OsStr;
 use std::io;
 use std::os::windows::ffi::OsStrExt;

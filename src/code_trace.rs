@@ -13,7 +13,6 @@ use iced_x86::{
 };
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
-use std::convert::TryInto;
 use std::sync::OnceLock;
 
 // Limits per trace, so a trace stays roughly within the function it started in and the few it calls

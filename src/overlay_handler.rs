@@ -704,7 +704,6 @@ impl Handler for OverlayHandler {
         };
         let triangle_milliseconds = started.elapsed().as_secs_f32() * 1000.0;
 
-        let camera_view = self.camera_view;
         let camera = &crate::layout::current().camera;
         let lens_fields = [camera.lens_near, camera.lens_far, camera.lens_fov, camera.lens_aspect].map(|f| f as u32);
         let camera_projection = self.camera_lens.map_or([0.0; 16], |lens| projection_from_lens(&lens, lens_fields));
@@ -718,21 +717,18 @@ impl Handler for OverlayHandler {
         };
         let camera_view_address = address(AddressType::CameraView)?;
         let camera_lens_address = address(AddressType::CameraLens)?;
-        let kind_counts = self.collision_meshes.kind_counts;
-        let helper_state = self.helper_state.clone();
-        let hotkeys = self.hotkeys;
-        let object_radius = self.config.object_radius;
+        let helper_state = &self.helper_state;
         self.ui_memory_manager.get_mut().update(|val| {
             val.position_tools = helper_state.position_tools;
             val.has_saved_position = helper_state.saved_position.is_some();
             val.saved_position = helper_state.saved_position.unwrap_or_default();
             val.flying = helper_state.flying;
-            val.hotkeys = hotkeys;
+            val.hotkeys = self.hotkeys;
             val.mesh_centre = mesh_centre;
             val.aiming = aim_point.is_some();
-            val.object_radius = object_radius;
+            val.object_radius = self.config.object_radius;
             val.position = position;
-            val.camera_view = camera_view;
+            val.camera_view = self.camera_view;
             val.camera_projection = camera_projection;
             val.lens_fields = lens_fields;
             val.camera_view_address = camera_view_address;
@@ -750,7 +746,7 @@ impl Handler for OverlayHandler {
             val.trigger_face_count = fill(&mut val.trigger_faces, &triggers.faces);
             val.triangle_count = fill(&mut val.triangles, &triangles);
             val.triangle_milliseconds = triangle_milliseconds;
-            val.mesh_kind_counts = kind_counts;
+            val.mesh_kind_counts = self.collision_meshes.kind_counts;
         });
         Ok(())
     }

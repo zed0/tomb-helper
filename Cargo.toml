@@ -2,7 +2,7 @@
 name = "tomb-helper"
 version = "2.0.0-alpha.1"
 authors = ["Ben Falconer <ben@falconers.me.uk>"]
-edition = "2018"
+edition = "2021"
 publish = false
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -11,28 +11,20 @@ publish = false
 anyhow = "1.0"
 clap = { version = "4.5", features = ["derive"] }
 process-memory = { git = "https://github.com/Tommoa/rs-process-memory.git", rev = "7b9b263932f16fc5864c294efbf338edb0010f39" }
-libc = "0.2"
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 reqwest = { version = "0.11", features = ["blocking", "json"] }
 itertools = "0.9"
 hudhook = "0.9"
 shared_memory = "0.12.4"
-log-panics = { version = "2.1.0", features = ["with-backtrace"] }
-simple-logging = "2.0.2"
-log = "0.4.27"
 tracing-subscriber = "0.3.19"
 signal-hook = "0.3.18"
 nalgebra = "0.34.0"
 iced-x86 = { version = "1", default-features = false, features = ["std", "decoder", "instr_info", "intel"] }
 rayon = "1"
 
-[target.'cfg(windows)'.dev-dependencies]
-winapi = { version = "0.3", features = ["tlhelp32", "synchapi"] }
-
 [target.'cfg(windows)'.dependencies]
-winapi = { version = "0.3", features = ["winnt", "memoryapi", "minwindef", "processthreadsapi", "synchapi", "debugapi", "winbase", "minwinbase", "handleapi", "winerror", "errhandlingapi", "wow64apiset", "psapi", "winuser", "libloaderapi", "sysinfoapi"] }
-win32-error = "0.9.0"
+winapi = { version = "0.3", features = ["winnt", "memoryapi", "minwindef", "processthreadsapi", "synchapi", "debugapi", "winbase", "minwinbase", "handleapi", "winerror", "errhandlingapi", "wow64apiset", "psapi", "winuser", "libloaderapi", "sysinfoapi", "tlhelp32"] }
 
 [[bin]]
 name = "tomb-helper"

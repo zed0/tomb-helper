@@ -8,7 +8,6 @@
 use crate::game_memory::{Handle, pointer_size, read_pointer, read_u32};
 use process_memory::CopyAddress;
 use std::collections::HashMap;
-use std::convert::TryInto;
 
 const MAX_CLASS_NAME: usize = 128;
 

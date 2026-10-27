@@ -9,7 +9,6 @@ use crate::pe_image::PeImage;
 use crate::snapshot::{Recording, Snapshot};
 use nalgebra::Vector3;
 use process_memory::{Architecture, CopyAddress, Pid, ProcessHandle};
-use std::convert::TryInto;
 use std::io;
 use std::sync::atomic::{AtomicUsize, Ordering};
 

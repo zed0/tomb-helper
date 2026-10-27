@@ -19,7 +19,6 @@ use crate::pe_image::PeImage;
 use crate::process_details::AddressType;
 use process_memory::CopyAddress;
 use std::collections::{BTreeMap, HashMap};
-use std::convert::TryInto;
 
 pub const GAME_RENDER: &str = ".?AVGameRender@@";
 // Holds the cdc::CollisionSceneClient

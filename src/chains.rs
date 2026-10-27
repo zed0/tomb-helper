@@ -40,6 +40,13 @@ struct SharedHandle(ProcessHandle);
 unsafe impl Sync for SharedHandle {}
 unsafe impl Send for SharedHandle {}
 
+impl SharedHandle {
+    // Through a method, so closures capture the whole wrapper rather than the handle inside it
+    fn get(&self) -> ProcessHandle {
+        self.0
+    }
+}
+
 struct Memory {
     handle: ProcessHandle,
     base_addr: usize,
@@ -153,8 +160,8 @@ fn candidate_chains(
     let pointer_size = memory.pointer_size;
     let image_size = image.size_of_image();
     let resolver = move |chain: &[i64]| -> Option<usize> {
-        let slot = resolve(chain, base_addr, |a| read_pointer(shared.0, a, pointer_size))?;
-        let function = read_pointer(shared.0, slot, pointer_size)?;
+        let slot = resolve(chain, base_addr, |a| read_pointer(shared.get(), a, pointer_size))?;
+        let function = read_pointer(shared.get(), slot, pointer_size)?;
         function.checked_sub(base_addr).filter(|rva| *rva < image_size)
     };
     let chains = code_chains(&image, &resolver);

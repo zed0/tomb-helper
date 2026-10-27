@@ -19,7 +19,6 @@ use crate::layout::{self, ScriptLayout};
 use crate::ui_ipc_data::{trigger_action_bit, ACTS_ON_INSTANCES, DOES_SOMETHING_ELSE, NO_SCRIPT};
 use process_memory::CopyAddress;
 use std::collections::{HashMap, HashSet};
-use std::convert::TryInto;
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -144,10 +143,7 @@ impl TriggerScripts {
             self.last_scan = Some(Instant::now());
             let (handle, base_address, classes) = (self.handle, self.base_address, self.classes.clone());
             let layout = layout::current();
-            self.running = Some(thread::spawn(move || {
-                let handle = handle;
-                scan(handle, base_address, classes, &layout.script)
-            }));
+            self.running = Some(thread::spawn(move || scan(handle, base_address, classes, &layout.script)));
         }
     }
 }

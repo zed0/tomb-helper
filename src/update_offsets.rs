@@ -27,7 +27,6 @@ use crate::position::Position;
 use crate::process_details::{AddressType, ProcessDetails, VersionIdentifier};
 use process_memory::{Architecture, CopyAddress, Pid, ProcessHandle, TryIntoProcessHandle};
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::convert::TryInto;
 use std::path::PathBuf;
 
 // Probes starting this close to Lara are hers
