@@ -312,6 +312,8 @@ pub struct Triangle {
 pub struct UiData {
     pub debug: bool,
     pub should_exit: bool,
+    // Hook DirectX through its vtables rather than patching its functions (`config.overlay.hooks`)
+    pub vtable_hooks: bool,
     pub position: Position,
     // The position tools (`PositionHandler`), if this game has them
     pub position_tools: bool,

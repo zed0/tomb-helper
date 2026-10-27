@@ -47,4 +47,4 @@ lto = "thin"
 
 [patch.'crates-io']
 # imgui = { git = "https://github.com/imgui-rs/imgui-rs", rev = "cb8beeb" }
-hudhook = { git = "https://github.com/zed0/hudhook", branch = "correct-dllmain-return-type" }
+hudhook = { git = "https://github.com/zed0/hudhook", branch = "vtable-hooks" }

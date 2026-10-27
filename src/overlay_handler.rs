@@ -13,7 +13,7 @@ use crate::game_memory::Handle;
 use crate::collision::{self, AttachedProxy, CapsuleShape, ProxyCapsules};
 use crate::collision_mesh::CollisionMeshes;
 use crate::components::Components;
-use crate::config::{Hotkey, OverlayConfig};
+use crate::config::{Hotkey, OverlayConfig, OverlayHooks};
 use crate::object_list::{self, Instance, ObjectList};
 use crate::position::Position;
 use crate::action::Action;
@@ -217,6 +217,7 @@ impl OverlayHandler {
         }
         ui_memory_manager.get_mut().update(|val| {
             val.debug = config.console;
+            val.vtable_hooks = config.hooks == OverlayHooks::VTable;
             val.should_exit = false;
             val.object_count = 0;
             val.triangle_count = 0;

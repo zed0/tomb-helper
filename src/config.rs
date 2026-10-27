@@ -284,6 +284,22 @@ pub struct OverlayConfig {
     // Open a console in the game for the overlay's logs
     #[serde(default)]
     pub console: bool,
+    // How the overlay hooks the game's DirectX functions
+    #[serde(default)]
+    pub hooks: OverlayHooks,
+}
+
+/// How the overlay hooks the game's DirectX functions (hudhook's `HookMethod`)
+#[derive(Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum OverlayHooks {
+    /// Patching the start of each function: every call is hooked, but other overlays that patch the same functions can
+    /// overwrite it (RivaTuner does, in TR2013)
+    Inline,
+    /// Replacing the functions' pointers in DirectX's vtables, which other overlays leave alone, but only calls through
+    /// those vtables are hooked (not a swap chain another tool has wrapped in its own object)
+    #[default]
+    VTable,
 }
 
 impl Default for OverlayConfig {
@@ -312,4 +328,18 @@ pub struct Config {
     // Also print errors that are expected while the game loads a level or exits, like pointer chains that don't resolve
     #[serde(default)]
     pub debug_logging: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn overlay_hooks_default_to_vtable() {
+        assert_eq!(OverlayConfig::default().hooks, OverlayHooks::VTable);
+        let inline: OverlayConfig = serde_json::from_str(r#"{"hooks": "inline"}"#).unwrap();
+        assert_eq!(inline.hooks, OverlayHooks::Inline);
+        let vtable: OverlayConfig = serde_json::from_str(r#"{"hooks": "vtable"}"#).unwrap();
+        assert_eq!(vtable.hooks, OverlayHooks::VTable);
+    }
 }

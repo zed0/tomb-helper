@@ -5,7 +5,8 @@
 //! ones behind others through a quarter resolution software ID buffer, `OcclusionBuffer`), boxes and names for objects,
 //! triggers, and Lara's collision. It reads the camera from the game itself each frame, at addresses the exe sends, as
 //! the exe's copy lags and made everything judder as the camera turned. It ejects itself when the exe says to, or stops
-//! updating. Opens a console only if `config.overlay.console`.
+//! updating. Opens a console only if `config.overlay.console`, and hooks DirectX through its vtables rather than by
+//! patching its functions unless `config.overlay.hooks` is `"inline"`.
 
 use imgui::*;
 use hudhook::*;
@@ -760,7 +761,34 @@ fn draw_lara(draw_list: &DrawListMut, projector: &Projector, ui_data: &UiData, s
     }
 }
 
-hudhook::hudhook!(GameHooks, TombHelperHud::new());
+// The entry point `hudhook::hudhook!` makes, but choosing how the hooks are put in place (as the exe says) before
+// they're made
+#[no_mangle]
+pub unsafe extern "system" fn DllMain(
+    hmodule: hudhook::windows::Win32::Foundation::HINSTANCE,
+    reason: u32,
+    _: *mut std::ffi::c_void,
+) -> i32 {
+    if reason == hudhook::windows::Win32::System::SystemServices::DLL_PROCESS_ATTACH {
+        let hmodule_raw = hmodule.0 as usize;
+        std::thread::spawn(move || {
+            let hud = TombHelperHud::new();
+            let method = if hud.ui_data.vtable_hooks { HookMethod::VTable } else { HookMethod::Inline };
+            if let Err(e) = Hudhook::builder()
+                .with_hook_method(method)
+                .with::<GameHooks>(hud)
+                .with_hmodule(hudhook::windows::Win32::Foundation::HINSTANCE(hmodule_raw as _))
+                .build()
+                .apply()
+            {
+                error!("Couldn't apply hooks: {e:?}");
+                eject();
+            }
+        });
+    }
+    // A BOOL: 0 would have the loader unload the DLL again, before the thread above has started
+    1
+}
 
 #[cfg(test)]
 mod tests {
