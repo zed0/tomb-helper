@@ -404,6 +404,9 @@ again (`derive` plus live checks).
   has an enabled byte at +0x8 that every collision pass checks (+0x8AF920, +0x8AFF30, +0x8B0D80): zeroed, the camera
   goes through walls. Below ground it also follows her proxy's resolved centre, so that needs the proxy's collision off.
 - Still left: a small jitter in the air (probably her falling animation).
+- Flight mode (`position_handler`) doesn't write any of the collision fields for now (2026-10-28): her collision was
+  still broken after flights (she could jump through walls), so it holds only her position, velocity and fall start.
+  `targets` still finds the proxy flags, resolved centre, body fix-up and camera switch for when it's tried again.
 - These are all fields of things found without offsets (her instance, components and player object through `XPosition`'s
   chain, GameRender through `CameraView`'s), so `targets::structural` builds them from 492's layout (`instance.ballistic`,
   `player`, `ballistic`, `proxy.flags`/`resolved_centre`, `body.gap`, `physics_shape`, `camera.collision`); a test checks

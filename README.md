@@ -231,7 +231,7 @@ and follow what it asks. It takes a few minutes:
 3. It takes a snapshot, for testing changes to tomb-helper against this build without the game.
 4. If it couldn't work out for sure where the cutscene's id is (Shadow of the Tomb Raider), it asks you to start a
    cutscene, and finds it then.
-5. It finds what flight mode writes (Lara's collision, her velocity, the camera's collision) from the game's structures
+5. It finds what flight mode writes or may later (her velocity, and Lara's and the camera's collision, which flight mode leaves on for now) from the game's structures
    and code, and, if this build's fall start isn't known, asks you to switch back to the game (it pauses while
    alt-tabbed) while it lifts Lara a little twice to find it. Either of the steps that need the game can be skipped.
 

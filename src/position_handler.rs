@@ -7,13 +7,11 @@
 //! - zeroes her `Velocity`, or she's dragged down a little each frame by the speed she's built up falling;
 //! - moves her `FallStart` with her, or she dies from the fall when she's flown down too far below where she was last
 //!   on the ground;
-//! - turns her proxy's collision off (`ProxyFlags`), or it's pushed back up out of the ground and she's pulled up after
-//!   it. Its physics body stays where it was meanwhile, and once collision's back on only moves towards her, stopping
-//!   at walls, so she'd go through walls without it: after the flight it's put back on her (`ProxyShapeCentre` and the
-//!   rest);
-//! - puts her proxy's `ProxyResolvedCentre` where its `ProxyCentre` is (where she is), as the game moves her back
-//!   towards it, and it stays on this side of a wall she's flown through;
-//! - turns the camera's `CameraCollision` off (back to what it was after), or it stays on this side of the wall.
+//!
+//! It doesn't touch collision, hers or the camera's, so she can't be flown through walls or into the ground. Turning
+//! her proxy's off (`ProxyFlags`, with `ProxyResolvedCentre` and the camera's `CameraCollision`, which `targets` still
+//! finds) left her physics body behind and broke her collision after the flight (she could jump through walls), so
+//! that's left for later.
 
 use crate::action::Action;
 use crate::components::Components;
@@ -30,11 +28,9 @@ use std::error::Error;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 const HOLD_INTERVAL: Duration = Duration::from_millis(1);
-// How long her proxy's physics body is put back on her for after a flight
-const BODY_RESET_TIME: Duration = Duration::from_millis(50);
 
 pub struct PositionHandler {
     // While flying, where she's held
@@ -143,17 +139,9 @@ impl PositionHandler {
         let mut find = |address_type| notes.find(game, components, address_type);
         let mut find_all = |types: [AddressType; 2]| -> Vec<Vec<usize>> { types.iter().filter_map(|t| find(*t)).collect() };
         let fall_start = find_all([AddressType::FallStart, AddressType::FallStartCopy]);
-        let body_centres = find_all([AddressType::ProxyShapeCentre, AddressType::ProxyShapePreviousCentre]);
-        let body_gaps = find_all([AddressType::ProxyShapeGap, AddressType::ProxyBodyGap]);
         held.fall_start = fall_start.into_iter().map(|c| tracked_at(c, arch, base)).collect();
-        held.body_centres = body_centres.into_iter().map(|c| tracked_at(c, arch, base)).collect();
-        held.body_gaps = body_gaps.into_iter().map(|c| tracked_at(c, arch, base)).collect();
         let mut find = |address_type| notes.find(game, components, address_type);
         held.velocity = find(AddressType::Velocity).map(|c| tracked_at(c, arch, base));
-        held.proxy_centre = find(AddressType::ProxyCentre).map(|c| tracked_at(c, arch, base));
-        held.proxy_resolved = find(AddressType::ProxyResolvedCentre).map(|c| tracked_at(c, arch, base));
-        held.proxy_flags = find(AddressType::ProxyFlags).map(|c| tracked_at(c, arch, base));
-        held.camera_collision = find(AddressType::CameraCollision).map(|c| tracked_at(c, arch, base));
         notes.print();
         held
     }
@@ -315,21 +303,6 @@ struct Held {
     position: TrackedPosition,
     velocity: Option<TrackedMemory<[f32; 3]>>,
     fall_start: Vec<TrackedMemory<f32>>,
-    proxy_centre: Option<TrackedMemory<[f32; 3]>>,
-    // Put where `proxy_centre` is
-    proxy_resolved: Option<TrackedMemory<[f32; 3]>>,
-    proxy_flags: Option<TrackedMemory<u32>>,
-    // Whether it collided before the flight, to turn it back on after
-    proxy_collided: Option<bool>,
-    // Put where `proxy_centre` is after the flight
-    body_centres: Vec<TrackedMemory<[f32; 3]>>,
-    // Zeroed after the flight
-    body_gaps: Vec<TrackedMemory<[f32; 4]>>,
-    camera_collision: Option<TrackedMemory<u8>>,
-    // What it was before the flight, put back after
-    camera_collision_was: Option<u8>,
-    // The bit of `proxy_flags` set while it collides
-    proxy_collides: u32,
 }
 
 impl Held {
@@ -340,15 +313,6 @@ impl Held {
             position: position.clone(),
             velocity: None,
             fall_start: vec![],
-            proxy_centre: None,
-            proxy_resolved: None,
-            proxy_flags: None,
-            proxy_collided: None,
-            body_centres: vec![],
-            body_gaps: vec![],
-            camera_collision: None,
-            camera_collision_was: None,
-            proxy_collides: crate::layout::current().proxy.movement_collides.unwrap_or(0) as u32,
         }
     }
 
@@ -365,59 +329,6 @@ impl Held {
         for fall_start in &mut self.fall_start {
             fall_start.data = at.z;
             let _ = fall_start.apply_to_game(handle);
-        }
-        if let Some(flags) = &mut self.proxy_flags {
-            if flags.fetch_from_game(handle).is_ok() {
-                self.proxy_collided.get_or_insert(flags.data & self.proxy_collides != 0);
-                if flags.data & self.proxy_collides != 0 {
-                    flags.data &= !self.proxy_collides;
-                    let _ = flags.apply_to_game(handle);
-                }
-            }
-        }
-        if let (Some(centre), Some(resolved)) = (&mut self.proxy_centre, &mut self.proxy_resolved) {
-            if centre.fetch_from_game(handle).is_ok() {
-                resolved.data = centre.data;
-                let _ = resolved.apply_to_game(handle);
-            }
-        }
-        if let Some(collision) = &mut self.camera_collision {
-            if self.camera_collision_was.is_none() && collision.fetch_from_game(handle).is_ok() {
-                self.camera_collision_was = Some(collision.data);
-            }
-            collision.data = 0;
-            let _ = collision.apply_to_game(handle);
-        }
-    }
-
-    fn release(&mut self) {
-        let handle = self.handle.0;
-        if let (Some(flags), Some(true)) = (&mut self.proxy_flags, self.proxy_collided) {
-            if flags.fetch_from_game(handle).is_ok() {
-                flags.data |= self.proxy_collides;
-                let _ = flags.apply_to_game(handle);
-            }
-            // Over a few frames, in case the game moves it first
-            let started = Instant::now();
-            while started.elapsed() < BODY_RESET_TIME {
-                if let Some(centre) = &mut self.proxy_centre {
-                    if centre.fetch_from_game(handle).is_ok() {
-                        for body_centre in &mut self.body_centres {
-                            body_centre.data = centre.data;
-                            let _ = body_centre.apply_to_game(handle);
-                        }
-                    }
-                }
-                for gap in &mut self.body_gaps {
-                    gap.data = [0.0; 4];
-                    let _ = gap.apply_to_game(handle);
-                }
-                thread::sleep(HOLD_INTERVAL);
-            }
-        }
-        if let (Some(collision), Some(was)) = (&mut self.camera_collision, self.camera_collision_was) {
-            collision.data = was;
-            let _ = collision.apply_to_game(self.handle.0);
         }
     }
 }
@@ -441,7 +352,6 @@ impl Flight {
                     held.hold(at);
                     thread::sleep(HOLD_INTERVAL);
                 }
-                held.release();
             })
         };
         Flight { target, stop, thread: Some(thread) }
