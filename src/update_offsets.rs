@@ -137,7 +137,7 @@ pub fn run(
         }
     }
     if !moved.is_empty() {
-        let chains = chains::best_code_chains(&image, handle, base_address, template.arch, &moved);
+        let chains = chains::best_code_chains(&image, memory, base_address, &moved);
         for (address_type, _) in &moved {
             match chains.get(address_type) {
                 Some((chain, sites)) => {

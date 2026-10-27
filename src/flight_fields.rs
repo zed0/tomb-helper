@@ -11,7 +11,7 @@
 
 use anyhow::{Context, Result};
 use crate::game::Game;
-use crate::game_memory::{f32_at, pointer_size, read_pointer, resolve, Handle};
+use crate::game_memory::{pointer_size, read_floats, read_pointer, read_u8, Handle};
 use crate::layout::Layout;
 use crate::pe_image::PeImage;
 use crate::process_details::AddressType;
@@ -80,7 +80,7 @@ pub fn find(game: &Game, image: &PeImage) -> Found {
     let camera = find_controller(game, &mut classes);
     let switches: Vec<usize> = match &camera {
         Some((_, controller, sphere)) => (sphere.saturating_sub(SWITCH_BEFORE_SPHERE)..*sphere)
-            .filter(|&o| read_byte(game, controller + o) == Some(1))
+            .filter(|&o| read_u8(game.handle, controller + o) == Some(1))
             .collect(),
         None => {
             found.notes.push("camera: no ExplorationCameraController found from GameRender".to_string());
@@ -141,16 +141,8 @@ fn list(items: &[String]) -> String {
     }
 }
 
-fn read_byte(game: &Game, address: usize) -> Option<u8> {
-    let mut byte = [0u8; 1];
-    game.handle.copy_address(address, &mut byte).ok().map(|_| byte[0])
-}
-
 fn read_vector(game: &Game, address: usize) -> Option<[f32; 3]> {
-    let mut bytes = [0u8; 12];
-    game.handle.copy_address(address, &mut bytes).ok()?;
-    let v = [0, 4, 8].map(|o| f32_at(&bytes, o));
-    v.iter().all(|f| f.is_finite()).then(|| v)
+    read_floats(game.handle, address).filter(|v: &[f32; 3]| v.iter().all(|f| f.is_finite()))
 }
 
 // The pointers in `span` bytes at `address`, by offset
@@ -166,10 +158,9 @@ fn pointers(game: &Game, address: usize, span: usize) -> Vec<(usize, usize)> {
 // The path from GameRender to the controller (as offsets, each followed), the controller, and where its sphere is
 fn find_controller(game: &Game, classes: &mut Classes) -> Option<(Vec<usize>, usize, usize)> {
     let render = match game.offsets.get(&AddressType::CameraView)?.as_slice() {
-        [render, _] => vec![*render],
+        [render, _] => game.pointer_at(&[*render])?,
         _ => return None,
     };
-    let render = resolve(game.handle, game.base_address, &[render, vec![0]].concat())?;
     let is = |classes: &mut Classes, address: usize, class: &str| classes.name(game.handle, address).as_deref() == Some(class);
     for (to_camera, camera) in pointers(game, render, RENDER_SPAN) {
         if !is(classes, camera, CAMERA_COMPONENT) {

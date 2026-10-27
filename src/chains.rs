@@ -8,10 +8,11 @@ use anyhow::{bail, Context, Result};
 use crate::code_trace::{Access, CallResolver, Tracer};
 use crate::derive::{format_offsets, print_entry, References};
 use crate::find_process;
+use crate::game_memory::{read_bytes, read_pointer_or_null, Handle};
 use crate::pe_image::PeImage;
 use crate::offsets_file::known_process_details;
 use crate::process_details::{AddressType, ProcessDetails};
-use process_memory::{Architecture, CopyAddress, Pid, ProcessHandle};
+use process_memory::{CopyAddress, Pid, ProcessHandle};
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::{thread, time};
@@ -27,50 +28,20 @@ pub fn connect(version: Option<String>) -> Result<(Pid, ProcessHandle, usize, Pr
     Ok(connected)
 }
 
-fn read_pointer(handle: ProcessHandle, address: usize, pointer_size: usize) -> Option<usize> {
-    let mut bytes = [0_u8; 8];
-    handle
-        .copy_address(address, &mut bytes[..pointer_size])
-        .ok()
-        .map(|_| u64::from_le_bytes(bytes) as usize)
-}
-
-// Process handles can be used from any thread, but are raw pointers so aren't `Sync` by default
-struct SharedHandle(ProcessHandle);
-unsafe impl Sync for SharedHandle {}
-unsafe impl Send for SharedHandle {}
-
-impl SharedHandle {
-    // Through a method, so closures capture the whole wrapper rather than the handle inside it
-    fn get(&self) -> ProcessHandle {
-        self.0
-    }
-}
-
+// The game's pointers, cached
 struct Memory {
-    handle: ProcessHandle,
+    handle: Handle,
     base_addr: usize,
-    pointer_size: usize,
     cache: HashMap<usize, Option<usize>>,
 }
 
 impl Memory {
-    fn new(handle: ProcessHandle, base_addr: usize, arch: Architecture) -> Memory {
-        Memory {
-            handle,
-            base_addr,
-            pointer_size: crate::game_memory::pointer_size_of(arch),
-            cache: HashMap::new(),
-        }
+    fn new(handle: Handle, base_addr: usize) -> Memory {
+        Memory { handle, base_addr, cache: HashMap::new() }
     }
 
     fn read_pointer(&mut self, address: usize) -> Option<usize> {
-        if let Some(value) = self.cache.get(&address) {
-            return *value;
-        }
-        let value = read_pointer(self.handle, address, self.pointer_size);
-        self.cache.insert(address, value);
-        value
+        *self.cache.entry(address).or_insert_with(|| read_pointer_or_null(self.handle, address).ok())
     }
 
     fn resolve(&mut self, chain: &[i64]) -> Option<usize> {
@@ -150,18 +121,15 @@ fn code_chains(image: &PeImage, resolver: CallResolver) -> HashMap<Vec<i64>, Sta
 /// in several places (so they can be matched in other versions), then shorter chains
 fn candidate_chains(
     image: &PeImage,
-    handle: ProcessHandle,
+    handle: Handle,
     base_addr: usize,
-    arch: Architecture,
     targets: &[(AddressType, usize)],
 ) -> HashMap<AddressType, Vec<Candidate>> {
-    let shared = SharedHandle(handle);
-    let mut memory = Memory::new(handle, base_addr, arch);
-    let pointer_size = memory.pointer_size;
+    let mut memory = Memory::new(handle, base_addr);
     let image_size = image.size_of_image();
     let resolver = move |chain: &[i64]| -> Option<usize> {
-        let slot = resolve(chain, base_addr, |a| read_pointer(shared.get(), a, pointer_size))?;
-        let function = read_pointer(shared.get(), slot, pointer_size)?;
+        let slot = resolve(chain, base_addr, |a| read_pointer_or_null(handle, a).ok())?;
+        let function = read_pointer_or_null(handle, slot).ok()?;
         function.checked_sub(base_addr).filter(|rva| *rva < image_size)
     };
     let chains = code_chains(&image, &resolver);
@@ -234,12 +202,11 @@ fn candidate_chains(
 /// The best chain the game's code uses to reach each target address, with how many places use it
 pub fn best_code_chains(
     image: &PeImage,
-    handle: ProcessHandle,
+    handle: Handle,
     base_addr: usize,
-    arch: Architecture,
     targets: &[(AddressType, usize)],
 ) -> HashMap<AddressType, (Vec<usize>, u32)> {
-    candidate_chains(image, handle, base_addr, arch, targets)
+    candidate_chains(image, handle, base_addr, targets)
         .into_iter()
         .filter_map(|(t, found)| {
             let best = found.into_iter().next()?;
@@ -251,7 +218,8 @@ pub fn best_code_chains(
 pub fn find_code_chains(version: Option<String>) -> Result<()> {
     let (pid, handle, base_addr, details) = connect(version)?;
     println!("Found {} {}", details.name, details.version.version);
-    let mut memory = Memory::new(handle, base_addr, details.arch);
+    let game = Handle::Live(pid, handle);
+    let mut memory = Memory::new(game, base_addr);
 
     let mut entries: Vec<(AddressType, Vec<usize>)> = details
         .address_offsets
@@ -276,7 +244,7 @@ pub fn find_code_chains(version: Option<String>) -> Result<()> {
     println!("Dumping the game...");
     let image = PeImage::dump(pid).context("Could not dump the game")?;
     let known: Vec<(AddressType, usize)> = targets.iter().filter_map(|(t, a)| a.map(|a| (*t, a))).collect();
-    let mut candidates = candidate_chains(&image, handle, base_addr, details.arch, &known);
+    let mut candidates = candidate_chains(&image, game, base_addr, &known);
 
     let mut lines = vec![];
     println!();
@@ -327,23 +295,22 @@ fn describe_value(handle: ProcessHandle, address: usize, address_type: AddressTy
             Err(_) => "unreadable".to_string(),
         };
     }
-    let mut bytes = [0_u8; 4];
-    match handle.copy_address(address, &mut bytes) {
-        Ok(_) => format!(
+    match read_bytes::<4>(handle, address) {
+        Some(bytes) => format!(
             "f32 {:<14} i32 {:<12} hex {:08X}",
             f32::from_le_bytes(bytes),
             i32::from_le_bytes(bytes),
             u32::from_le_bytes(bytes)
         ),
-        Err(_) => "unreadable".to_string(),
+        None => "unreadable".to_string(),
     }
 }
 
 /// Prints the current value of each of the offsets in `details`
-pub fn print_values(handle: ProcessHandle, base_addr: usize, details: &ProcessDetails) {
+pub fn print_values(pid: Pid, handle: ProcessHandle, base_addr: usize, details: &ProcessDetails) {
     let mut entries: Vec<(&AddressType, &Vec<usize>)> = details.address_offsets.iter().collect();
     entries.sort_by_key(|(t, _)| **t);
-    let mut memory = Memory::new(handle, base_addr, details.arch);
+    let mut memory = Memory::new(Handle::Live(pid, handle), base_addr);
     for (t, offsets) in &entries {
         let value = match memory.resolve(&to_chain(offsets)) {
             Some(address) => describe_value(handle, address, **t, &details.version.version),
@@ -357,7 +324,7 @@ pub fn probe(version: Option<String>, watch: bool) -> Result<()> {
     let (pid, handle, base_addr, details) = connect(version)?;
     println!("Found {} {}", details.name, details.version.version);
     loop {
-        print_values(handle, base_addr, &details);
+        print_values(pid, handle, base_addr, &details);
         if !watch || !find_process::is_process_running(pid) {
             return Ok(());
         }

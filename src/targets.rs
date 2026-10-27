@@ -12,11 +12,10 @@
 
 use crate::components::{self, Components, Slot};
 use crate::game::Game;
-use crate::game_memory::{pointer_size, read_floats, read_u32, resolve};
+use crate::game_memory::{pointer_size, read_floats, read_u32, read_u8, resolve};
 use crate::layout;
 use crate::process_details::{AddressOffsets, AddressType};
 use nalgebra::Vector3;
-use process_memory::CopyAddress;
 
 // The player object Lara's position chain goes through
 pub const PLAYER: &str = ".?AVPlayer@@";
@@ -118,18 +117,16 @@ pub fn find(game: &Game, components: &mut Components, address_type: AddressType)
 
 /// The chain to the value from the game's structures, if they say where it is
 pub fn structural(game: &Game, components: &mut Components, address_type: AddressType) -> Option<Vec<usize>> {
+    let instance = lara_instance(&game.offsets).and_then(|prefix| game.pointer_at(&prefix));
     let slot = |class: &str| -> Option<Slot> {
-        let prefix = lara_instance(&game.offsets)?;
-        let instance = resolve(game.handle, game.base_address, &[prefix, vec![0]].concat())?;
-        components.get(game.handle, instance, class)?;
+        components.get(game.handle, instance?, class)?;
         components.known_slots().get(class).copied()
     };
     // Her player object, found by its class in any game (where it isn't, the layout says how to get there)
     let found_player = match address_type {
-        AddressType::FallStart | AddressType::FallStartCopy => lara_instance(&game.offsets)
-            .and_then(|prefix| resolve(game.handle, game.base_address, &[prefix, vec![0]].concat()))
-            .and_then(|instance| crate::fall_start::find_player(game, instance))
-            .map(|(_, path)| path),
+        AddressType::FallStart | AddressType::FallStartCopy => {
+            instance.and_then(|instance| crate::fall_start::find_player(game, instance)).map(|(_, path)| path)
+        }
         _ => None,
     };
     chain_for(&game.offsets, address_type, slot, found_player)
@@ -312,7 +309,7 @@ pub fn verify(game: &Game, components: &mut Components, address_type: AddressTyp
             },
             None => unreadable(),
         },
-        AddressType::CameraCollision => match read_byte(game, address) {
+        AddressType::CameraCollision => match read_u8(game.handle, address) {
             Some(enabled) => verdict(enabled <= 1, format!("enabled {}", enabled)),
             None => unreadable(),
         },
@@ -334,7 +331,7 @@ fn owner_check(game: &Game, components: &mut Components, address_type: AddressTy
     if prefix.is_empty() {
         return None;
     }
-    let owner = resolve(game.handle, game.base_address, &[prefix.to_vec(), vec![0]].concat());
+    let owner = game.pointer_at(prefix);
     let class = match address_type {
         AddressType::Velocity => components::BALLISTIC,
         AddressType::FallStart | AddressType::FallStartCopy => PLAYER,
@@ -378,16 +375,10 @@ fn short_class(class: &str) -> String {
     parts.iter().rev().copied().collect::<Vec<_>>().join("::")
 }
 
-fn read_byte(game: &Game, address: usize) -> Option<u8> {
-    let mut byte = [0u8; 1];
-    game.handle.copy_address(address, &mut byte).ok()?;
-    Some(byte[0])
-}
-
 // The cutscene's state, which only reads while there's one: its prompt and status small numbers, its timeline within
 // its length
 fn cutscene(game: &Game) -> Verdict {
-    let byte = |address_type| game.resolve(address_type).and_then(|address| read_byte(game, address));
+    let byte = |address_type| game.resolve(address_type).and_then(|address| read_u8(game.handle, address));
     let float = |address_type| game.resolve(address_type).and_then(|address| read_floats::<1>(game.handle, address)).map(|[f]| f);
     let (status, prompt) = match (byte(AddressType::CutsceneStatus), byte(AddressType::CutscenePrompt)) {
         (Some(status), Some(prompt)) => (status, prompt),

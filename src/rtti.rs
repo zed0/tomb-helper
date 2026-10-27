@@ -5,7 +5,7 @@
 //! `Classes` maps vtables to class names (cached) and `all_vtables` lists every vtable in an image and its class.
 //! Tested on fake images of both pointer sizes.
 
-use crate::game_memory::{Handle, pointer_size, read_pointer, read_u32};
+use crate::game_memory::{Handle, pointer_size, read_pointer, read_u32, sized_pointer_from};
 use process_memory::CopyAddress;
 use std::collections::HashMap;
 
@@ -94,7 +94,7 @@ pub fn all_vtables(data: &[u8], base_address: usize) -> Vec<(usize, String)> {
 
 /// `all_vtables` of an image (e.g. a dump on disk), whatever game tomb-helper is connected to, if any
 pub fn image_vtables(image: &crate::pe_image::PeImage) -> Vec<(usize, String)> {
-    let format = Format::for_pointer_size(if image.is_64 { 8 } else { 4 });
+    let format = Format::for_pointer_size(image.pointer_size());
     find_vtables(&image.data, image.image_base as usize, &format)
 }
 
@@ -122,9 +122,7 @@ fn find_vtables(data: &[u8], base_address: usize, format: &Format) -> Vec<(usize
     }
     let mut vtables = vec![];
     for (i, word) in data.chunks_exact(format.pointer_size).enumerate() {
-        let mut value = [0u8; 8];
-        value[..format.pointer_size].copy_from_slice(word);
-        if let Some(name) = locators.get(&(u64::from_le_bytes(value) as usize)) {
+        if let Some(name) = locators.get(&sized_pointer_from(word, format.pointer_size)) {
             vtables.push((base_address + (i + 1) * format.pointer_size, name.clone()));
         }
     }

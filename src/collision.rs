@@ -3,7 +3,7 @@
 //! camera and weapon, or TR2013's combat proxy) (`read_proxy`), including which of them is pushing her (a contact on
 //! its surface).
 
-use crate::game_memory::{Handle, f32_at, floats_at, pointer_at, read_pointer_or_null, read_u32, u32_at, u64_at, vector_at};
+use crate::game_memory::{Handle, f32_at, floats_at, pointer_at, read_pointer, read_pointer_or_null, read_u32, u32_at, u64_at, vector_at};
 use crate::components::{self, Components};
 use crate::layout;
 use crate::object_list;
@@ -205,7 +205,7 @@ impl AttachedBodies {
         let parent = layout::current().body.parent;
         let still_attached = || {
             let family: Vec<usize> = std::iter::once(body).chain(self.bodies.iter().copied()).collect();
-            self.bodies.iter().all(|&b| read_pointer_or_null(handle, b + parent).map_or(false, |p| family.contains(&p)))
+            self.bodies.iter().all(|&b| read_pointer(handle, b + parent).is_some_and(|p| family.contains(&p)))
         };
         let fresh = self.walked.map_or(false, |at| at.elapsed() < BODIES_REWALK);
         if self.of != body || !fresh || !still_attached() {
@@ -221,7 +221,7 @@ impl AttachedBodies {
 // (checked as it goes, so a wrong `body.previous` only means starting at hers)
 fn walk_attached(handle: Handle, body: usize) -> Vec<usize> {
     let layout = &layout::current().body;
-    let link = |at: usize, offset: usize| read_pointer_or_null(handle, at + offset).ok().filter(|&p| p != 0);
+    let link = |at: usize, offset: usize| read_pointer(handle, at + offset);
     let mut start = body;
     if let Some(previous) = layout.previous {
         for _ in 0..MAX_BODIES {
@@ -333,9 +333,9 @@ pub fn read_proxy(handle: Handle, proxy: usize, attached_bodies: Option<&mut Att
 /// The proxy a body belongs to, where the layout says how to find it (TR2013)
 pub fn owner_proxy(handle: Handle, body: usize) -> Option<usize> {
     let all = layout::current();
-    let proxy = read_pointer_or_null(handle, body + all.body.owner?).ok()?.checked_sub(all.proxy.body_owner?)?;
+    let proxy = read_pointer(handle, body + all.body.owner?)?.checked_sub(all.proxy.body_owner?)?;
     // It's the body's proxy if that has the body (so a wrong offset finds nothing rather than something else)
-    (read_pointer_or_null(handle, proxy + all.proxy.body?).ok()? == body).then(|| proxy)
+    (read_pointer(handle, proxy + all.proxy.body?)? == body).then_some(proxy)
 }
 
 // Whether the proxy a body belongs to collides, by its flags, where they say so (TR2013)
@@ -410,10 +410,7 @@ fn segment_distance(a: Vector3<f32>, b: Vector3<f32>, c: Vector3<f32>, d: Vector
 fn read_physics_capsule(handle: Handle, body: usize) -> Option<(Capsule, Vector3<f32>, bool)> {
     let all = layout::current();
     let layout = &all.physics_shape;
-    let shape = read_pointer_or_null(handle, body + all.body.shape).ok()?;
-    if shape == 0 {
-        return None;
-    }
+    let shape = read_pointer(handle, body + all.body.shape)?;
     let mut bytes = vec![0u8; layout.size];
     handle.copy_address(shape, &mut bytes).ok()?;
     if bytes[layout.shape_type] as usize != layout.capsule_type {

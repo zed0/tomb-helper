@@ -45,6 +45,12 @@ impl Game {
         resolve(self.handle, self.base_address, self.offsets.get(&address_type)?)
     }
 
+    /// The pointer where a chain leads (e.g. Lara's instance, from the chain to the pointer to her), None if it doesn't
+    /// resolve or is null
+    pub fn pointer_at(&self, chain: &[usize]) -> Option<usize> {
+        read_pointer(self.handle, resolve(self.handle, self.base_address, chain)?)
+    }
+
     /// The same, as an error if they don't resolve (or there are none)
     pub fn require(&self, address_type: AddressType) -> io::Result<usize> {
         self.resolve(address_type).ok_or_else(|| {

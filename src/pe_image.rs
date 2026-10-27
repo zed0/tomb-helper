@@ -128,11 +128,22 @@ fn parse_headers(data: &[u8]) -> io::Result<Headers> {
 impl PeImage {
     /// 64 or 32, for decoding its code
     pub fn bitness(&self) -> u32 {
+        self.pointer_size() as u32 * 8
+    }
+
+    /// How big its pointers are
+    pub fn pointer_size(&self) -> usize {
         if self.is_64 {
-            64
+            8
         } else {
-            32
+            4
         }
+    }
+
+    /// The pointer at `rva`, None past the end of the image
+    pub fn pointer_at(&self, rva: usize) -> Option<usize> {
+        let bytes = self.data.get(rva..rva.checked_add(self.pointer_size())?)?;
+        Some(crate::game_memory::sized_pointer_from(bytes, bytes.len()))
     }
 
     /// Loads either an exe from disk (mapping its sections to their RVAs) or a dump (`update-offsets` keeps one of each build, or `debug dump`).
@@ -264,7 +275,7 @@ impl PeImage {
             let optional_header = pe + OPTIONAL_HEADER;
             let directories = optional_header + if self.is_64 { DATA_DIRECTORIES_64 } else { DATA_DIRECTORIES_32 };
             let mut descriptor = u32_at(data, directories + IMPORT_DIRECTORY)? as usize;
-            let slot_size = if self.is_64 { 8 } else { 4 };
+            let slot_size = self.pointer_size();
             let slot_at = |offset: usize| -> io::Result<u64> {
                 if self.is_64 {
                     u64_at(data, offset)

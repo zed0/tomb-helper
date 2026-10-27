@@ -34,15 +34,10 @@ const INSTRUCTIONS: usize = 3000;
 
 /// The RVAs of the virtual functions of the class's vtables (a class with several bases has several), in vtable order
 pub fn virtual_functions(image: &PeImage, class: &str) -> Vec<Vec<usize>> {
-    let pointer_size = if image.is_64 { 8 } else { 4 };
+    let pointer_size = image.pointer_size();
     let code: Vec<_> = image.sections().into_iter().filter(|s| s.executable).collect();
     let base = image.image_base as usize;
-    let pointer = |rva: usize| -> Option<usize> {
-        let bytes = image.data.get(rva..rva + pointer_size)?;
-        let mut value = [0u8; 8];
-        value[..pointer_size].copy_from_slice(bytes);
-        (u64::from_le_bytes(value) as usize).checked_sub(base)
-    };
+    let pointer = |rva: usize| image.pointer_at(rva)?.checked_sub(base);
     crate::rtti::image_vtables(image)
         .into_iter()
         .filter(|(_, name)| name == class)
@@ -59,7 +54,7 @@ pub fn virtual_functions(image: &PeImage, class: &str) -> Vec<Vec<usize>> {
 /// followed, including the class's own virtual calls (through `this`'s vtable, which is the class's)
 pub fn usage(image: &PeImage, class: &str) -> Vec<(usize, usize, Vec<Access>)> {
     let this = if image.is_64 { Register::RCX } else { Register::ECX };
-    let pointer_size = if image.is_64 { 8 } else { 4 };
+    let pointer_size = image.pointer_size();
     let vtables = virtual_functions(image, class);
     let functions = vtables.first().cloned().unwrap_or_default();
     // `call [[this] + n]` is the vtable's slot n / pointer size
@@ -199,7 +194,7 @@ fn class_votes(old: &PeImage, new: &PeImage, class: &str) -> (ChainVotes, usize)
     let key = |pointer_size: usize| {
         move |a: &Access| (a.chain.len(), if a.size == pointer_size { 0 } else { a.size }, a.loads_pointer)
     };
-    let (old_key, new_key) = (key(if old.is_64 { 8 } else { 4 }), key(if new.is_64 { 8 } else { 4 }));
+    let (old_key, new_key) = (key(old.pointer_size()), key(new.pointer_size()));
     let mut votes: ChainVotes = ChainVotes::new();
     let mut matched = 0;
     for (slot, _, accesses) in &old_usage {

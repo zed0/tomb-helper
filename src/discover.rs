@@ -8,7 +8,7 @@
 //! `PlayerProxy` (the proxies attached to hers are found through its body); `--save` writes them to the offsets file.
 
 use anyhow::{Context, Result};
-use crate::game_memory::{pointer_from, pointer_size, Handle};
+use crate::game_memory::{pointer_at, pointer_size, Handle};
 use crate::chains;
 use crate::components;
 use crate::rtti::Classes;
@@ -73,7 +73,7 @@ pub fn find_statics(handle: Handle, base_address: usize, image: &PeImage) -> BTr
     }
     let mut by_class: HashMap<String, Vec<(usize, usize)>> = HashMap::new();
     for (&rva, &count) in &counts {
-        let pointer = match pointer_at(&image.data, rva) {
+        let pointer = match image.pointer_at(rva) {
             Some(p) if !(base_address..base_address + image.data.len()).contains(&p) => p,
             _ => continue,
         };
@@ -99,7 +99,7 @@ pub fn find_statics(handle: Handle, base_address: usize, image: &PeImage) -> BTr
     }
     match best(MULTIBODY_CLIENT) {
         Some((rva, count)) => {
-            let client = pointer_at(&image.data, rva).unwrap();
+            let client = image.pointer_at(rva).unwrap();
             // Found by its class, or where the layout says if it has none
             let field = field_of_class(handle, &mut classes, client, COLLISION_SCENE_CLIENT).or(layout.collision_scene.in_client);
             match field {
@@ -158,13 +158,13 @@ pub fn find_player_proxy(handle: Handle, image: &PeImage, base_address: usize, i
     };
     let proxies: Vec<usize> = (0..image.data.len().saturating_sub(PROXY_SEARCHED))
         .step_by(size)
-        .filter(|&rva| vtables.contains(&pointer_from(&image.data[rva..])))
+        .filter(|&rva| image.pointer_at(rva).is_some_and(|p| vtables.contains(&p)))
         .collect();
     // The layout's offset first, then any other
     let offsets = std::iter::once(instance_offset).chain((size..PROXY_SEARCHED).step_by(size).filter(|o| *o != instance_offset));
     for offset in offsets {
         for &rva in &proxies {
-            if let Some(lara) = pointer_at(&image.data, rva + offset).filter(|&p| p != 0 && is_lara(p)) {
+            if let Some(lara) = image.pointer_at(rva + offset).filter(|&p| p != 0 && is_lara(p)) {
                 return Some(PlayerProxy { rva, lara, instance_offset: offset });
             }
         }
@@ -177,7 +177,7 @@ fn field_of_class(handle: Handle, classes: &mut Classes, object: usize, class: &
     let mut bytes = vec![0u8; MULTIBODY_CLIENT_SIZE];
     handle.copy_address(object, &mut bytes).ok()?;
     (0..MULTIBODY_CLIENT_SIZE).step_by(pointer_size()).find(|&offset| {
-        let pointer = pointer_at(&bytes, offset).unwrap_or(0);
+        let pointer = pointer_at(&bytes, offset);
         pointer != 0 && classes.name(handle, pointer).as_deref() == Some(class)
     })
 }
@@ -226,12 +226,12 @@ fn instances_check_out(
 ) -> bool {
     let layout = &layout::current().instance;
     let sampled: Vec<usize> = (0..slots).step_by((slots / INSTANCES_CHECKED).max(1)).collect();
-    let in_use = |slot: usize| pointer_at(&image.data, rva + slot * layout.size + layout.in_use).map_or(false, |p| p != 0);
+    let in_use = |slot: usize| image.pointer_at(rva + slot * layout.size + layout.in_use).is_some_and(|p| p != 0);
     match layout.transform {
         Some(transform) => {
             let mut transforms = 0;
             for &slot in &sampled {
-                match pointer_at(&image.data, rva + slot * layout.size + transform) {
+                match image.pointer_at(rva + slot * layout.size + transform) {
                     Some(0) | None => continue,
                     Some(pointer) if (base_address..base_address + image.data.len()).contains(&pointer) => return false,
                     Some(pointer) => {
@@ -259,10 +259,6 @@ fn instances_check_out(
 }
 
 // At the game's pointer size, None past the end
-fn pointer_at(bytes: &[u8], offset: usize) -> Option<usize> {
-    bytes.get(offset..offset + pointer_size()).map(pointer_from)
-}
-
 /// Replaces the version's entry (the one with the same image size, or version string if there's none) in the
 /// offsets file next to the exe, or adds it, starting from the built in offsets if there's no file yet
 pub fn save_entry(entry: VersionEntry) -> Result<()> {

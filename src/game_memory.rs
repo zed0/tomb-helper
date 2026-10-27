@@ -35,8 +35,13 @@ pub fn pointer_size() -> usize {
 
 /// The pointer at the start of `bytes`, at the game's pointer size
 pub fn pointer_from(bytes: &[u8]) -> usize {
+    sized_pointer_from(bytes, pointer_size())
+}
+
+/// A little endian pointer `size` bytes long at the start of `bytes` (or as much of it as there is)
+pub fn sized_pointer_from(bytes: &[u8], size: usize) -> usize {
     let mut value = [0u8; 8];
-    let size = pointer_size().min(bytes.len());
+    let size = size.min(bytes.len());
     value[..size].copy_from_slice(&bytes[..size]);
     u64::from_le_bytes(value) as usize
 }
@@ -64,10 +69,23 @@ pub fn read_pointer_or_null(handle: impl CopyAddress, address: usize) -> io::Res
     Ok(pointer_from(&bytes))
 }
 
-pub fn read_u32(handle: impl CopyAddress, address: usize) -> Option<u32> {
-    let mut bytes = [0u8; 4];
+/// `N` bytes, None if they can't be read
+pub fn read_bytes<const N: usize>(handle: impl CopyAddress, address: usize) -> Option<[u8; N]> {
+    let mut bytes = [0u8; N];
     handle.copy_address(address, &mut bytes).ok()?;
-    Some(u32::from_le_bytes(bytes))
+    Some(bytes)
+}
+
+pub fn read_u8(handle: impl CopyAddress, address: usize) -> Option<u8> {
+    read_bytes(handle, address).map(|[byte]| byte)
+}
+
+pub fn read_u32(handle: impl CopyAddress, address: usize) -> Option<u32> {
+    read_bytes(handle, address).map(u32::from_le_bytes)
+}
+
+pub fn read_u64(handle: impl CopyAddress, address: usize) -> Option<u64> {
+    read_bytes(handle, address).map(u64::from_le_bytes)
 }
 
 /// A nul terminated string, "" if it can't be read
@@ -120,12 +138,6 @@ pub fn read_floats<const N: usize>(handle: impl CopyAddress, address: usize) -> 
     let mut bytes = vec![0u8; N * 4];
     handle.copy_address(address, &mut bytes).ok()?;
     Some(floats_at(&bytes, 0))
-}
-
-pub fn read_u64(handle: impl CopyAddress, address: usize) -> Option<u64> {
-    let mut bytes = [0u8; 8];
-    handle.copy_address(address, &mut bytes).ok()?;
-    Some(u64::from_le_bytes(bytes))
 }
 
 /// A pointer at the game's pointer size

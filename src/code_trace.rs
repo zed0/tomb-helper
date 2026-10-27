@@ -109,7 +109,7 @@ impl<'a> Tracer<'a> {
         Tracer {
             image,
             bitness: image.bitness(),
-            pointer_size: if image.is_64 { 8 } else { 4 },
+            pointer_size: image.pointer_size(),
             resolver: None,
             callers: OnceLock::new(),
             max_depth: MAX_CALL_DEPTH,
