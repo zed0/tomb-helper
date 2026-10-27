@@ -52,3 +52,24 @@ pub enum Action {
     // The overlay's settings window (what it draws stays)
     ToggleSettingsWindow {},
 }
+
+impl Action {
+    /// Whether holding its key does it again at the keyboard's repeat rate. Toggles don't: held, they'd flick on and
+    /// off, and toggling the overlay faster than it can unload left it loaded but unhooked.
+    pub fn repeats(&self) -> bool {
+        !matches!(
+            self,
+            Action::ToggleActive {}
+                | Action::ToggleUI {}
+                | Action::ToggleLaraCollision {}
+                | Action::ToggleCoarseCollision {}
+                | Action::ToggleDetailedCollision {}
+                | Action::ToggleInteractables {}
+                | Action::ToggleTriggers {}
+                | Action::ToggleNpcs {}
+                | Action::ToggleCollision {}
+                | Action::ToggleOverlay {}
+                | Action::ToggleSettingsWindow {}
+        )
+    }
+}

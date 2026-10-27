@@ -203,8 +203,8 @@ fn connect(
     let mut callbacks: std::collections::HashMap<KeyCode, Callback> = std::collections::HashMap::new();
     for (key, actions) in key_groups {
         let current_tx = tx.clone();
-        callbacks.insert(key, Box::new(move || {
-            for action in &actions {
+        callbacks.insert(key, Box::new(move |repeated| {
+            for action in actions.iter().filter(|action| !repeated || action.repeats()) {
                 let _ = current_tx.send(*action);
             }
         }));

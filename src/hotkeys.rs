@@ -1,6 +1,7 @@
 //! Global hotkeys: the keys a hotkey can be (`KeyCode`, Windows' virtual key codes, with livesplit-hotkey 0.5's names,
 //! which configs use), and a thread polling the bound keys (`Hotkeys`) that calls a key's callback when it's pressed,
-//! then again while it's held, at the keyboard's repeat delay and rate (as the key repeat a keyboard hook sees).
+//! then again while it's held, at the keyboard's repeat delay and rate (as the key repeat a keyboard hook sees), saying
+//! which calls are repeats.
 //! It polls rather than hooking the keyboard: livesplit-hotkey's hook could be called again from inside itself (while
 //! another program's hook was slow), which panicked and aborted the exe.
 
@@ -191,7 +192,8 @@ pub enum KeyCode {
     OemClear = 0xFE,
 }
 
-pub type Callback = Box<dyn FnMut() + Send + 'static>;
+// Called with whether it's a repeat (the key's still held) rather than a press
+pub type Callback = Box<dyn FnMut(bool) + Send + 'static>;
 
 /// Calls each key's callback when it's pressed and while it's held, until dropped
 pub struct Hotkeys {
@@ -226,8 +228,8 @@ fn poll(mut callbacks: HashMap<KeyCode, Callback>, stop: &AtomicBool) {
     while !stop.load(Ordering::Relaxed) {
         let now = Instant::now();
         for (&key, callback) in &mut callbacks {
-            if repeat.fires(&mut held, key, is_down(key), now) {
-                callback();
+            if let Some(repeated) = repeat.fires(&mut held, key, is_down(key), now) {
+                callback(repeated);
             }
         }
         thread::sleep(POLL_INTERVAL);
@@ -260,23 +262,23 @@ impl Repeat {
         }
     }
 
-    // Whether a key's callback is called now: when it's pressed, and once it's been held for the delay, every
-    // interval. `held` is when each held key next repeats.
-    fn fires(&self, held: &mut HashMap<KeyCode, Instant>, key: KeyCode, down: bool, now: Instant) -> bool {
+    // Whether a key's callback is called now, and if so whether it's a repeat: when it's pressed, and once it's been
+    // held for the delay, every interval. `held` is when each held key next repeats.
+    fn fires(&self, held: &mut HashMap<KeyCode, Instant>, key: KeyCode, down: bool, now: Instant) -> Option<bool> {
         if !down {
             held.remove(&key);
-            return false;
+            return None;
         }
         match held.get_mut(&key) {
             None => {
                 held.insert(key, now + self.delay);
-                true
+                Some(false)
             }
             Some(next) if now >= *next => {
                 *next = now + self.interval;
-                true
+                Some(true)
             }
-            Some(_) => false,
+            Some(_) => None,
         }
     }
 }
@@ -292,15 +294,15 @@ mod tests {
         let start = Instant::now();
         let at = |ms| start + Duration::from_millis(ms);
         let mut fires = |down, ms| repeat.fires(&mut held, KeyCode::W, down, at(ms));
-        assert!(fires(true, 0));
-        assert!(!fires(true, 5));
-        assert!(!fires(true, 495));
-        assert!(fires(true, 500));
-        assert!(!fires(true, 520));
-        assert!(fires(true, 530));
-        assert!(!fires(false, 535));
-        assert!(fires(true, 540));
-        assert!(!fires(true, 600));
+        assert_eq!(fires(true, 0), Some(false));
+        assert_eq!(fires(true, 5), None);
+        assert_eq!(fires(true, 495), None);
+        assert_eq!(fires(true, 500), Some(true));
+        assert_eq!(fires(true, 520), None);
+        assert_eq!(fires(true, 530), Some(true));
+        assert_eq!(fires(false, 535), None);
+        assert_eq!(fires(true, 540), Some(false));
+        assert_eq!(fires(true, 600), None);
     }
 
     #[test]

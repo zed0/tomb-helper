@@ -35,7 +35,7 @@ User docs (hotkeys, config, cutscene timing generation) live in `README.md`.
    - `PositionHandler::new_position_handler` (Lara position) and `::new_look_at_handler` (ROTTR look-at)
    - Each constructor returns `None` if the game version lacks a required `AddressType`, so features
      silently disappear per-version.
-3. Starts the hotkeys (`hotkeys::Hotkeys`, a thread polling the bound keys, repeating held ones); keys are grouped so one key can trigger several
+3. Starts the hotkeys (`hotkeys::Hotkeys`, a thread polling the bound keys, repeating held ones but for toggles, `Action::repeats`); keys are grouped so one key can trigger several
    `Action`s, sent over an mpsc channel.
 4. Busy loop: dispatch any received `Action` to every handler's `handle_action`, then call `handle_tick`
    on all. Exits on game process exit (`is_process_running`) or SIGINT. Errors are `eprintln!`ed (`report`), except the game

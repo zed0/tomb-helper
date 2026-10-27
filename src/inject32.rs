@@ -14,7 +14,7 @@ use winapi::shared::minwindef::{DWORD, FALSE, HMODULE, MAX_PATH};
 use winapi::um::handleapi::CloseHandle;
 use winapi::um::memoryapi::{VirtualAllocEx, VirtualFreeEx, WriteProcessMemory};
 use winapi::um::processthreadsapi::{CreateRemoteThread, GetExitCodeThread, OpenProcess};
-use winapi::um::psapi::{EnumProcessModulesEx, GetModuleBaseNameW, LIST_MODULES_32BIT};
+use winapi::um::psapi::{EnumProcessModulesEx, GetModuleBaseNameW, LIST_MODULES_32BIT, LIST_MODULES_ALL};
 use winapi::um::synchapi::WaitForSingleObject;
 use winapi::um::winbase::INFINITE;
 use winapi::um::winnt::{
@@ -40,6 +40,22 @@ fn last_error(what: &str) -> io::Error {
 
 /// Where the 32-bit module with this name (ignoring case) is loaded in the process
 fn module_base(process: HANDLE, name: &str) -> io::Result<usize> {
+    find_module(process, name, LIST_MODULES_32BIT)?
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, format!("The game has no 32-bit {}", name)))
+}
+
+/// Whether a module with this name (ignoring case, of either bitness) is loaded in the game
+pub fn is_loaded(pid: Pid, name: &str) -> io::Result<bool> {
+    let process = unsafe { OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, pid) };
+    if process.is_null() {
+        return Err(last_error("Could not open the game"));
+    }
+    let process = OwnedHandle(process);
+    Ok(find_module(process.0, name, LIST_MODULES_ALL)?.is_some())
+}
+
+// The module with this name (ignoring case) among those `filter` lists
+fn find_module(process: HANDLE, name: &str, filter: DWORD) -> io::Result<Option<usize>> {
     let mut modules: Vec<HMODULE> = vec![null_mut(); MAX_MODULES];
     let mut needed: DWORD = 0;
     let listed = unsafe {
@@ -48,22 +64,21 @@ fn module_base(process: HANDLE, name: &str) -> io::Result<usize> {
             modules.as_mut_ptr(),
             (modules.len() * std::mem::size_of::<HMODULE>()) as DWORD,
             &mut needed,
-            LIST_MODULES_32BIT,
+            filter,
         )
     };
     if listed == FALSE {
         return Err(last_error("Could not list the game's modules"));
     }
     modules.truncate(needed as usize / std::mem::size_of::<HMODULE>());
-    modules
+    Ok(modules
         .into_iter()
         .find(|module| {
             let mut buffer = [0_u16; MAX_PATH];
             let length = unsafe { GetModuleBaseNameW(process, *module, buffer.as_mut_ptr(), MAX_PATH as DWORD) };
             String::from_utf16_lossy(&buffer[..length as usize]).eq_ignore_ascii_case(name)
         })
-        .map(|module| module as usize)
-        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, format!("The game has no 32-bit {}", name)))
+        .map(|module| module as usize))
 }
 
 /// The address of an exported function of a module loaded in the process

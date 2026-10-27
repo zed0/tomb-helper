@@ -3,7 +3,9 @@
 //! (with a projection made from `CameraLens`), boxes round objects (rescanned every second), triggers, the level's
 //! collision near her, and her own collision (with a 150ms hold on "pushing", as contacts are often caught mid update).
 //! Without the camera or instance array the overlay only shows its window. It sets `should_exit` to make the overlay
-//! eject itself when toggled off or dropped. `debug overlay-data` prints what it would send without injecting.
+//! eject itself when toggled off or dropped, and toggled back on before that's finished, waits for it to go before
+//! injecting it again: loading it while it's still loaded only counts it twice, so its eject unhooks it but leaves it
+//! loaded, and from then on injecting does nothing. `debug overlay-data` prints what it would send without injecting.
 
 use anyhow::{anyhow, Context, Result};
 use crate::game::Game;
@@ -41,6 +43,8 @@ const LARA_MIDDLE: f32 = 85.0;
 const OBJECT_REFRESH_INTERVAL: time::Duration = time::Duration::from_secs(1);
 // Lara's contacts are often caught mid update, so keep showing an attached proxy as touching for this long
 const TOUCHING_HOLD: time::Duration = time::Duration::from_millis(150);
+// How long to wait for the overlay from before to unload, when it's toggled back on before it has
+const UNLOAD_TIMEOUT: time::Duration = time::Duration::from_secs(5);
 
 // Which objects the window says to show
 #[derive(Clone, Copy, Default, PartialEq)]
@@ -147,6 +151,8 @@ struct TriggerGeometry {
 
 pub struct OverlayHandler {
     active: bool,
+    // Toggled on while the overlay from before was still loaded: since when it's been waiting for it to unload
+    waiting_to_inject: Option<time::Instant>,
     // For reading the game's structures, and where things are in it
     game: Game,
     // For injecting the overlay
@@ -218,6 +224,7 @@ impl OverlayHandler {
 
         Some(OverlayHandler {
             active: false,
+            waiting_to_inject: None,
             game,
             pid: *pid,
             arch: *arch,
@@ -647,6 +654,19 @@ impl Handler for OverlayHandler {
         if !self.active {
             return Ok(());
         }
+        if let Some(since) = self.waiting_to_inject {
+            if self.overlay_loaded()? {
+                if since.elapsed() > UNLOAD_TIMEOUT {
+                    self.waiting_to_inject = None;
+                    self.active = false;
+                    return Err("The overlay from before is still loaded in the game but isn't unloading, so it can't \
+                        be injected again until the game's restarted".into());
+                }
+                return Ok(());
+            }
+            self.waiting_to_inject = None;
+            self.inject()?;
+        }
 
         self.position = self.game.lara_position()?;
         if self.game.has(AddressType::CameraView) {
@@ -745,24 +765,15 @@ impl Handler for OverlayHandler {
                 self.active = !self.active;
 
                 if self.active {
-                    self.ui_memory_manager.get_mut().update(|val| val.should_exit = false);
-
-                    println!("Injecting overlay dll");
-                    // A 32-bit game (TR2013) needs the 32-bit build of the overlay, injected its own way
-                    let injected = if matches!(self.arch, Architecture::Arch32Bit) {
-                        let dll_path = env::current_exe()?.with_file_name(OVERLAY_DLL_32);
-                        inject32::inject(self.pid, &dll_path)
+                    // Still unloading after being toggled off: it's injected once it's gone (in `handle_tick`)
+                    if self.overlay_loaded()? {
+                        println!("Waiting for the overlay to unload before injecting it again");
+                        self.waiting_to_inject = Some(time::Instant::now());
                     } else {
-                        let dll_path = env::current_exe()?.with_file_name(OVERLAY_DLL);
-                        Process::by_pid(&self.pid)
-                            .and_then(|process| process.inject(dll_path))
-                            .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))
-                    };
-                    if let Err(e) = injected {
-                        self.active = false;
-                        return Err(format!("Could not inject the overlay: {}", e).into());
+                        self.inject()?;
                     }
                 } else {
+                    self.waiting_to_inject = None;
                     println!("Ejecting injected overlay dll");
                     self.ui_memory_manager.get_mut().update(|val| val.should_exit = true);
                     println!("done");
@@ -832,6 +843,37 @@ pub fn print_overlay_data(version: Option<String>, delay: u64) -> Result<()> {
         }
     }
     Ok(())
+}
+
+impl OverlayHandler {
+    fn overlay_dll(&self) -> &'static str {
+        if matches!(self.arch, Architecture::Arch32Bit) { OVERLAY_DLL_32 } else { OVERLAY_DLL }
+    }
+
+    // Whether the overlay's DLL is in the game
+    fn overlay_loaded(&self) -> io::Result<bool> {
+        inject32::is_loaded(self.pid, self.overlay_dll())
+    }
+
+    fn inject(&mut self) -> Result<(), Box<dyn Error>> {
+        self.ui_memory_manager.get_mut().update(|val| val.should_exit = false);
+
+        println!("Injecting overlay dll");
+        let dll_path = env::current_exe()?.with_file_name(self.overlay_dll());
+        // A 32-bit game (TR2013) needs the 32-bit build of the overlay, injected its own way
+        let injected = if matches!(self.arch, Architecture::Arch32Bit) {
+            inject32::inject(self.pid, &dll_path)
+        } else {
+            Process::by_pid(&self.pid)
+                .and_then(|process| process.inject(dll_path))
+                .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))
+        };
+        if let Err(e) = injected {
+            self.active = false;
+            return Err(format!("Could not inject the overlay: {}", e).into());
+        }
+        Ok(())
+    }
 }
 
 impl Drop for OverlayHandler {

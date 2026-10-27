@@ -99,7 +99,7 @@ Currently the available actions are:
 - `Up` (can take a distance, which defaults to `100.0`)
 - `Down` (can take a distance, which defaults to `100.0`)
 
-The available keys are the names in `KeyCode` in [`src/hotkeys.rs`](src/hotkeys.rs) (e.g. `F5`, `W`, `D1`, `NumPad0`, `Left`, `LeftShift`). Holding a key repeats its actions, at the keyboard's repeat delay and rate.
+The available keys are the names in `KeyCode` in [`src/hotkeys.rs`](src/hotkeys.rs) (e.g. `F5`, `W`, `D1`, `NumPad0`, `Left`, `LeftShift`). Holding a key repeats its actions, at the keyboard's repeat delay and rate, except the toggles (`Toggle...`), which happen once per press.
 
 ## Offsets file
 
