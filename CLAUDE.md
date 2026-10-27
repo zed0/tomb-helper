@@ -14,10 +14,12 @@ User docs (hotkeys, config, cutscene timing generation) live in `README.md`.
 - The bin and lib share `src/ui_ipc_data.rs` and `src/position.rs` by each declaring them with `mod` —
   they're compiled into both, so `UiData` must stay `#[repr(C)]` with identical layout on both sides, including in the
   32-bit overlay for TR2013: nothing in the shared memory may be pointer sized (`u64` addresses, `u32` counts).
-- `hudhook` (0.9.x) is patched (`[patch.'crates-io']`) to the `get-process-by-pid` branch of
-  github.com/zed0/hudhook, which is upstream `main` plus `Process::by_pid()` in `src/inject.rs` (not upstream; used by
-  `OverlayHandler`); `Cargo.lock` pins its commit (`cargo update -p hudhook` picks up new ones). A local checkout
-  at `H:\hudhook` tracks the same branch; to build against local changes there, add
+- `hudhook` (0.9.x) is patched (`[patch.'crates-io']`) to the `correct-dllmain-return-type` branch of
+  github.com/zed0/hudhook, which is upstream `main` plus `Process::by_pid()` in `src/inject.rs` (used by
+  `OverlayHandler`), then the `hudhook!` macro's `DllMain` returning TRUE (neither upstream: without a return value
+  the loader read a leftover register, and when it was 0 unloaded the DLL under the thread `DllMain` had started,
+  crashing the game at random on inject); `Cargo.lock` pins its commit (`cargo update -p hudhook` picks up new ones).
+  A local checkout at `H:\hudhook` tracks the same branch; to build against local changes there, add
   `--config "patch.crates-io.hudhook.path='H:/hudhook'"`. The patch's version must match the
   `hudhook = "..."` requirement or cargo silently ignores it and uses crates.io.
 - CI: `.github/workflows/rust.yml` (build, the 32-bit overlay too, and test on push/PR to master), `main.yml` (release

@@ -586,7 +586,7 @@ checksum = "df3b46402a9d5adb4c86a0cf463f42e19994e3ee891101b1841f30a545cb49a9"
 [[package]]
 name = "hudhook"
 version = "0.9.3"
-source = "git+https://github.com/zed0/hudhook?branch=get-process-by-pid#e3b469edd72cb3a081c9b616984c94cad29df969"
+source = "git+https://github.com/zed0/hudhook?branch=correct-dllmain-return-type#801fb1f5f5aada3fd3c6820b2133d6cd8752dce4"
 dependencies = [
  "bitflags 2.9.1",
  "cc",
