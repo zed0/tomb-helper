@@ -13,7 +13,12 @@ User docs (hotkeys, config, cutscene timing generation) live in `README.md`.
 
 - The bin and lib share `src/ui_ipc_data.rs`, `src/position.rs` and `src/logging.rs` by each declaring them with `mod` —
   they're compiled into both, so `UiData` must stay `#[repr(C)]` with identical layout on both sides, including in the
-  32-bit overlay for TR2013: nothing in the shared memory may be pointer sized (`u64` addresses, `u32` counts).
+  32-bit overlay for TR2013: nothing in the shared memory may be pointer sized (`u64` addresses, `u32` counts). Every
+  build checks `UiDoubleBuffer`'s size is `SHARED_SIZE` (`ui_ipc_data.rs`), so a layout change fails the build until
+  that's updated (the error says the new size), and a field that's another size in the 32-bit overlay fails its build.
+- The overlay only hooks DirectX 12 (64-bit) and DirectX 11 (32-bit), so it doesn't appear in ROTTR or SOTTR running
+  DirectX 11, or TR2013 running DirectX 9. hudhook has DX11 and DX9 hooks too, so the DLL could pick by which d3d DLL
+  the game has loaded.
 - `hudhook` (0.9.x) is patched (`[patch.'crates-io']`) to the `vtable-hooks` branch of github.com/zed0/hudhook,
   which is upstream `main` plus (none of it upstream): `Process::by_pid()` in `src/inject.rs` (used by
   `OverlayHandler`); the `hudhook!` macro's `DllMain` returning TRUE (without a return value the loader read a leftover
@@ -25,8 +30,9 @@ User docs (hotkeys, config, cutscene timing generation) live in `README.md`.
   A local checkout at `H:\hudhook` tracks the same branch; to build against local changes there, add
   `--config "patch.crates-io.hudhook.path='H:/hudhook'"`. The patch's version must match the
   `hudhook = "..."` requirement or cargo silently ignores it and uses crates.io.
-- CI: `.github/workflows/rust.yml` (build, the 32-bit overlay too, and test on push/PR to master), `main.yml` (release
-  on `v*` tag: `tomb-helper.exe`, `tomb_helper_ui.dll`, `tomb_helper_ui32.dll`, and `tomb-helper.zip` of all three).
+- CI: `.github/workflows/rust.yml` (build, the 32-bit overlay too, `clippy -D warnings`, and test on push/PR to
+  master), `main.yml` (release on `v*` tag, after the tests: `tomb-helper.exe`, `tomb_helper_ui.dll`,
+  `tomb_helper_ui32.dll`, and `tomb-helper.zip` of all three). The code isn't rustfmt formatted (lines go to 120).
   Versioning via `cargo-release`.
 - `.cargo/config.toml` holds the `crt-static` rustflags (static CRT so the exe/dll run standalone).
   It must stay under `.cargo/` — cargo ignores a `config.toml` at the repo root.
@@ -42,8 +48,8 @@ User docs (hotkeys, config, cutscene timing generation) live in `README.md`.
      silently disappear per-version.
 3. Starts the hotkeys (`hotkeys::Hotkeys`, a thread polling the bound keys, repeating held ones but for toggles, `Action::repeats`); keys are grouped so one key can trigger several
    `Action`s, sent over an mpsc channel.
-4. Busy loop: dispatch any received `Action` to every handler's `handle_action`, then call `handle_tick`
-   on all. Exits on game process exit (`is_process_running`) or SIGINT. Errors are `eprintln!`ed (`report`), except the game
+4. Every 5ms (`TICK_INTERVAL`, sleeping for what's left of it): dispatch the received `Action`s to every handler's
+   `handle_action`, then call `handle_tick` on all. Exits on game process exit (`is_process_running`) or SIGINT. Errors are `eprintln!`ed (`report`), except the game
    being unreadable (`game_memory::is_unreadable`: `Unreadable`, or Windows refusing a read), which is expected during
    loading screens and exiting, so only shown with `debug_logging`. Make errors for reads that fail with `unreadable`.
 5. Every 500ms it checks the offsets file (`reload_offsets`); if the running version's offsets changed the handlers are
@@ -148,8 +154,8 @@ Each module's `//!` doc says what's in it and how it works; this is where to loo
 - **Add a new feature module:** implement `Handler` (its constructor takes the `Connection`), add `mod` in `main.rs`,
   construct it in `create_handlers()`.
 - **Send more data to the overlay:** add a field to `UiData` (`src/ui_ipc_data.rs`), fill it in
-  `OverlayHandler::handle_tick`, read it in `TombHelperHud::render` (`src/lib.rs`). Both binaries must be
-  rebuilt together.
+  `OverlayHandler::handle_tick`, read it in `TombHelperHud::render` (`src/lib.rs`), and update `SHARED_SIZE` to the
+  size the build error gives. Both binaries must be rebuilt together.
 
 ## How `port` finds things, and what it found in each build
 
