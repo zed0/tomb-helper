@@ -14,7 +14,7 @@ use crate::components;
 use crate::rtti::{Classes, COLLISION_SCENE_CLIENT, GAME_RENDER, MULTIBODY_CLIENT};
 use crate::derive::References;
 use crate::layout;
-use crate::offsets_file::{describe_chain, to_json, Hex, OffsetsFile, OffsetsSource, VersionEntry};
+use crate::offsets_file::{self, describe_chain};
 use crate::pe_image::PeImage;
 use crate::process_details::AddressType;
 use process_memory::CopyAddress;
@@ -48,11 +48,9 @@ pub fn discover(version: Option<String>, save: bool) -> Result<()> {
         println!("  {:<15} {}  ({})", format!("{:?}", address_type), describe_chain(chain), note);
     }
     if save {
-        let mut entry = VersionEntry::from_details(details);
-        for (address_type, chain) in &found {
-            entry.offsets.insert(*address_type, chain.iter().map(|o| Hex(*o)).collect());
-        }
-        save_entry(entry)?;
+        let mut details = details.clone();
+        details.address_offsets.extend(found);
+        offsets_file::save(&details)?;
     }
     Ok(())
 }
@@ -254,25 +252,3 @@ fn instances_check_out(
     }
 }
 
-// At the game's pointer size, None past the end
-/// Replaces the version's entry (the one with the same image size, or version string if there's none) in the
-/// offsets file next to the exe, or adds it, starting from the built in offsets if there's no file yet
-pub fn save_entry(entry: VersionEntry) -> Result<()> {
-    let mut source = OffsetsSource::new();
-    let mut versions: Vec<VersionEntry> = source.load()?.iter().map(VersionEntry::from_details).collect();
-    let same = |e: &VersionEntry| {
-        e.executable == entry.executable
-            && match (e.image_size, entry.image_size) {
-                (Some(a), Some(b)) => a == b,
-                _ => e.version == entry.version,
-            }
-    };
-    match versions.iter().position(same) {
-        Some(index) => versions[index] = entry,
-        None => versions.push(entry),
-    }
-    let file = OffsetsFile { versions, words: crate::words::current().as_ref().clone() };
-    std::fs::write(&source.path, to_json(&file) + "\n").with_context(|| format!("Could not write {:?}", source.path))?;
-    println!("Saved to {:?}", source.path);
-    Ok(())
-}

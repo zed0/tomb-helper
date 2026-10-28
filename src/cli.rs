@@ -6,7 +6,7 @@ use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use std::path::Path;
 
-use crate::offsets_file::{known_process_details, parse_hex, to_json, OffsetsFile, OffsetsSource, VersionEntry};
+use crate::offsets_file::{known_process_details, parse_hex, OffsetsSource, VersionEntry};
 use crate::watch::{Breakpoint, Dump};
 
 #[derive(Parser)]
@@ -345,12 +345,10 @@ fn export_offsets(out: Option<&str>) -> Result<()> {
     if path.exists() {
         bail!("{:?} already exists, not overwriting it", path);
     }
-    let file = OffsetsFile {
-        versions: known_process_details().iter().map(VersionEntry::from_details).collect(),
-        words: crate::words::current().as_ref().clone(),
-    };
-    std::fs::write(&path, to_json(&file) + "\n").with_context(|| format!("Could not write {:?}", path))?;
-    println!("Wrote {} versions to {:?}", file.versions.len(), path);
+    let versions: Vec<VersionEntry> = known_process_details().iter().map(VersionEntry::from_details).collect();
+    let count = versions.len();
+    crate::offsets_file::write(&path, versions)?;
+    println!("Wrote {} versions to {:?}", count, path);
     Ok(())
 }
 

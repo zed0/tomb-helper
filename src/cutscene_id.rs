@@ -157,7 +157,7 @@ pub fn find_and_save(game: &Game, details: &mut crate::process_details::ProcessD
     if save && !unchanged {
         details.address_offsets.insert(AddressType::CutsceneId, found.chain.clone());
         details.unverified.remove(&AddressType::CutsceneId);
-        crate::discover::save_entry(crate::offsets_file::VersionEntry::from_details(details))?;
+        crate::offsets_file::save(details)?;
     }
     Ok(found)
 }

@@ -2,7 +2,7 @@
 //! module (which works on Denuvo builds), with its `sections` and `imports` (IAT slot -> name).
 
 use crate::find_process;
-use process_memory::{CopyAddress, Pid, TryIntoProcessHandle};
+use process_memory::{Architecture, CopyAddress, Pid, TryIntoProcessHandle};
 use std::collections::HashMap;
 use std::fs;
 use std::io;
@@ -129,6 +129,14 @@ impl PeImage {
     /// 64 or 32, for decoding its code
     pub fn bitness(&self) -> u32 {
         self.pointer_size() as u32 * 8
+    }
+
+    pub fn architecture(&self) -> Architecture {
+        if self.is_64 {
+            Architecture::Arch64Bit
+        } else {
+            Architecture::Arch32Bit
+        }
     }
 
     /// How big its pointers are

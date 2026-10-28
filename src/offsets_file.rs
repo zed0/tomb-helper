@@ -16,7 +16,7 @@ use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::BTreeMap;
 use std::fmt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 use std::{env, fs};
 
@@ -231,7 +231,12 @@ impl OffsetsSource {
 
     pub fn load(&mut self) -> Result<Vec<ProcessDetails>> {
         self.modified = modified(&self.path);
-        if self.modified.is_none() {
+        self.load_copy()
+    }
+
+    // The versions in the file (or the built in ones), without noting when it was loaded
+    fn load_copy(&self) -> Result<Vec<ProcessDetails>> {
+        if !self.path.exists() {
             return parse(BUILT_IN).context("Built in offsets are invalid");
         }
         let json = fs::read_to_string(&self.path).with_context(|| format!("Could not read {:?}", self.path))?;
@@ -250,6 +255,34 @@ impl OffsetsSource {
     pub fn changed(&self) -> bool {
         modified(&self.path) != self.modified
     }
+}
+
+/// Saves the version to the offsets file next to the exe, replacing its entry (the one with the same image size, or
+/// version string if there's none) or adding it, starting from the built in offsets if there's no file yet
+pub fn save(details: &ProcessDetails) -> Result<()> {
+    let entry = VersionEntry::from_details(details);
+    let source = OffsetsSource::new();
+    let mut versions: Vec<VersionEntry> = source.load_copy()?.iter().map(VersionEntry::from_details).collect();
+    let same = |e: &VersionEntry| {
+        e.executable == entry.executable
+            && match (e.image_size, entry.image_size) {
+                (Some(a), Some(b)) => a == b,
+                _ => e.version == entry.version,
+            }
+    };
+    match versions.iter().position(same) {
+        Some(index) => versions[index] = entry,
+        None => versions.push(entry),
+    }
+    write(&source.path, versions)?;
+    println!("Saved to {:?}", source.path);
+    Ok(())
+}
+
+/// Writes an offsets file with these versions, and the words in use
+pub fn write(path: &Path, versions: Vec<VersionEntry>) -> Result<()> {
+    let file = OffsetsFile { versions, words: crate::words::current().as_ref().clone() };
+    fs::write(path, to_json(&file) + "\n").with_context(|| format!("Could not write {:?}", path))
 }
 
 /// The known versions, for the command line tools. Exits on an invalid offsets file.

@@ -301,7 +301,7 @@ pub fn find_flight_fields(version: Option<String>, save: bool) -> Result<()> {
     }
     if save && !changes.is_empty() {
         details.layout = after;
-        crate::discover::save_entry(crate::offsets_file::VersionEntry::from_details(&details))?;
+        crate::offsets_file::save(&details)?;
     }
     Ok(())
 }

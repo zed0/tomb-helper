@@ -20,11 +20,11 @@
 use anyhow::{anyhow, bail, Context, Result};
 use crate::code_trace::{Access, Tracer};
 use crate::find_process;
-use crate::offsets_file::{describe_chain, to_json, Hex, VersionEntry};
+use crate::offsets_file::{describe_chain, to_json, VersionEntry};
 use crate::pe_image::PeImage;
 use crate::normalised;
 use crate::offsets_file::known_process_details;
-use crate::process_details::{AddressType, ProcessDetails};
+use crate::process_details::{AddressType, ProcessDetails, VersionIdentifier};
 use process_memory::Architecture;
 use rayon::prelude::*;
 use std::cell::OnceCell;
@@ -689,54 +689,41 @@ fn describe(sources: &[LevelSource]) -> String {
         .join(", ")
 }
 
-/// Prints a version entry for the offsets file. Offsets that aren't `sure` go under `unverified`,
-/// which tomb-helper ignores, so they can be checked before being moved into `offsets`.
-pub fn print_entry(
-    details: &ProcessDetails,
-    image: &PeImage,
-    version: &str,
-    lines: &[(AddressType, Option<Vec<usize>>, bool, String)],
-) {
-    for (address_type, chain, sure, note) in lines {
-        println!(
-            "//   {:<17} {}{}",
-            format!("{:?}", address_type),
-            match (chain, sure) {
-                (None, _) => "[NOT FOUND] ",
-                (Some(_), false) => "[UNSURE] ",
-                _ => "",
-            },
-            note
-        );
-    }
-    let hex = |chain: &Vec<usize>| chain.iter().map(|o| Hex(*o)).collect::<Vec<Hex>>();
-    let entry = VersionEntry {
-        game: details.name.clone(),
-        executable: details.executable_name.clone(),
-        version: version.to_string(),
-        image_size: Some(image.size_of_image()),
-        bits: image.bitness(),
-        offsets: lines
-            .iter()
-            .filter_map(|(t, chain, sure, _)| chain.as_ref().filter(|_| *sure).map(|c| (*t, hex(c))))
-            .collect(),
-        unverified: lines
-            .iter()
-            .filter_map(|(t, chain, sure, _)| chain.as_ref().filter(|_| !*sure).map(|c| (*t, hex(c))))
-            .collect(),
-        // Structures are much less likely to change than statics, so start from the known version's
-        layout: details.layout.clone(),
-    };
-    println!("{}", to_json(&entry));
+/// An offset worked out for another build: its chain if one was found, whether that's sure, and how it was found
+pub struct DerivedOffset {
+    pub address_type: AddressType,
+    pub chain: Option<Vec<usize>>,
+    pub sure: bool,
+    pub how: String,
 }
 
-/// The offsets of `details` (a version whose image is `old`) in the `new` image: (type, chain if found, whether it's
-/// sure, how each level was found)
-pub fn derive_lines(
-    old: &PeImage,
-    details: &ProcessDetails,
-    new: &PeImage,
-) -> Vec<(AddressType, Option<Vec<usize>>, bool, String)> {
+/// Prints a version entry for the offsets file. Offsets that aren't `sure` go under `unverified`,
+/// which tomb-helper ignores, so they can be checked before being moved into `offsets`.
+pub fn print_entry(details: &ProcessDetails, image: &PeImage, version: &str, derived: &[DerivedOffset]) {
+    for offset in derived {
+        let mark = match (&offset.chain, offset.sure) {
+            (None, _) => "[NOT FOUND] ",
+            (Some(_), false) => "[UNSURE] ",
+            _ => "",
+        };
+        println!("//   {:<17} {}{}", format!("{:?}", offset.address_type), mark, offset.how);
+    }
+    let chains = |sure: bool| {
+        derived.iter().filter(|d| d.sure == sure).filter_map(|d| Some((d.address_type, d.chain.clone()?))).collect()
+    };
+    let entry = ProcessDetails {
+        version: VersionIdentifier { version: version.to_string(), image_size: Some(image.size_of_image()) },
+        arch: image.architecture(),
+        address_offsets: chains(true),
+        unverified: chains(false),
+        // Structures are much less likely to change than statics, so start from the known version's layout
+        ..details.clone()
+    };
+    println!("{}", to_json(&VersionEntry::from_details(&entry)));
+}
+
+/// The offsets of `details` (a version whose image is `old`) in the `new` image
+pub fn derive_lines(old: &PeImage, details: &ProcessDetails, new: &PeImage) -> Vec<DerivedOffset> {
     println!("Indexing references...");
     let old_refs = References::new(old);
     let new_refs = References::new(new);
@@ -779,13 +766,14 @@ pub fn derive_lines(
         .into_iter()
         .map(|(address_type, offsets)| {
             let (derivation, votes) = &derived[&offsets[0]];
+            let address_type = *address_type;
             match derivation.best() {
                 Some(new_base) => {
                     let (chain, sources) = map_chain(offsets, new_base, votes, derivation.normalised);
                     let sure = derivation.confident() && !sources.iter().any(|s| matches!(s, LevelSource::Copied));
-                    (*address_type, Some(chain), sure, describe(&sources))
+                    DerivedOffset { address_type, chain: Some(chain), sure, how: describe(&sources) }
                 }
-                None => (*address_type, None, false, String::new()),
+                None => DerivedOffset { address_type, chain: None, sure: false, how: String::new() },
             }
         })
         .collect()
@@ -818,7 +806,7 @@ pub fn derive(from: &str, to: &str, from_version: Option<&str>) -> Result<()> {
     let mut details = details;
     // What the derived chains say of the layout
     let derived: crate::process_details::AddressOffsets =
-        lines.iter().filter_map(|(t, chain, sure, _)| Some((*t, chain.clone().filter(|_| *sure)?))).collect();
+        lines.iter().filter(|d| d.sure).filter_map(|d| Some((d.address_type, d.chain.clone()?))).collect();
     let (layout, note) = crate::targets::layout_from_chains(details.layout.clone(), &derived);
     if let Some(note) = note {
         println!("//   layout {}", note);

@@ -6,7 +6,7 @@
 
 use anyhow::{bail, Context, Result};
 use crate::code_trace::{Access, CallResolver, Tracer};
-use crate::derive::{print_entry, References};
+use crate::derive::{print_entry, DerivedOffset, References};
 use crate::find_process::{self, Connection};
 use crate::game_memory::{read_bytes, read_pointer_or_null, Handle};
 use crate::pe_image::PeImage;
@@ -273,15 +273,11 @@ pub fn find_code_chains(version: Option<String>) -> Result<()> {
                 if c.exact { "" } else { " (inside a wider access)" }
             );
         }
-        lines.push(match found.first() {
-            Some(c) => (
-                *t,
-                Some(c.chain.iter().map(|o| *o as usize).collect()),
-                true,
-                format!("code chain, {} sites", c.sites),
-            ),
-            None => (*t, Some(offsets.clone()), true, "no code chain found, kept current".to_string()),
-        });
+        let (chain, how) = match found.first() {
+            Some(c) => (c.chain.iter().map(|o| *o as usize).collect(), format!("code chain, {} sites", c.sites)),
+            None => (offsets.clone(), "no code chain found, kept current".to_string()),
+        };
+        lines.push(DerivedOffset { address_type: *t, chain: Some(chain), sure: true, how });
     }
 
     println!(

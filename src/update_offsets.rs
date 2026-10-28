@@ -9,7 +9,7 @@
 //!
 //! A new build starts from the last known entry for its exe (one without a layout borrows the last of the same game
 //! that has one). Lara's position chain is kept if it still lands on her, else the best code chain (Y and Z are X + 4
-//! and 8); what can't be confirmed goes to `unverified`. Saves with `discover::save_entry`, then runs `check::run`.
+//! and 8); what can't be confirmed goes to `unverified`. Saves with `offsets_file::save`, then runs `check::run`.
 
 use anyhow::{anyhow, Context, Result};
 use crate::game_memory::{resolve, Handle};
@@ -17,12 +17,12 @@ use crate::chains;
 use crate::check;
 use crate::collision;
 use crate::components::{self, Components};
-use crate::derive::{self, References};
+use crate::derive::{self, DerivedOffset, References};
 use crate::discover;
 use crate::find_process;
 use crate::layout::{self, Layout};
 use crate::object_list::ObjectList;
-use crate::offsets_file::{describe_chain, known_process_details, Hex, VersionEntry};
+use crate::offsets_file::{describe_chain, known_process_details};
 use crate::pe_image::PeImage;
 use crate::position::Position;
 use crate::process_details::{AddressType, ProcessDetails, VersionIdentifier};
@@ -170,10 +170,10 @@ pub fn run(
     let mut settled: HashSet<String> = HashSet::new();
     if let Some((old, old_details)) = &previous {
         println!("Deriving the rest from {}...", old_details);
-        for (address_type, chain, sure, note) in derive::derive_lines(&old, &old_details, &image) {
+        for DerivedOffset { address_type, chain, sure, how } in derive::derive_lines(old, old_details, &image) {
             match chain {
                 Some(chain) if sure && !found.contains_key(&address_type) => {
-                    found.insert(address_type, (chain, format!("derived: {}", note)));
+                    found.insert(address_type, (chain, format!("derived: {}", how)));
                 }
                 Some(chain) if !found.contains_key(&address_type) => {
                     unverified.insert(address_type, chain);
@@ -249,20 +249,17 @@ pub fn run(
         (None, Some((_, string)), None) => format!("{} (image size {})", string, image_size),
         (None, None, None) => format!("unknown build (image size {})", image_size),
     };
-    let hex = |chain: &Vec<usize>| chain.iter().map(|o| Hex(*o)).collect::<Vec<Hex>>();
-    let entry = VersionEntry {
-        game: template.name.clone(),
-        executable: template.executable_name.clone(),
-        version: version_name,
-        image_size: Some(image_size),
-        bits: image.bitness(),
-        offsets: offsets.iter().map(|(t, c)| (*t, hex(c))).collect(),
-        unverified: unverified.iter().map(|(t, c)| (*t, hex(c))).collect(),
+    let details = ProcessDetails {
+        version: VersionIdentifier { version: version_name, image_size: Some(image_size) },
+        arch: image.architecture(),
+        address_offsets: offsets.into_iter().collect(),
+        unverified: unverified.iter().map(|(t, c)| (*t, c.clone())).collect(),
         layout,
+        ..template.clone()
     };
 
     println!();
-    println!("{} {}:", entry.game, entry.version);
+    println!("{}:", details);
     for (address_type, (chain, how)) in &found {
         println!("  {:<17} {:<44} {}", format!("{:?}", address_type), describe_chain(chain), how);
     }
@@ -280,11 +277,10 @@ pub fn run(
         println!("  exe or a dump of it to derive them, or check them with `tomb-helper debug probe` and move them over.)");
     }
 
-    let details = entry.to_details()?;
     if dry_run {
         println!("\n--dry-run, so not saved");
     } else {
-        discover::save_entry(entry)?;
+        crate::offsets_file::save(&details)?;
         save_dump(&details, &image);
     }
     println!("\nChecking it...");

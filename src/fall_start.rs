@@ -202,7 +202,7 @@ pub fn find_fall_start(version: Option<String>, delay: u64, save: bool) -> Resul
     }
     if save {
         details.layout = with_found(&game, details.layout.clone(), &found);
-        crate::discover::save_entry(crate::offsets_file::VersionEntry::from_details(&details))?;
+        crate::offsets_file::save(&details)?;
     }
     Ok(())
 }

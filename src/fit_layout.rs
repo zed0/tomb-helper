@@ -10,11 +10,9 @@
 
 use anyhow::{Context, Result};
 use crate::check::{self, Options};
-use crate::discover;
 use crate::game_memory::Handle;
 use crate::layout::Layout;
 use crate::layout::{field_offset, with_field};
-use crate::offsets_file::VersionEntry;
 use crate::process_details::ProcessDetails;
 use crate::snapshot::Snapshot;
 use std::path::Path;
@@ -277,7 +275,6 @@ pub fn fit_layout(groups: &[&str], snapshot: Option<&str>, version: Option<Strin
         println!("No moves of {} made more checks pass", wanted.join(", "));
         return Ok(());
     }
-    let entry = VersionEntry { layout: layout.clone(), ..VersionEntry::from_details(&target.details) };
     println!("\nWhat changes:");
     for (name, old, new) in differences(&target.details.layout, &layout) {
         println!("  {:<34} {} -> {}", name, old, new);
@@ -285,7 +282,7 @@ pub fn fit_layout(groups: &[&str], snapshot: Option<&str>, version: Option<Strin
     let results = target.check(&layout);
     println!("{} checks pass with it", results.iter().filter(|r| r.1).count());
     if save == Save::Yes || (save == Save::Ask && crate::port::confirm("Save these changes to the layout?")) {
-        discover::save_entry(entry)?;
+        crate::offsets_file::save(&ProcessDetails { layout, ..target.details })?;
     }
     Ok(())
 }
