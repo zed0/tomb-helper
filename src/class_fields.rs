@@ -59,7 +59,7 @@ pub fn usage(image: &PeImage, class: &str) -> Vec<(usize, usize, Vec<Access>)> {
     // `call [[this] + n]` is the vtable's slot n / pointer size
     let own_virtual = |chain: &[i64]| -> Option<usize> {
         match chain {
-            [0, 0, offset] if *offset >= 0 && *offset as usize % pointer_size == 0 => {
+            [0, 0, offset] if *offset >= 0 && (*offset as usize).is_multiple_of(pointer_size) => {
                 functions.get(*offset as usize / pointer_size).copied()
             }
             _ => None,
@@ -177,6 +177,8 @@ fn place(offset: usize, moved: &BTreeMap<i64, (i64, f64)>) -> (Option<usize>, Co
 
 // Old [0, offset, ...] chain -> new chain -> votes, from lining up the accesses of each of the class's virtual functions
 // with those of the same function (the best lining up of those near its slot) in the other image
+// `old_key` and `new_key` are lent, not given, to `align_by`, as they're used again for every slot
+#[allow(clippy::needless_borrows_for_generic_args)]
 fn class_votes(old: &PeImage, new: &PeImage, class: &str) -> (ChainVotes, usize) {
     let (old_usage, new_usage) = (usage(old, class), usage(new, class));
     // Pointers are 4 bytes in one game and 8 in another, so they're only matched as pointers, and another compiler picks

@@ -139,7 +139,7 @@ pub fn inject(pid: Pid, dll: &Path) -> io::Result<()> {
         let mut loaded: DWORD = 0;
         unsafe { GetExitCodeThread(thread.0, &mut loaded) };
         if loaded == 0 {
-            return Err(io::Error::new(io::ErrorKind::Other, format!("The game couldn't load {:?}", dll)));
+            return Err(io::Error::other(format!("The game couldn't load {:?}", dll)));
         }
         Ok(())
     })();

@@ -21,6 +21,8 @@ jobs:
         run: rustup target add i686-pc-windows-msvc
       - name: Build
         run: cargo build --verbose --release
+      - name: Run tests
+        run: cargo test --verbose --release
       # The overlay DLLs go next to the exe, which injects them; the zip has all three
       - name: Package
         shell: pwsh

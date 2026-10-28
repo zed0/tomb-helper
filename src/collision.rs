@@ -347,6 +347,8 @@ fn owner_collides(handle: Handle, body: usize) -> Option<bool> {
 
 /// A proxy attached to Lara's (TR2013's combat proxy, found through its body): its shape in use, and whether it
 /// collides, from its flags
+// `!(radius > 0.0)` so a NaN fails
+#[allow(clippy::neg_cmp_op_on_partial_ord)]
 pub fn read_attached_proxy(handle: Handle, proxy: usize) -> io::Result<(Capsule, bool)> {
     let layout = &handle.layout().proxy;
     let capsule = read_proxy(handle, proxy, None)?

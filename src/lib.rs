@@ -800,6 +800,8 @@ fn draw_lara(draw_list: &DrawListMut, projector: &Projector, ui_data: &UiData, s
 
 // The entry point `hudhook::hudhook!` makes, but choosing how the hooks are put in place (as the exe says) before
 // they're made
+/// # Safety
+/// Only for Windows' loader, which calls every DLL's `DllMain`
 #[no_mangle]
 pub unsafe extern "system" fn DllMain(
     hmodule: hudhook::windows::Win32::Foundation::HINSTANCE,

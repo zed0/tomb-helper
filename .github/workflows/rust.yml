@@ -18,5 +18,10 @@ jobs:
       run: rustup target add i686-pc-windows-msvc
     - name: Build
       run: cargo build --verbose
+    # The 32-bit overlay was built above; this checks the code the 64-bit builds share with it
+    - name: Clippy
+      run: cargo clippy --all-targets -- -D warnings
+      env:
+        TOMB_HELPER_SKIP_TR2013: 1
     - name: Run tests
       run: cargo test --verbose

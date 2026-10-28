@@ -856,6 +856,8 @@ mod tests {
     }
 
     #[test]
+    // The shifts are spelled out, `+ 0x0` included
+    #[allow(clippy::identity_op)]
     fn maps_chains_level_by_level_with_shift_fallback() {
         let mut votes: ChainVotes = HashMap::new();
         votes.entry(vec![1, 0xC60]).or_default().insert(vec![2, 0xD70], 3.0);

@@ -686,6 +686,8 @@ fn check_trigger_scripts(
 }
 
 // The 3x3 part's rows are unit length (or all the same length, if `scaled`) and at right angles
+// `!(scale > ..)` so a NaN fails
+#[allow(clippy::neg_cmp_op_on_partial_ord)]
 fn is_rotation(matrix: &[f32; 16], scaled: bool) -> bool {
     let rows = rows(matrix);
     let scale = rows[0].norm();

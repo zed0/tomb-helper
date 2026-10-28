@@ -151,9 +151,11 @@ impl<'a> Describer<'a> {
             return Some(String::from_utf8_lossy(&data[..end]).into_owned());
         }
         let wide: Vec<u16> = data
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .take(MAX_STRING)
-            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+            .map(|c| u16::from_le_bytes(*c))
             .take_while(|c| *c < 0x80 && printable(*c as u8))
             .collect();
         let terminated = data.get(wide.len() * 2..wide.len() * 2 + 2) == Some(&[0, 0]);

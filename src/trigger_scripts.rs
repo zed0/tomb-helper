@@ -263,7 +263,7 @@ fn scan(
                     let address = start + offset + i * pointer_size;
                     let mut node = vec![0u8; layout.node_size];
                     if handle.copy_address(address, &mut node).is_ok() {
-                        let values = node.chunks_exact(8).map(|b| u64::from_le_bytes(b.try_into().unwrap())).collect();
+                        let values = node.as_chunks::<8>().0.iter().map(|b| u64::from_le_bytes(*b)).collect();
                         nodes.push((address, Node { kind: Some(*kind), values, ..Default::default() }));
                     }
                 }

@@ -6,6 +6,9 @@
 //! loops every 5ms: actions to every handler, then a tick for each. Every 500ms it checks the offsets file, recreating
 //! the handlers if the running version's offsets changed. It disconnects when the game exits.
 
+// The tools' results are often tuples of what they found, which are clearer spelled out where they're used
+#![allow(clippy::type_complexity)]
+
 use crate::action::Action;
 use crate::config::{Config, CutsceneTiming, Hotkey};
 use crate::cutscene_handler::CutsceneHandler;
@@ -208,7 +211,7 @@ fn connect(
                 Reload::Changed(details) => {
                     // Drop the old handlers first, so e.g. the overlay is ejected before it's re-injected
                     handlers.clear();
-                    connection.details = details;
+                    connection.details = *details;
                     handlers = create_handlers(config, connection);
                     println!("Reloaded offsets for {}", connection.details);
                 }
@@ -231,7 +234,7 @@ fn connect(
 enum Reload {
     // Nothing its handlers use changed (recreating them loses their state, and re-downloads cutscene info)
     Same,
-    Changed(ProcessDetails),
+    Changed(Box<ProcessDetails>),
     // It isn't a known version any more
     Gone,
 }
@@ -251,7 +254,7 @@ fn reload_offsets(connection: &Connection, offsets: &mut OffsetsSource, known: &
     if found.pid != connection.pid {
         Reload::Gone
     } else if found.details.version.version != details.version.version || found.details.address_offsets != details.address_offsets {
-        Reload::Changed(found.details)
+        Reload::Changed(Box::new(found.details))
     } else {
         Reload::Same
     }

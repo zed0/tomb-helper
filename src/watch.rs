@@ -81,6 +81,8 @@ impl Breakpoint {
 
 /// A thread's registers. For a 32-bit game these are the WOW64 ones, which are what its code sees: the native
 /// context of a 32-bit thread is the 64-bit layer it runs on.
+// Only a thread's at a time, so the native one's size doesn't matter
+#[allow(clippy::large_enum_variant)]
 enum Context {
     Native(AlignedContext),
     Wow64(WOW64_CONTEXT),
@@ -682,7 +684,7 @@ pub fn watch_raw(pid: Pid, address: &str, seconds: u64, delay: u64, kind: Breakp
 fn print_dump(at: u64, bytes: &[u8]) {
     println!("        memory at {:#X}:", at);
     for (row, chunk) in bytes.chunks(16).enumerate() {
-        let words: Vec<u32> = chunk.chunks_exact(4).map(|w| u32::from_le_bytes([w[0], w[1], w[2], w[3]])).collect();
+        let words: Vec<u32> = chunk.as_chunks::<4>().0.iter().map(|w| u32::from_le_bytes(*w)).collect();
         let hex: Vec<String> = words.iter().map(|w| format!("{:08X}", w)).collect();
         let floats: Vec<String> = words.iter().map(|w| format!("{:>10.4}", f32::from_bits(*w))).collect();
         println!("          +{:03X} {}   {}", row * 16, hex.join(" "), floats.join(" "));

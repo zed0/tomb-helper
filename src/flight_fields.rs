@@ -7,6 +7,7 @@
 //!   through one more pointer as SOTTR's camera stack has it), then the byte before its `cdc::GeomSphere` (inline, or
 //!   pointed to) that's set and that the code compares (three passes in every game);
 //! - the body list's previous link: the offset near `body.next` that leads back from each body's next.
+//!
 //! `debug flight-fields [--save]`, and `port`.
 
 use anyhow::{Context, Result};

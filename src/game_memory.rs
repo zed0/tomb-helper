@@ -101,7 +101,7 @@ impl std::fmt::Display for Unreadable {
 impl std::error::Error for Unreadable {}
 
 pub fn unreadable(message: impl Into<String>) -> io::Error {
-    io::Error::new(io::ErrorKind::Other, Unreadable(message.into()))
+    io::Error::other(Unreadable(message.into()))
 }
 
 // Windows' errors for reading memory that isn't there: ERROR_INVALID_HANDLE (once the game has gone),
@@ -291,7 +291,7 @@ mod tests {
     #[test]
     fn unreadable_game_errors_are_recognised() {
         assert!(is_unreadable(&unreadable("CameraView's pointer chain doesn't resolve")));
-        assert!(!is_unreadable(&io::Error::new(io::ErrorKind::Other, "something else")));
+        assert!(!is_unreadable(&io::Error::other("something else")));
         assert!(!is_unreadable(&io::Error::from(io::ErrorKind::PermissionDenied)));
         // A read where nothing's mapped, as when a chain leads nowhere during a loading screen
         let handle = (std::process::id() as Pid).try_into_process_handle().unwrap();

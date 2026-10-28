@@ -189,7 +189,7 @@ pub fn to_json<T: Serialize>(value: &T) -> String {
         out.push_str(&rest[..start]);
         let end = rest[start..].find(']').map(|e| start + e);
         match end {
-            Some(end) if !rest[start + 1..end].contains(|c| c == '{' || c == '[') => {
+            Some(end) if !rest[start + 1..end].contains(['{', '[']) => {
                 let items: Vec<&str> = rest[start + 1..end]
                     .split(',')
                     .map(str::trim)

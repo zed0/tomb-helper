@@ -10,6 +10,7 @@ use crate::position::Position;
 use crate::ui_ipc_data::{SurfaceKind, Triangle, COLLISION_KINDS};
 use nalgebra::Vector3;
 use process_memory::CopyAddress;
+use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use std::io;
 
@@ -106,12 +107,14 @@ impl CollisionMeshes {
             let kinds = match instance.filter {
                 Some(offset) => {
                     let filter = handle.pointer_at(&bytes, offset);
-                    if !filters.contains_key(&filter) {
-                        let kinds = read_u32(handle, filter + instance.filter_kinds)
-                            .ok_or_else(|| crate::game_memory::unreadable("unreadable collision filter"))?;
-                        filters.insert(filter, kinds as usize);
+                    match filters.entry(filter) {
+                        Entry::Occupied(known) => *known.get(),
+                        Entry::Vacant(unread) => {
+                            let kinds = read_u32(handle, filter + instance.filter_kinds)
+                                .ok_or_else(|| crate::game_memory::unreadable("unreadable collision filter"))?;
+                            *unread.insert(kinds as usize)
+                        }
                     }
-                    filters[&filter]
                 }
                 None => instance.player_kind,
             };
@@ -125,8 +128,8 @@ impl CollisionMeshes {
             }
             let is_detailed = !for_lara;
             let mesh = handle.pointer_at(&bytes, instance.mesh);
-            if !headers.contains_key(&mesh) {
-                headers.insert(mesh, self.mesh_header(handle, mesh)?);
+            if let Entry::Vacant(unread) = headers.entry(mesh) {
+                unread.insert(self.mesh_header(handle, mesh)?);
             }
             let header = &headers[&mesh];
             let counts = mesh_layout.triangle_count.min(header.len())..header.len();
@@ -243,9 +246,9 @@ impl CollisionMeshes {
 // be; false if it can't be read
 fn place(handle: Handle, placement: &mut Placement, meshes: &mut HashMap<usize, Mesh>, bytes: &[u8]) -> bool {
     let layout = &handle.layout().collision_instance;
-    if !meshes.contains_key(&placement.mesh) {
+    if let Entry::Vacant(unread) = meshes.entry(placement.mesh) {
         match read_mesh(handle, placement.mesh) {
-            Ok(mesh) => meshes.insert(placement.mesh, mesh),
+            Ok(mesh) => unread.insert(mesh),
             Err(_) => return false,
         };
         placement.placed = None;
@@ -321,12 +324,14 @@ pub fn read_mesh(handle: Handle, address: usize) -> io::Result<Mesh> {
     let vertices = if format == layout.format_float {
         let mut bytes = vec![0u8; vertex_count * FLOAT_VERTEX_SIZE];
         handle.copy_address(handle.pointer_at(&header, layout.vertices), &mut bytes)?;
-        bytes.chunks_exact(FLOAT_VERTEX_SIZE).map(|v| vector_at(v, 0)).collect()
+        bytes.as_chunks::<FLOAT_VERTEX_SIZE>().0.iter().map(|v| vector_at(v, 0)).collect()
     } else if format == layout.format_half {
         let mut bytes = vec![0u8; vertex_count * HALF_VERTEX_SIZE];
         handle.copy_address(handle.pointer_at(&header, layout.vertices), &mut bytes)?;
         bytes
-            .chunks_exact(HALF_VERTEX_SIZE)
+            .as_chunks::<HALF_VERTEX_SIZE>()
+            .0
+            .iter()
             .map(|v| Vector3::new(half_at(v, 0), half_at(v, 2), half_at(v, 4)))
             .collect()
     } else {

@@ -193,7 +193,7 @@ pub fn try_read_std_string_utf8(
     let mut bytes = vec![0_u8; length];
     handle.copy_address(offset.get_offset()?, &mut bytes)?;
 
-    String::from_utf8(bytes).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+    String::from_utf8(bytes).map_err(std::io::Error::other)
 }
 
 #[cfg(not(windows))]
