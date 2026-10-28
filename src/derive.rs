@@ -733,6 +733,8 @@ pub fn derive_lines(old: &PeImage, details: &ProcessDetails, new: &PeImage) -> V
     for (address_type, offsets) in &details.address_offsets {
         by_base.entry(offsets[0]).or_default().push(*address_type);
     }
+    // In order, as the offsets are a HashMap
+    by_base.values_mut().for_each(|types| types.sort());
 
     println!("\nStatic addresses derived from {}:", details);
     let mut derived: HashMap<usize, (Derivation, ChainVotes)> = HashMap::new();
