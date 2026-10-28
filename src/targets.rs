@@ -1,22 +1,24 @@
 //! The values tomb-helper writes to the game: Lara's position (and ROTTR's look at), what flight mode holds (`Velocity`,
-//! `FallStart`) and the cutscene's status, and what flight mode could turn off (her proxy's collision and
-//! `CameraCollision`, which it leaves alone for now, but which are still found and checked). For each, where it is
-//! (`candidates`, `find`) and whether it looks right (`verify`), which the handlers check before writing anything, so a
-//! chain that's wrong for a build is never written through. `check` reports the same.
+//! `FallStart`), the cutscene's status and the menu requested (the level select), and what flight mode could turn off
+//! (her proxy's collision and `CameraCollision`, which it leaves alone for now, but which are still found and checked).
+//! For each, where it is (`candidates`, `find`) and whether it looks right (`verify`), which the handlers check before
+//! writing anything, so a chain that's wrong for a build is never written through. `check` reports the same.
 //!
 //! Where the game's structures say where something is, the chain is built from them (`structural`), which carries over
 //! to a new build whose structures haven't changed, and is preferred to the offsets file's. Lara's position chain
 //! (`XPosition`) is [.., player, `player.instance`, `instance.position`], so the same chain less its last offset leads to
 //! her instance, and through it her components (by the slots learnt for their classes, see `components`), and one more
 //! offset less to her player object. The camera's collision is a path (`camera.collision`) from GameRender, which
-//! `CameraView`'s chain starts at. Each is checked by the RTTI class of the object it's in, where that's known.
+//! `CameraView`'s chain starts at, and the menu requested is in the menus' state machine, as `MenuState` is. Each is
+//! checked by the RTTI class of the object it's in, where that's known.
 
 use crate::components::{self, Components, Slot};
 use crate::game::{Game, NEAR_LARA};
 use crate::game_memory::{read_floats, read_u32, read_u8, resolve};
 use crate::layout::Layout;
 use crate::offsets_file::describe_chain;
-use crate::rtti::{EXPLORATION_CAMERA, PLAYER};
+use crate::menu::{self, Menus};
+use crate::rtti::{EXPLORATION_CAMERA, MENU_STATE_MANAGER, PLAYER};
 use crate::process_details::{AddressOffsets, AddressType};
 use nalgebra::Vector3;
 
@@ -32,7 +34,7 @@ const MAX_CUTSCENE_STATE: u8 = 16;
 const MAX_CUTSCENE_LENGTH: f32 = 36_000.0;
 
 /// Everything tomb-helper writes, or may (see the module's doc), in the order `check` reports them
-pub const WRITTEN: [AddressType; 18] = [
+pub const WRITTEN: [AddressType; 19] = [
     AddressType::XPosition,
     AddressType::YPosition,
     AddressType::ZPosition,
@@ -51,6 +53,7 @@ pub const WRITTEN: [AddressType; 18] = [
     AddressType::ProxyBodyGap,
     AddressType::CameraCollision,
     AddressType::CutsceneStatus,
+    AddressType::RequestedMenu,
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -192,6 +195,7 @@ fn chain_for(
         AddressType::CameraCollision if !layout.camera.collision.is_empty() => {
             Some(game_render(layout, offsets)?.into_iter().chain(layout.camera.collision.iter().copied()).collect())
         }
+        AddressType::RequestedMenu => then(menu::manager_chain(layout, offsets)?, &[Some(layout.menu.requested)]),
         _ => None,
     }
 }
@@ -315,6 +319,7 @@ pub fn verify(game: &Game, components: &mut Components, address_type: AddressTyp
             None => unreadable(),
         },
         AddressType::CutsceneStatus => cutscene(game),
+        AddressType::RequestedMenu => requested_menu(game, components, chain),
         _ => Verdict::Unreadable(format!("{:?} isn't something tomb-helper writes", address_type)),
     };
     // What it's in should be what it's meant to be
@@ -338,6 +343,7 @@ fn owner_check(game: &Game, components: &mut Components, address_type: AddressTy
         AddressType::FallStart | AddressType::FallStartCopy => PLAYER,
         AddressType::ProxyCentre | AddressType::ProxyResolvedCentre | AddressType::ProxyFlags => components::PROXY,
         AddressType::CameraCollision => EXPLORATION_CAMERA,
+        AddressType::RequestedMenu => MENU_STATE_MANAGER,
         // Only where the version's instances and their components are known
         AddressType::XPosition | AddressType::YPosition | AddressType::ZPosition
             if game.has(AddressType::InstanceArray) && game.layout().instance.components.is_some() =>
@@ -369,6 +375,32 @@ fn a(noun: &str) -> String {
 fn short_class(class: &str) -> String {
     let parts: Vec<&str> = class.trim_start_matches(".?AV").trim_end_matches("@@").split('@').collect();
     parts.iter().rev().copied().collect::<Vec<_>>().join("::")
+}
+
+// The menu requested: one of the menus (or none) in a manager whose names are menus', and whose requested menu it's
+// where the layout says
+fn requested_menu(game: &Game, components: &mut Components, chain: &[usize]) -> Verdict {
+    let Some((_, prefix)) = chain.split_last() else {
+        return Verdict::Implausible("its chain is empty".to_string());
+    };
+    let Some(manager) = game.pointer_at(prefix) else {
+        return Verdict::Unreadable("its chain doesn't resolve".to_string());
+    };
+    let requested = manager + game.layout().menu.requested;
+    if crate::game_memory::resolve(game.handle, game.base_address, chain) != Some(requested) {
+        return Verdict::Implausible("it isn't where the layout has the menu requested".to_string());
+    }
+    // Its class can't be told (e.g. a snapshot from before the menus were read)
+    if crate::game_memory::read_pointer(game.handle, manager).is_none() {
+        return Verdict::Unreadable("the menus can't be read".to_string());
+    }
+    match Menus::at(game.handle, &mut components.classes, manager) {
+        Ok(menus) => {
+            let (requested, showing) = (menus.name(menus.requested), menus.name(menus.current));
+            Verdict::Plausible(format!("{} requested, {} showing", requested, showing))
+        }
+        Err(why) => Verdict::Implausible(why),
+    }
 }
 
 // The cutscene's state, which only reads while there's one: its prompt and status small numbers, its timeline within

@@ -58,6 +58,7 @@ The default configuration is:
 ```json
 {
 	"hotkeys": [
+		{"key": "F4", "action": {"LevelSelect": {}}},
 		{"key": "F5", "action": {"ToggleActive": {}}},
 		{"key": "F6", "action": {"StorePosition": {}}},
 		{"key": "F7", "action": {"RestorePosition": {}}},
@@ -130,6 +131,7 @@ Currently the available actions are:
 - `ToggleOverlay` (show or hide everything the overlay draws in the world at once, leaving its window; F10 by default)
 - `ToggleSettingsWindow` (show or hide the overlay's window, leaving what it draws in the world; F11 by default, and `settings_window` in the overlay config says whether it starts shown)
 - `ToggleInteractables`, `ToggleNpcs`, `ToggleTriggers` (show or hide the boxes round interactable objects and characters, and the trigger volumes, in the overlay)
+- `LevelSelect` (open the developers' level select, which is still in the games but hidden, from the main menu: pick a category, a level and a start point to load it; F4 by default. Only in versions whose offsets have `MenuState`, so far Rise of the Tomb Raider (Steam and Epic) and Shadow of the Tomb Raider v1.0 builds 234.1 and 492 (Steam and Epic); see [Level select](#level-select))
 - `Forward` (can take a distance, which defaults to `100.0`)
 - `Backward` (can take a distance, which defaults to `100.0`)
 - `Left` (can take a distance, which defaults to `100.0`)
@@ -137,7 +139,13 @@ Currently the available actions are:
 - `Up` (can take a distance, which defaults to `100.0`)
 - `Down` (can take a distance, which defaults to `100.0`)
 
-The available keys are the names in `KeyCode` in [`src/hotkeys.rs`](src/hotkeys.rs) (e.g. `F5`, `W`, `D1`, `NumPad0`, `Left`, `LeftShift`). Holding a key repeats its actions, at the keyboard's repeat delay and rate, except the toggles (`Toggle...`), which happen once per press.
+The available keys are the names in `KeyCode` in [`src/hotkeys.rs`](src/hotkeys.rs) (e.g. `F5`, `W`, `D1`, `NumPad0`, `Left`, `LeftShift`). Holding a key repeats its actions, at the keyboard's repeat delay and rate, except the toggles (`Toggle...`) and `LevelSelect`, which happen once per press.
+
+## Level select
+
+The games still have the level select their developers used (Shadow of the Tomb Raider's lists every level's start points by chapter, the challenge tombs, crypts and so on), though the main menu's button for it is hidden. `LevelSelect` (F4) opens it from the main menu, and choosing a start point loads it. It only opens from the main menu: from anywhere else the game doesn't show it. Esc goes back.
+
+It works by asking the game's menus (`UiMenuStateManager`) for the level select menu, which is found by name, and only after checking that the menus are where the offsets say. A version needs `MenuState` in its offsets for it: `tomb-helper debug discover --save`, run while the game is at its main menu, finds it (and `update-offsets` does for a new build), where the version's `layout` has the right `menu` offsets (Rise of the Tomb Raider's are the defaults; Shadow of the Tomb Raider's are in `offsets.json`). Tomb Raider 2013 has a menu with that name, but it shows nothing (it's probably the multiplayer map picker), so it isn't supported.
 
 ## Offsets file
 

@@ -44,6 +44,7 @@ User docs (hotkeys, config, cutscene timing generation) live in `README.md`.
    - `CutsceneTimingGeneratorHandler` **or** `CutsceneHandler` (chosen by `config.record_cutscene_timing`)
    - `OverlayHandler`
    - `PositionHandler::new_position_handler` (Lara position) and `::new_look_at_handler` (ROTTR look-at)
+   - `MenuHandler` (the level select hotkey, where the version has `MenuState`)
    - Each constructor returns `None` if the game version lacks a required `AddressType`, so features
      silently disappear per-version.
 3. Starts the hotkeys (`hotkeys::Hotkeys`, a thread polling the bound keys, repeating held ones but for toggles, `Action::repeats`); keys are grouped so one key can trigger several
@@ -95,6 +96,7 @@ Each module's `//!` doc says what's in it and how it works; this is where to loo
 | `src/targets.rs` | What tomb-helper writes: chains built from the structures (or the offsets file's), checked before writing |
 | `src/tracked_memory.rs`, `src/tracked_position.rs` | Cached values at pointer chains, for the position and cutscene handlers |
 | `src/cutscene_handler.rs` | Cutscene skipping (SOTTR) and time saved |
+| `src/menu.rs`, `src/menu_handler.rs` | The game's menus (`UiMenuStateManager`, by name), and the level select hotkey that asks for its hidden level select |
 | `src/fall_start.rs` | Finding the fall start (and her velocity) by lifting Lara a little twice (`debug find-fall-start`, run by `port`) |
 | `src/flight_fields.rs` | Finding the other fields flight mode writes through from the structures and code: the proxy's collision bit and resolved centre, the camera's switch, the body list's previous link (`debug flight-fields`, run by `port`) |
 | `src/camera_fields.rs` | The camera's fields by what they have to be (inverse matrices, the first camera-to-world one, fov then aspect), for `update-offsets` and `check`; `debug camera-fields` |
@@ -562,6 +564,41 @@ again (`derive` plus live checks).
 - Live tools all work on Steam TR2013: `probe`, `chains`, `update-offsets` (finds every static but the two pools, which `--from` derives), `watch`/`watch-raw` (debug
   registers set in the native context, registers read from the WOW64 one; 800 traps in 2s on the QueryPerformanceCounter
   import slot). Lara's position and the camera weren't read at all while the game was unfocused (paused).
+
+### Menus and the level select (SOTTR 234.1)
+- `UiMenuStateManager` (RTTI; SOTTR 234.1's at [mod+0x13D4E58], a `UiSingleton`) is a state machine of the menus:
+  +0x330 + id*8 the state objects (each with its id at +0x60), `menu.names` the names by id ("dtp::MENU_STATE_*",
+  0x40 each, `static_cast<dtp::MENU_STATE>(counter)` for unused ids, 0x7D of them), `menu.current` the menu showing,
+  `menu.requested` (-1 for none, -3 closes the menus) and +0x7A0 the previous. The code that switches (mod+0xDD25DF0,
+  every frame) leaves the current menu (its vtable +0x68, which can refuse) and enters the requested one (+0x50). Found
+  by watching the pause state's methods with `watch-raw --exec` while pausing.
+- The level select (`UiMenuStateLevelSelect`, id 0x13; ROTTR 0x19) is built with the rest. Requested from the main
+  menu it works: categories -> levels -> 365 start points (data at [mod+0x3525268] +0x2668: 0x20 byte entries, +0x8
+  name, +0x10 enabled byte, +0x14 count, +0x18 children; leaves +0x18 the unit path), and choosing one loads it. From
+  the pause menu its page doesn't show. The main menu's "SELECT LEVEL" button (id 10 in its table at state
+  +0x330/+0x338, shown byte +5) is always hidden by its code. The disabled "Multiplayer" category (gym levels, `Gym\Coop\gym_coop`)
+  says "content is currently installing": not shipped. `MENU_STATE_MATERIAL_TEST` (0x7B) is an empty stub.
+- Lara's message handler (mod+0xD9C1540) still turns skew (the cdc fly cheat) on for message hash 0xA09458BC with
+  data, off without ("Skew Cheat Enabled!", player+0x7C bit 2), but nothing sends it (the `INPUTACTION_Debug_*`
+  handling is compiled out).
+- ROTTR Steam's (the defaults: 0xA28, 0xA2C, names 0xAC8, level select 0x19, also a `REPLAY_LEVEL_SELECT` 0x6C) were
+  found in the switching code and checked live, with the static at mod+0x2E1E758; ROTTR Epic 1027's are the same,
+  checked live, with the static at mod+0x2CAB540. SOTTR 492's `menu` fields (0x7A8, 0x7AC, names 0x840) were found in
+  the switching code in its dumps and checked live in both, with the static at mod+0x146BF38 (Steam) and mod+0x1450E18
+  (Epic).
+- TR2013 Steam has the manager too ([mod+0x20CF83C]; 0x59 menus, unused ids named "counter"), but with i16 ids
+  (`menu.id_size` 2): current +0x1AC, requested +0x1AE, names +0x1F4, from its switching code (mod+0x64A870, which
+  treats a request of 0xFE specially). Its `LEVEL_SELECT` (0x1D, among the multiplayer menus, so probably the
+  multiplayer map picker) shows nothing from the main menu: the menu goes, leaving the scene. So its entry has the
+  layout but not `MenuState`, and the hotkey doesn't load there. Its states by class (manager +0x8, 4 bytes each):
+  LEVEL_SELECT, TEST, TEST2, MODE_SELECT, CHARACTER_SELECT and the MULTIPLAYER_OLD ones are `UiMenuStateGeneric`
+  placeholders. `UiMenuStateChapterSelect` (0x51) is a developer chapter select: it lists a table at
+  [mod+0x20CF834] (+0x50 count, +0x4C 0x14 byte entries: name, id, unit, dtp id, runnable) holding three test chapters
+  (units `tedpersistentdata`, `tedscratchpad`, `tedcampsite`, which aren't shipped; runnables `Test\test`,
+  `Test\test2`, `Test\testPersistence`, which are), but requested from the main menu it doesn't show (and the main
+  menu stayed current). `UiMenuStateStreamLayerDemo` (0x37) loads the unit `uiplus_streamlayerdemo` (spheres over
+  the sea, no menu), and Back leaves it. `AGDebugMenuTriggerNode` is compiled out. TR2013's archives (`.tiger`, TAFS
+  v3, `pc-w\`) hash names with the same CRC32 as ROTTR's.
 
 ### Working with the live game
 - The user plays; ask them to switch to the game before anything that needs it running (it pauses when alt-tabbed),

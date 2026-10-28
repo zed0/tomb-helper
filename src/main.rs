@@ -16,6 +16,7 @@ use crate::cutscene_timing_generator_handler::CutsceneTimingGeneratorHandler;
 use crate::find_process::Connection;
 use crate::handler::{Handler, HelperState};
 use crate::hotkeys::{Callback, Hotkeys, KeyCode};
+use crate::menu_handler::MenuHandler;
 use crate::offsets_file::OffsetsSource;
 use crate::overlay_handler::OverlayHandler;
 use crate::position_handler::PositionHandler;
@@ -58,6 +59,8 @@ mod handler;
 mod hotkeys;
 mod inject32;
 mod layout;
+mod menu;
+mod menu_handler;
 mod normalised;
 mod object_list;
 mod offsets_file;
@@ -170,6 +173,7 @@ fn create_handlers(config: &Config, connection: &Connection) -> Vec<Box<dyn Hand
         OverlayHandler::new_overlay_handler(connection, &config.overlay, &config.hotkeys).map(boxed),
         PositionHandler::new_position_handler(connection).map(boxed),
         PositionHandler::new_look_at_handler(connection).map(boxed),
+        MenuHandler::new(connection).map(boxed),
     ]
     .into_iter()
     .flatten()

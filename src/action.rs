@@ -51,6 +51,8 @@ pub enum Action {
     ToggleOverlay {},
     // The overlay's settings window (what it draws stays)
     ToggleSettingsWindow {},
+    // The developers' level select, from the main menu
+    LevelSelect {},
 }
 
 impl Action {
@@ -70,6 +72,7 @@ impl Action {
                 | Action::ToggleCollision {}
                 | Action::ToggleOverlay {}
                 | Action::ToggleSettingsWindow {}
+                | Action::LevelSelect {}
         )
     }
 }

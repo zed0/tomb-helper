@@ -75,6 +75,7 @@
       },
       "layout": {
         "instance": {"size": "0xD0", "header": "0xC0", "position": "0x0", "rotation": "0x20", "in_use": "0x40", "placement": null, "id": "0x50", "object_name": ["0x40", "0x4C"], "components": null, "transform": null, "component_data": "0x64", "game_object": "0x74", "inline_components": "0xA4"},
+        "menu": {"current": "0x1AC", "requested": "0x1AE", "names": "0x1F4", "id_size": "0x2"},
         "player": {"instance": null, "from_instance": ["0xA8", "0x14"], "fall_start": "0xF0C", "fall_start_copy": "0xF18"},
         "ballistic": {"velocity": "0x10"},
         "body": {"shape": "0x0", "next": "0x38", "previous": "0x3C", "parent": "0x44", "owner": "0x48"},
@@ -171,7 +172,8 @@
         "CameraLens": ["0x2E1BD08", "0x30"],
         "InstanceArray": ["0x24EEAD0"],
         "PlayerProbes": ["0x1A8C720"],
-        "CollisionScene": ["0x2D57440", "0x10", "0x0"]
+        "CollisionScene": ["0x2D57440", "0x10", "0x0"],
+        "MenuState": ["0x2E1E758", "0xA28"]
       },
       "layout": {
         "player": {"fall_start": "0x1074", "fall_start_copy": "0x1080"},
@@ -198,7 +200,8 @@
         "CameraLens": ["0x2CA8C90", "0x30"],
         "InstanceArray": ["0x237BA50"],
         "PlayerProbes": ["0x19196A0"],
-        "CollisionScene": ["0x2BE4370", "0x10", "0x0"]
+        "CollisionScene": ["0x2BE4370", "0x10", "0x0"],
+        "MenuState": ["0x2CAB540", "0xA28"]
       },
       "layout": {
         "player": {"fall_start": "0x1074", "fall_start_copy": "0x1080"},
@@ -230,7 +233,8 @@
         "CutsceneStatus": ["0x141B8C0", "0x129"],
         "CutsceneTimeline": ["0x141B8C0", "0x60"],
         "CutsceneLength": ["0x141B8A0", "0x0", "0x20"],
-        "CutsceneId": ["0x360E0D0", "0x0", "0x120", "0x10", "0x1D4"]
+        "CutsceneId": ["0x360E0D0", "0x0", "0x120", "0x10", "0x1D4"],
+        "MenuState": ["0x13D4E58", "0x798"]
       },
       "layout": {
         "instance": {"object_name": ["0x80", "0x8", "0x60", "0x8"]},
@@ -242,6 +246,7 @@
         "collide": {"shapes": "0x78", "shape_count": "0x80"},
         "body": {"next": "0x38", "previous": "0x40", "parent": "0x50", "gap": "0x0"},
         "physics_shape": {"previous_centre": "0xA0", "gap": "0x10"},
+        "menu": {"current": "0x798", "requested": "0x79C", "names": "0x830"},
         "proxy": {
           "centre": "0x70", "in_use_size": "0xA0", "in_use_offset": "0xB0", "in_use_local_rotation": "0xE0", "in_use_rotation": "0xF0",
           "next_size": "0x120", "next_offset": "0x130", "next_local_rotation": "0x150", "next_rotation": "0x160",
@@ -327,7 +332,8 @@
         "CutsceneStatus": ["0x1497AC0", "0x129"],
         "CutsceneTimeline": ["0x1497AC0", "0x60"],
         "CutsceneLength": ["0x1497AA0", "0x0", "0x20"],
-        "CutsceneId": ["0x3503F78", "0x0", "0xB78", "0x574"]
+        "CutsceneId": ["0x3503F78", "0x0", "0xB78", "0x574"],
+        "MenuState": ["0x1450E18", "0x7A8"]
       },
       "layout": {
         "instance": {"object_name": ["0x80", "0x8", "0x60", "0x8"]},
@@ -339,6 +345,7 @@
         "collide": {"shapes": "0x78", "shape_count": "0x80"},
         "body": {"next": "0x38", "previous": "0x40", "parent": "0x50", "gap": "0x0"},
         "physics_shape": {"previous_centre": "0xA0", "gap": "0x10"},
+        "menu": {"current": "0x7A8", "requested": "0x7AC", "names": "0x840"},
         "proxy": {
           "centre": "0x70", "in_use_size": "0xA0", "in_use_offset": "0xB0", "in_use_local_rotation": "0xE0", "in_use_rotation": "0xF0",
           "next_size": "0x120", "next_offset": "0x130", "next_local_rotation": "0x150", "next_rotation": "0x160",
@@ -369,7 +376,8 @@
         "CutsceneStatus": ["0x14B3140", "0x129"],
         "CutsceneTimeline": ["0x14B3140", "0x60"],
         "CutsceneLength": ["0x14B3120", "0x0", "0x20"],
-        "CutsceneId": ["0x36B2118", "0x0", "0xB78", "0x574"]
+        "CutsceneId": ["0x36B2118", "0x0", "0xB78", "0x574"],
+        "MenuState": ["0x146BF38", "0x7A8"]
       },
       "layout": {
         "instance": {"object_name": ["0x80", "0x8", "0x60", "0x8"]},
@@ -381,6 +389,7 @@
         "collide": {"shapes": "0x78", "shape_count": "0x80"},
         "body": {"next": "0x38", "previous": "0x40", "parent": "0x50", "gap": "0x0"},
         "physics_shape": {"previous_centre": "0xA0", "gap": "0x10"},
+        "menu": {"current": "0x7A8", "requested": "0x7AC", "names": "0x840"},
         "proxy": {
           "centre": "0x70", "in_use_size": "0xA0", "in_use_offset": "0xB0", "in_use_local_rotation": "0xE0", "in_use_rotation": "0xF0",
           "next_size": "0x120", "next_offset": "0x130", "next_local_rotation": "0x150", "next_rotation": "0x160",

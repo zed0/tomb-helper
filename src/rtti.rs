@@ -21,6 +21,8 @@ pub const PLAYER: &str = ".?AVPlayer@@";
 // The camera controller whose collision `camera.collision` leads to; the others (aiming, stealth, ...) are laid out
 // differently, so it's only written while this one is in use
 pub const EXPLORATION_CAMERA: &str = ".?AVExplorationCameraController@@";
+// The menus' state machine (`menu`)
+pub const MENU_STATE_MANAGER: &str = ".?AVUiMenuStateManager@@";
 
 // How locators are laid out at the game's pointer size
 struct Format {

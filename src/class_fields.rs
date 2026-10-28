@@ -101,6 +101,7 @@ pub const FIELD_CLASSES: &[(&str, &str)] = &[
     ("collision_scene.in_client", rtti::MULTIBODY_CLIENT),
     ("ballistic", components::BALLISTIC),
     ("player", rtti::PLAYER),
+    ("menu", rtti::MENU_STATE_MANAGER),
 ];
 
 /// The class a layout field (`group.field`) is a field of, if it's known

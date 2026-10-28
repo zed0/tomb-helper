@@ -54,6 +54,7 @@ pub fn data_dir() -> PathBuf {
 
 fn default_hotkeys() -> Vec<Hotkey> {
     vec![
+        Hotkey::new(KeyCode::F4, Action::LevelSelect {}),
         Hotkey::new(KeyCode::F5, Action::ToggleActive {}),
         Hotkey::new(KeyCode::F6, Action::StorePosition {}),
         Hotkey::new(KeyCode::F7, Action::RestorePosition {}),

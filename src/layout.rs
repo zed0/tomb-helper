@@ -661,6 +661,26 @@ group! {
     }
 }
 
+group! {
+    /// The menus' state machine (`UiMenuStateManager`, which `MenuState` is in), whose states are the menus, by id. On
+    /// each frame a requested menu that isn't the one showing is switched to. ROTTR (Steam and Epic)'s are the
+    /// defaults; SOTTR 234.1's are 0x798, 0x79C and 0x830, 492's 0x7A8, 0x7AC and 0x840 (all found from the code that
+    /// switches)
+    MenuLayout {
+        /// i32, the menu showing (its id), -1 in game
+        current = 0xA28,
+        /// i32, the menu to switch to, -1 for none
+        requested = 0xA2C,
+        /// The menus' names (e.g. "dtp::MENU_STATE_LEVEL_SELECT"), `name_size` bytes each, by id
+        names = 0xAC8,
+        name_size @value = 0x40,
+        /// How many names there are room for
+        count @value = 0x80,
+        /// How big an id is: an i32, or in TR2013 (whose current menu is 0x1AC, requested 0x1AE and names 0x1F4) an i16
+        id_size @value = 4,
+    }
+}
+
 layout! {
     instance: InstanceLayout,
     player: PlayerLayout,
@@ -683,6 +703,7 @@ layout! {
     trigger_shape: TriggerShapeLayout,
     trigger_object: TriggerObjectLayout,
     script: ScriptLayout,
+    menu: MenuLayout,
 }
 
 impl Layout {

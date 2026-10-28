@@ -65,6 +65,12 @@ pub enum AddressType {
     // A byte, nonzero while the camera collides with the level (the active camera controller's); flight mode turns it
     // off, or the camera stays on this side of a wall she's flown through
     CameraCollision,
+    // The menu showing (i32, `layout.menu.current`) in the menus' state machine (`UiMenuStateManager`), whose chain
+    // less its last offset leads to the pointer to it (see `menu`)
+    MenuState,
+    // The menu to switch to (i32, -1 for none), which the game switches to on its next frame; the level select hotkey
+    // writes it. Found from `MenuState`'s chain
+    RequestedMenu,
     CutscenePrompt,
     CutsceneStatus,
     CutsceneTimeline,

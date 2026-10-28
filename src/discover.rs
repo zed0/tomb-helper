@@ -5,13 +5,15 @@
 //! It finds GameRender (the camera), TR9MultibodyClient (-> CollisionSceneClient, or `collision_scene.in_client` where
 //! it has no RTTI), the instance array (the longest run of slots with a nonzero header whose transforms are
 //! TransformComponents, or without transforms whose objects have names) and, where Lara's proxy is a static (TR2013),
-//! `PlayerProxy` (the proxies attached to hers are found through its body); `--save` writes them to the offsets file.
+//! `PlayerProxy` (the proxies attached to hers are found through its body) and the menus' state machine
+//! (UiMenuStateManager, `MenuState`, if its names are where the layout says); `--save` writes them to the offsets file.
 
 use anyhow::{Context, Result};
 use crate::game_memory::Handle;
 use crate::chains;
 use crate::components;
-use crate::rtti::{Classes, COLLISION_SCENE_CLIENT, GAME_RENDER, MULTIBODY_CLIENT};
+use crate::menu::{Menus, LEVEL_SELECT};
+use crate::rtti::{Classes, COLLISION_SCENE_CLIENT, GAME_RENDER, MENU_STATE_MANAGER, MULTIBODY_CLIENT};
 use crate::derive::References;
 use crate::offsets_file::{self, describe_chain};
 use crate::pe_image::PeImage;
@@ -71,7 +73,7 @@ pub fn find_statics(handle: Handle, base_address: usize, image: &PeImage) -> BTr
             _ => continue,
         };
         if let Some(class) = classes.name(handle, pointer) {
-            if class == GAME_RENDER || class == MULTIBODY_CLIENT {
+            if class == GAME_RENDER || class == MULTIBODY_CLIENT || class == MENU_STATE_MANAGER {
                 by_class.entry(class).or_default().push((rva, count));
             }
         }
@@ -104,6 +106,18 @@ pub fn find_statics(handle: Handle, base_address: usize, image: &PeImage) -> BTr
             }
         }
         None => println!("TR9MultibodyClient: NOT FOUND"),
+    }
+    match best(MENU_STATE_MANAGER) {
+        Some((rva, count)) => match Menus::at(handle, &mut classes, image.pointer_at(rva).unwrap()) {
+            Ok(menus) => {
+                let level_select = menus.id(LEVEL_SELECT).map_or("none".to_string(), |id| format!("{:#X}", id));
+                let references = format!("{} code references", count);
+                println!("UiMenuStateManager at mod+{:X} ({}), level select {}", rva, references, level_select);
+                found.insert(AddressType::MenuState, vec![rva, layout.menu.current]);
+            }
+            Err(why) => println!("UiMenuStateManager at mod+{:X}, but {} (is the layout's `menu` right?)", rva, why),
+        },
+        None => println!("UiMenuStateManager: NOT FOUND"),
     }
     match find_instance_array(handle, &mut classes, image, base_address) {
         Some((rva, slots)) => {
