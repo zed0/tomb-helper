@@ -34,7 +34,7 @@ User docs (hotkeys, config, cutscene timing generation) live in `README.md`.
 ## Runtime flow (`src/main.rs`)
 
 1. `main()` hands off to `cli::run` if given any CLI args; otherwise loads config and offsets (`OffsetsSource`), prints hotkeys, then polls every 100ms with `find_process::find_process(...)`, reloading the offsets when the file changes.
-2. On a match, `connect()` builds a `Vec<Box<dyn Handler>>` (`create_handlers`):
+2. On a match (a `find_process::Connection`), `connect()` builds a `Vec<Box<dyn Handler>>` (`create_handlers`):
    - `CutsceneTimingGeneratorHandler` **or** `CutsceneHandler` (chosen by `config.record_cutscene_timing`)
    - `OverlayHandler`
    - `PositionHandler::new_position_handler` (Lara position) and `::new_look_at_handler` (ROTTR look-at)
@@ -46,8 +46,8 @@ User docs (hotkeys, config, cutscene timing generation) live in `README.md`.
    on all. Exits on game process exit (`is_process_running`) or SIGINT. Errors are `eprintln!`ed (`report`), except the game
    being unreadable (`game_memory::is_unreadable`: `Unreadable`, or Windows refusing a read), which is expected during
    loading screens and exiting, so only shown with `debug_logging`. Make errors for reads that fail with `unreadable`.
-5. Every 500ms it checks the offsets file; if the running version's offsets changed the handlers are recreated
-   (losing their state), and if the game no longer matches any version it disconnects.
+5. Every 500ms it checks the offsets file (`reload_offsets`); if the running version's offsets changed the handlers are
+   recreated (losing their state), and if the game no longer matches any version it disconnects.
 
 ## File index
 
@@ -57,7 +57,7 @@ Each module's `//!` doc says what's in it and how it works; this is where to loo
 |---|---|
 | `src/main.rs` | Entry: process polling, handler construction, hotkeys, the action/tick loop; hands CLI args to `cli` |
 | `build.rs` | Builds the 32-bit overlay with a second cargo (its own target folder) and copies it next to the exe |
-| `src/cli.rs` | The command line tools: `port`, `update-offsets`, `check` (`--fit`, `--snapshot`, `--replay`), `watch`, and the rest under the hidden `debug` |
+| `src/cli.rs` | The command line tools: `port`, `update-offsets`, `check` (`--fit`, `--snapshot`, `--replay`), and the rest under the hidden `debug` |
 | `src/port.rs` | `port`: adding a patch or game step by step, with prompts (the other commands' steps in order) |
 | `src/logging.rs` | `tomb-helper.log` next to the exe (shared with the DLL, which logs through `tracing`): the exe's `println!`/`eprintln!` are its macros, which log too; panics; lines marked `[tomb-helper pid]` or `[overlay in Game.exe pid]`; 50MB then rotated to `.1` |
 | `src/config.rs` | `tomb-helper.json`: hotkeys, cutscene files, the overlay's starting settings |
@@ -65,12 +65,12 @@ Each module's `//!` doc says what's in it and how it works; this is where to loo
 | `src/hotkeys.rs` | `KeyCode` (the keys' names in the config) and `Hotkeys`, polling the keys, repeating held ones |
 | `src/handler.rs` | The `Handler` trait every feature implements |
 | `offsets.json` | **Per-game-version offsets** (built into the exe), layouts and `words` |
-| `src/offsets_file.rs` | The offsets file's JSON, `OffsetsSource` (the file next to the exe overrides the built in one, hot reloaded) |
+| `src/offsets_file.rs` | The offsets file's JSON, `OffsetsSource` (the file next to the exe overrides the built in one, hot reloaded), `save` (a version's entry), `parse_hex`, `describe_chain` |
 | `src/process_details.rs` | Types: `AddressType` (the offsets file's keys), `ProcessDetails`, `VersionIdentifier` |
-| `src/find_process.rs` | Finding the game process and which version it is |
+| `src/find_process.rs` | Finding the game process and which version it is: a `Connection` |
 | `src/game.rs` | `Game`: how the overlay and `check` both find things (Lara, her proxies, probes, ...) |
-| `src/game_memory.rs` | Reading the game: `Handle` (live, recording, snapshot), pointer size, readers, `*_at` accessors |
-| `src/layout.rs` | `Layout`: where things are in the game's structures, per version, ROTTR Steam's by default |
+| `src/game_memory.rs` | Reading the game: `Handle` (its `Memory`, live, recording or snapshot, read with its version's pointer size and layout), readers, `*_at` accessors |
+| `src/layout.rs` | `Layout`: where things are in the game's structures, per version, ROTTR Steam's by default; its fields by name and kind (offset, `@read_size`, `@value`) |
 | `src/words.rs` | The offsets file's `words`: names and class name parts the tools go by |
 | `src/rtti.rs`, `src/components.rs` | MSVC RTTI (32/64-bit), and components found by RTTI class name |
 | `src/object_list.rs` | Instances: positions, names, transforms (`to_world`), model bounds |
@@ -104,8 +104,8 @@ Each module's `//!` doc says what's in it and how it works; this is where to loo
 | `src/derive.rs` | Offsets for a new build by matching code references (`update-offsets --from`; `debug derive`, `trace`, `check-matching`) |
 | `src/normalised.rs` | Matching references between compilers |
 | `src/code_trace.rs` | Tracing how code uses a static: the pointer chains it accesses |
-| `src/chains.rs` | `debug chains` and `debug probe`, live |
-| `src/watch.rs` | `watch` (and `debug watch-raw`, `debug disasm`): hardware breakpoints for the instructions accessing values |
+| `src/chains.rs` | `connect` (for the live tools), `debug chains` and `debug probe` |
+| `src/watch.rs` | `debug watch` (and `watch-raw`, `disasm`): hardware breakpoints for the instructions accessing values |
 | `src/watch_fields.rs` | `debug watch <group.field>`: the instructions accessing layout fields |
 | `src/pe_image.rs` | `PeImage`: an exe or dump in memory layout, or dumped from a process |
 
@@ -127,7 +127,36 @@ Each module's `//!` doc says what's in it and how it works; this is where to loo
   `class_fields::FIELD_CLASSES`: then `update-offsets` works out where they are in a new build from how the class's code
   uses them (from the previous build, or for a new game the other games' dumps, which have to agree). Those are labelled "its class's code" in its summary; they've been right but for one in 11 checked, so
   `check` has to pass before they're trusted. `debug class-layout <from> <to>` shows how well it does between two dumps.
-  SOTTR's `CutsceneId` is used through a pointer to a record (`[r14+4]`), so its chain can't be derived for sure; it's
+  How each part is found, and what was found in each build, is under "How `port` finds things" below.
+- **New layout fields:** a field that isn't an offset in its structure is marked in its `group!`: `@read_size` for how
+  much of the structure is read (it grows when `check --fit` moves the fields), `@value` for a record size, count, type
+  number, mask or index (which never moves).
+- **Reading the game:** through a `game_memory::Handle` (or the `Game` holding one), which has the version's layout and
+  pointer size (`handle.layout()`, `handle.pointer_size()`, `handle.pointer_at(..)`); there's no global layout, so two
+  games (or one game with two layouts, `Game::with_layout`) can be read at once. The live tools start with
+  `chains::connect`, a `Connection` (pid, process handle, base address, details) whose `game()` reads it.
+- **Add a new memory value:** add an `AddressType` variant, add offsets per version in `offsets.json`, read it with
+  `Game` (`read_floats`, `require` and `game_memory`'s readers), or `TrackedMemory` in a handler that writes it.
+- **Writing a value:** anything a handler writes goes in `targets::WRITTEN`, with a check in `targets::verify` (what it
+  should look like, and the RTTI class it's in), and is found through `targets::find` just before writing, so a chain
+  that's wrong for a build is never written through. Where it's a field of something tomb-helper can already find (Lara's
+  instance or components, her player object, GameRender), add the field to `Layout` and build its chain in
+  `targets::structural` rather than adding offsets per version: then a new build ports it for free.
+- **Add a hotkey action:** add a variant to `Action` (`src/action.rs`), handle it in the relevant
+  handler's `handle_action`, optionally add a default in `default_hotkeys()` (`src/config.rs`), and
+  document it in `README.md`.
+- **Add a new feature module:** implement `Handler` (its constructor takes the `Connection`), add `mod` in `main.rs`,
+  construct it in `create_handlers()`.
+- **Send more data to the overlay:** add a field to `UiData` (`src/ui_ipc_data.rs`), fill it in
+  `OverlayHandler::handle_tick`, read it in `TombHelperHud::render` (`src/lib.rs`). Both binaries must be
+  rebuilt together.
+
+## How `port` finds things, and what it found in each build
+
+What the porting tools go by, and what's been found with them; the structures themselves are in the game memory notes
+below.
+
+- SOTTR's `CutsceneId` is used through a pointer to a record (`[r14+4]`), so its chain can't be derived for sure; it's
   held back as unverified, and `port` finds it while a cutscene plays: the cutscene's
   length picks its timing file entry, whose ids are the same in every build (`cutscene_id`). Deriving 234.1 and 492
   from each other gets everything else right (`player.instance` comes from `XPosition`'s chain).
@@ -215,20 +244,6 @@ Each module's `//!` doc says what's in it and how it works; this is where to loo
   back at her instance, +0x18), hit capsules (there's a `CollideComponent`, but no fixed route to it from the record was
   found: one that held for her held for 20 of 141 instances) and model bounds (no `DrawableComponent`; her record +0x94
   leads to a `RenderModelInstance`).
-- **Add a new memory value:** add an `AddressType` variant, add offsets per version in `offsets.json`, read it with
-  `Game` (`read_floats`, `require` and `game_memory`'s readers), or `TrackedMemory` in a handler that writes it.
-- **Writing a value:** anything a handler writes goes in `targets::WRITTEN`, with a check in `targets::verify` (what it
-  should look like, and the RTTI class it's in), and is found through `targets::find` just before writing, so a chain
-  that's wrong for a build is never written through. Where it's a field of something tomb-helper can already find (Lara's
-  instance or components, her player object, GameRender), add the field to `Layout` and build its chain in
-  `targets::structural` rather than adding offsets per version: then a new build ports it for free.
-- **Add a hotkey action:** add a variant to `Action` (`src/action.rs`), handle it in the relevant
-  handler's `handle_action`, optionally add a default in `default_hotkeys()` (`src/config.rs`), and
-  document it in `README.md`.
-- **Add a new feature module:** implement `Handler`, add `mod` in `main.rs`, construct it in `connect()`.
-- **Send more data to the overlay:** add a field to `UiData` (`src/ui_ipc_data.rs`), fill it in
-  `OverlayHandler::handle_tick`, read it in `TombHelperHud::render` (`src/lib.rs`). Both binaries must be
-  rebuilt together.
 
 ## Game memory notes (ROTTR Steam, Foundation/cdc engine)
 
