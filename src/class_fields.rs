@@ -19,9 +19,7 @@ use anyhow::{bail, Result};
 use crate::code_trace::{Access, Tracer};
 use crate::components;
 use crate::derive::ChainVotes;
-use crate::fit_layout::{NOT_OFFSETS, READ_SIZES};
-use crate::layout::Layout;
-use crate::layout::field_offset;
+use crate::layout::{field_offset, FieldKind, Layout};
 use crate::pe_image::PeImage;
 use crate::rtti;
 use iced_x86::Register;
@@ -86,7 +84,7 @@ const MIN_VOTES: f64 = 2.0;
 
 /// Which RTTI class's objects each layout field is in, so where it is in another build or game can be worked out from
 /// how the class's own code uses it (`derive_layout`). A "group.field" entry wins over its whole "group" (all of its
-/// offsets, that is: not its read sizes or the values that aren't offsets, see `fit_layout`). Groups whose structures
+/// offsets, that is: not its read sizes or values, see `layout::FieldKind`). Groups whose structures
 /// have no RTTI (instances, collision meshes, scripts, TR2013's aim sweep pools) aren't here.
 pub const FIELD_CLASSES: &[(&str, &str)] = &[
     ("proxy", components::PROXY),
@@ -114,17 +112,10 @@ pub fn class_of(name: &str) -> Option<&'static str> {
 
 // The layout's fields that are offsets (`group.field`, offset), by the class they're in
 fn fields_by_class(layout: &Layout) -> BTreeMap<&'static str, Vec<(String, usize)>> {
-    let value = serde_json::to_value(layout).unwrap_or_default();
     let mut by_class: BTreeMap<&'static str, Vec<(String, usize)>> = BTreeMap::new();
-    for (group, fields) in value.as_object().into_iter().flatten() {
-        for field in fields.as_object().into_iter().flat_map(|f| f.keys()) {
-            let name = format!("{}.{}", group, field);
-            if READ_SIZES.contains(&name.as_str()) || NOT_OFFSETS.contains(&name.as_str()) {
-                continue;
-            }
-            if let (Some(class), Some(offset)) = (class_of(&name), field_offset(layout, &name)) {
-                by_class.entry(class).or_default().push((name, offset));
-            }
+    for field in layout.fields().into_iter().filter(|f| f.kind == FieldKind::Offset) {
+        if let (Some(class), Some(offset)) = (class_of(&field.name), field.offset) {
+            by_class.entry(class).or_default().push((field.name, offset));
         }
     }
     by_class

@@ -292,32 +292,16 @@ pub fn find_flight_fields(version: Option<String>, save: bool) -> Result<()> {
     }
     let before = details.layout.clone();
     let after = found.apply(before.clone());
-    let changes = describe_changes(&before, &after);
+    let changes = crate::layout::differences(&before, &after);
     if changes.is_empty() {
         println!("The layout already has all of that");
     }
-    for change in &changes {
-        println!("  {}", change);
+    for (name, old, new) in &changes {
+        println!("  {:<26} {} -> {}", name, old, new);
     }
     if save && !changes.is_empty() {
         details.layout = after;
         crate::offsets_file::save(&details)?;
     }
     Ok(())
-}
-
-fn describe_changes(before: &Layout, after: &Layout) -> Vec<String> {
-    let hex = |o: Option<usize>| o.map_or("none".to_string(), |o| format!("{:#X}", o));
-    let path = |p: &[usize]| if p.is_empty() { "none".to_string() } else { format!("{:X?}", p) };
-    let mut changes = vec![];
-    let mut field = |name: &str, old: String, new: String| {
-        if old != new {
-            changes.push(format!("{:<26} {} -> {}", name, old, new));
-        }
-    };
-    field("proxy.movement_collides", hex(before.proxy.movement_collides), hex(after.proxy.movement_collides));
-    field("proxy.resolved_centre", hex(before.proxy.resolved_centre), hex(after.proxy.resolved_centre));
-    field("camera.collision", path(&before.camera.collision), path(&after.camera.collision));
-    field("body.previous", hex(before.body.previous), hex(after.body.previous));
-    changes
 }

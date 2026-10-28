@@ -4,7 +4,9 @@
 //!
 //! Optional offsets (e.g. TR2013's missing instance `transform`) are `null`. `set_for(details)`, on connecting, sets
 //! the layout and the game's pointer size (`game_memory`). New fields read from the game go here, with ROTTR's value as
-//! the default, rather than in constants.
+//! the default, rather than in constants. A field that isn't an offset is marked as a read size (`@read_size`, how much
+//! of the structure is read, which grows when fields move on) or `@value` (a record size, count, type number, mask or
+//! index, which never moves), which `check --fit` and the class layouts go by.
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::sync::{Arc, OnceLock, RwLock};
@@ -17,6 +19,10 @@ use crate::offsets_file::Hex;
 trait HexField: Sized {
     fn serialize_hex<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error>;
     fn deserialize_hex<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error>;
+    // Its offset, None if it's unset or a list
+    fn offset(&self) -> Option<usize>;
+    // Sets its offset, false if it's a list
+    fn set_offset(&mut self, offset: usize) -> bool;
 }
 
 impl HexField for usize {
@@ -26,6 +32,15 @@ impl HexField for usize {
 
     fn deserialize_hex<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         Hex::deserialize(deserializer).map(|h| h.0)
+    }
+
+    fn offset(&self) -> Option<usize> {
+        Some(*self)
+    }
+
+    fn set_offset(&mut self, offset: usize) -> bool {
+        *self = offset;
+        true
     }
 }
 
@@ -37,6 +52,15 @@ impl HexField for Option<usize> {
     fn deserialize_hex<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         Option::<Hex>::deserialize(deserializer).map(|h| h.map(|h| h.0))
     }
+
+    fn offset(&self) -> Option<usize> {
+        *self
+    }
+
+    fn set_offset(&mut self, offset: usize) -> bool {
+        *self = Some(offset);
+        true
+    }
 }
 
 impl HexField for Vec<usize> {
@@ -47,6 +71,35 @@ impl HexField for Vec<usize> {
     fn deserialize_hex<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         Vec::<Hex>::deserialize(deserializer).map(|l| l.into_iter().map(|h| h.0).collect())
     }
+
+    fn offset(&self) -> Option<usize> {
+        None
+    }
+
+    fn set_offset(&mut self, _offset: usize) -> bool {
+        false
+    }
+}
+
+/// What a layout field is
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FieldKind {
+    /// Where something is in its structure, which moves when something's added before it
+    Offset,
+    /// How much of its structure is read (`@read_size`), which grows when its fields move on
+    ReadSize,
+    /// Not an offset (`@value`): a record size, count, type number, mask or index, which never moves
+    Value,
+}
+
+/// A layout field
+#[derive(Debug, Clone, PartialEq)]
+pub struct Field {
+    /// `group.field`
+    pub name: String,
+    pub kind: FieldKind,
+    /// None where it's unset, or a list
+    pub offset: Option<usize>,
 }
 
 fn serialize_hex<T: HexField, S: Serializer>(value: &T, serializer: S) -> Result<S::Ok, S::Error> {
@@ -67,9 +120,24 @@ macro_rules! field_type {
     };
 }
 
+// A field's kind in a `group!`: an offset unless it's marked `@read_size` or `@value`
+macro_rules! field_kind {
+    () => {
+        FieldKind::Offset
+    };
+    (read_size) => {
+        FieldKind::ReadSize
+    };
+    (value) => {
+        FieldKind::Value
+    };
+}
+
 // A group of hex numbers, each with its ROTTR (Steam) default
 macro_rules! group {
-    ($(#[$meta:meta])* $name:ident { $($(#[$field_meta:meta])* $field:ident $(: $ty:ty)? = $default:expr,)* }) => {
+    ($(#[$meta:meta])* $name:ident {
+        $($(#[$field_meta:meta])* $field:ident $(@ $kind:ident)? $(: $ty:ty)? = $default:expr,)*
+    }) => {
         $(#[$meta])*
         #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
         #[serde(default, deny_unknown_fields)]
@@ -86,13 +154,75 @@ macro_rules! group {
                 $name { $($field: $default,)* }
             }
         }
+
+        impl $name {
+            // Each field's name, kind and offset
+            fn fields(&self) -> Vec<(&'static str, FieldKind, Option<usize>)> {
+                vec![$((stringify!($field), field_kind!($($kind)?), self.$field.offset()),)*]
+            }
+
+            fn offset(&self, field: &str) -> Option<usize> {
+                match field {
+                    $(stringify!($field) => self.$field.offset(),)*
+                    _ => None,
+                }
+            }
+
+            // False if it has no such field, or it's a list
+            fn set(&mut self, field: &str, offset: usize) -> bool {
+                match field {
+                    $(stringify!($field) => self.$field.set_offset(offset),)*
+                    _ => false,
+                }
+            }
+        }
+    };
+}
+
+// The layout, of these groups
+macro_rules! layout {
+    ($($group:ident: $type:ident,)*) => {
+        #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+        #[serde(default, deny_unknown_fields)]
+        pub struct Layout {
+            $(pub $group: $type,)*
+        }
+
+        impl Layout {
+            /// Every field
+            pub fn fields(&self) -> Vec<Field> {
+                let mut fields = vec![];
+                $(
+                    fields.extend(self.$group.fields().into_iter().map(|(field, kind, offset)| Field {
+                        name: format!("{}.{}", stringify!($group), field),
+                        kind,
+                        offset,
+                    }));
+                )*
+                fields
+            }
+
+            fn offset(&self, group: &str, field: &str) -> Option<usize> {
+                match group {
+                    $(stringify!($group) => self.$group.offset(field),)*
+                    _ => None,
+                }
+            }
+
+            fn set(&mut self, group: &str, field: &str, offset: usize) -> bool {
+                match group {
+                    $(stringify!($group) => self.$group.set(field, offset),)*
+                    _ => false,
+                }
+            }
+        }
     };
 }
 
 group! {
     /// Instances (game objects) are 0x120 byte records in a static array (`InstanceArray`); Lara is one of them
     InstanceLayout {
-        size = 0x120,
+        size @read_size = 0x120,
         /// u32, the same for every slot in the array (2), 0 after the end
         header = 0x0,
         position = 0x10,
@@ -176,7 +306,7 @@ group! {
         count = 0x8,
         /// Entries: a hash, -> the component's name (e.g. "InteractComponent"), -> its data
         entries = 0x14,
-        entry_size = 0xC,
+        entry_size @value = 0xC,
         name = 0x4,
     }
 }
@@ -187,8 +317,8 @@ group! {
     AimSweepLayout {
         /// Handles (index, id) into pools of records: the pool starts with this many 0x10 byte entries, each the index of
         /// a record, with the id at +0x8, and the records follow
-        max_handles = 0xBB8,
-        handle_size = 0x10,
+        max_handles @value = 0xBB8,
+        handle_size @value = 0x10,
         handle_id = 0x8,
         records = 0xBC10,
         /// Instances by handle: index 0 is this far into the instance array, and each says which index and id it is here
@@ -196,7 +326,7 @@ group! {
         instance_index = 0xC8,
         /// In an instance, the handle of its type (in `TypePool`), and for Lara, of her inventory (in `InventoryPool`)
         type_handle = 0x50,
-        inventory_size = 0xC0,
+        inventory_size @value = 0xC0,
         /// Which index and id the inventory record is
         inventory_index = 0xB8,
         /// The key of the item she has out, 0 if none
@@ -208,7 +338,7 @@ group! {
         node_key = 0x8,
         /// The handle of the item's instance
         node_item = 0x20,
-        type_size = 0x250,
+        type_size @value = 0x250,
         type_index = 0x248,
         /// -> the type's data, in which the tuning block is at `block`
         type_data = 0x10,
@@ -233,7 +363,7 @@ group! {
         matrix = 0x30,
         /// -> live world space bone matrices, row-major. Bone n of a hit capsule is matrix n + 1.
         bones = 0x80,
-        bone_size = 0x40,
+        bone_size @value = 0x40,
     }
 }
 
@@ -259,22 +389,22 @@ group! {
         shapes = 0x70,
         /// u32
         shape_count = 0x78,
-        entry_size = 0x18,
+        entry_size @value = 0x18,
         /// Byte 2 is the shape's type, the high u32 its bone
         entry_id = 0x8,
         /// -> shape in bone space
         entry_shape = 0x10,
         /// Capsules are this type (after `capsule_type_mask`), the others spheres. The top bit is set on Lara's and
         /// ROTTR's characters' (0x8A, spheres 0x81) but not on SOTTR's villagers' (0x0A).
-        capsule_type = 0x0A,
-        capsule_type_mask = 0x7F,
+        capsule_type @value = 0x0A,
+        capsule_type_mask @value = 0x7F,
         capsule_centre = 0x0,
         /// Quaternion x, y, z, w; the capsule runs along its z axis
         capsule_rotation = 0x10,
         capsule_radius = 0x28,
         /// Of the cylinder part
         capsule_length = 0x2C,
-        capsule_size = 0x30,
+        capsule_size @value = 0x30,
     }
 }
 
@@ -298,7 +428,7 @@ group! {
         /// -> physics body the proxy is swept as (or in TR2013, placed at), which the camera's and Lara's weapon's (TR2013's
         /// combat proxy's) are attached to. TR2013 Steam 0x10C
         body: Option<usize> = Some(0x148),
-        size = 0x150,
+        size @read_size = 0x150,
         /// What it hit this frame (including through the proxies attached to it): two u32 counts (next to each other in
         /// ROTTR, not in SOTTR; one in TR2013), and records with the world space point of contact (at their start, but
         /// after a normal in TR2013, so there this is where the first point is)
@@ -306,14 +436,14 @@ group! {
         /// None if there's just the one (TR2013)
         second_contact_count: Option<usize> = Some(0x168),
         contacts: Option<usize> = Some(0x190),
-        contact_size = 0x60,
+        contact_size @value = 0x60,
         /// u32 flags (bit 0x20 clears while Lara aims and rolls), with `collides` set while an attached proxy (e.g. the
         /// combat proxy) collides, for a game where that isn't known from physics bodies (TR2013)
         flags: Option<usize> = Some(0x18),
-        collides = 0x2,
+        collides @value = 0x2,
         /// In the flags, set while Lara's own proxy collides, which flight mode clears. None where it isn't known, when
         /// flight mode leaves the flags alone (SOTTR 0x1)
-        movement_collides: Option<usize> = None,
+        movement_collides @value: Option<usize> = None,
         /// 3 floats, where collision has put the proxy, which the game moves her towards (SOTTR 0xC0)
         resolved_centre: Option<usize> = None,
         /// -> the instance it belongs to (every component's back pointer, `component.instance`; TR2013's static proxy has
@@ -353,10 +483,10 @@ group! {
         radius = 0x44,
         /// Byte
         shape_type = 0x98,
-        capsule_type = 1,
+        capsule_type @value = 1,
         /// Byte, nonzero while it's touching something
         touching = 0x99,
-        size = 0xA0,
+        size @read_size = 0xA0,
         /// A copy of the centre (SOTTR 0xA0)
         previous_centre: Option<usize> = None,
         /// 4 floats, how far it has left to go, like the body's (SOTTR 0x10)
@@ -368,7 +498,7 @@ group! {
     /// The ground probes the game casts for Lara (`PlayerProbes`): a u32 count, then records
     ProbesLayout {
         records = 0x70,
-        size = 0x60,
+        size @value = 0x60,
         /// Can be stale
         hit = 0x10,
         start = 0x20,
@@ -384,10 +514,10 @@ group! {
         /// Near, far, near, far, fov, aspect, fov, aspect (`CameraLens`); TR2013 has just near, far, fov, aspect
         lens = 0x30,
         /// Which of the 8 floats read from `lens` are the near and far planes, the vertical fov and the aspect ratio
-        lens_near = 2,
-        lens_far = 3,
-        lens_fov = 6,
-        lens_aspect = 7,
+        lens_near @value = 2,
+        lens_far @value = 3,
+        lens_fov @value = 6,
+        lens_aspect @value = 7,
         /// The first row of camera-to-world (`CameraSin`, `CameraCos`)
         sin = 0x70,
         cos = 0x74,
@@ -413,7 +543,7 @@ group! {
     /// A collision mesh instance
     CollisionInstanceLayout {
         /// How much to read
-        size = 0x98,
+        size @read_size = 0x98,
         /// Row-major object-to-world matrix (row vectors)
         matrix = 0x0,
         /// World space bounds
@@ -423,7 +553,7 @@ group! {
         /// such origin (TR2013's level meshes have one, its object meshes zeros)
         origin: Option<usize> = None,
         /// The matrix, origin and bounds, which are reread each tick
-        placement_size = 0x60,
+        placement_size @read_size = 0x60,
         /// -> filter, shared by many. None if there's none (TR2013), when every mesh counts as Lara's
         filter: Option<usize> = Some(0x60),
         mesh = 0x70,
@@ -433,14 +563,14 @@ group! {
         /// In the filter, a u32 of bits for which kinds of collision use the mesh
         filter_kinds = 0x4,
         /// The kind Lara's movement collides with
-        player_kind = 0x2,
+        player_kind @value = 0x2,
     }
 }
 
 group! {
     /// A collision mesh
     CollisionMeshLayout {
-        header_size = 0x48,
+        header_size @read_size = 0x48,
         /// -> vertices
         vertices = 0x10,
         /// -> triangles: 3 u32 vertex indices, a flags byte and a material byte
@@ -452,13 +582,13 @@ group! {
         /// u16
         vertex_format = 0x44,
         /// 3 f32s
-        format_float = 1,
+        format_float @value = 1,
         /// 3 f16s
-        format_half = 2,
-        triangle_size = 0x10,
+        format_half @value = 2,
+        triangle_size @value = 0x10,
         triangle_flags = 0xC,
         /// The game's collision tests skip these
-        triangle_ignored = 0x40,
+        triangle_ignored @value = 0x40,
     }
 }
 
@@ -471,22 +601,22 @@ group! {
         shape_type = 0x0,
         /// Floats, as many as the type needs
         size = 0x8,
-        record_size = 0x38,
+        record_size @read_size = 0x38,
         /// Half extents x, y, z
-        box_type = 1,
+        box_type @value = 1,
         /// An upright rectangle in the x/z plane, half width (x) and half height (z)
-        plane_type = 3,
+        plane_type @value = 3,
         /// Radius
-        sphere_type = 4,
+        sphere_type @value = 4,
         /// A polygon swept along a vector for each corner ("triggerpolyvolume")
-        poly_type = 5,
+        poly_type @value = 5,
         /// u32
         poly_count = 0x8,
         /// -> entries: corner (x, y, z, 1), then how far it's swept
         poly_points = 0x10,
-        poly_point_size = 0x20,
+        poly_point_size @value = 0x20,
         /// In an entry, the vector it's swept along
-        poly_sweep = 0x10,
+        poly_sweep @value = 0x10,
     }
 }
 
@@ -498,9 +628,9 @@ group! {
         volume_type = 0x80,
         volume_size = 0x88,
         /// Half extents x, y, z
-        volume_box = 1,
+        volume_box @value = 1,
         /// Radius (the first of the sizes; all three are the same)
-        volume_sphere = 2,
+        volume_sphere @value = 2,
         /// `NsTriggerPlaneBase`: half width (x) and half height, then a bounding radius
         plane_size = 0x40,
     }
@@ -522,40 +652,38 @@ group! {
         link_count = 0x4,
         /// -> links: u16 from node, u16 to node (indices in the graph's nodes), u16 output, u16 input
         links = 0x10,
-        link_size = 0x8,
+        link_size @value = 0x8,
         /// In an AGObjectNode (and TR2013's AGInstanceNode), the id of the instance it acts on
         object_instance = 0x50,
         /// In an AGMessageSendNode, the id of the instance it sends a message to. None if it doesn't hold one (TR2013)
         message_instance: Option<usize> = Some(0x28),
         /// How much of a trigger node to look through for ids
-        node_size = 0x180,
+        node_size @read_size = 0x180,
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct Layout {
-    pub instance: InstanceLayout,
-    pub player: PlayerLayout,
-    pub ballistic: BallisticLayout,
-    pub placement: PlacementLayout,
-    pub component: ComponentLayout,
-    pub component_data: ComponentDataLayout,
-    pub transform: TransformLayout,
-    pub drawable: DrawableLayout,
-    pub collide: CollideLayout,
-    pub proxy: ProxyLayout,
-    pub body: BodyLayout,
-    pub physics_shape: PhysicsShapeLayout,
-    pub probes: ProbesLayout,
-    pub aim_sweep: AimSweepLayout,
-    pub camera: CameraLayout,
-    pub collision_scene: CollisionSceneLayout,
-    pub collision_instance: CollisionInstanceLayout,
-    pub collision_mesh: CollisionMeshLayout,
-    pub trigger_shape: TriggerShapeLayout,
-    pub trigger_object: TriggerObjectLayout,
-    pub script: ScriptLayout,
+layout! {
+    instance: InstanceLayout,
+    player: PlayerLayout,
+    ballistic: BallisticLayout,
+    placement: PlacementLayout,
+    component: ComponentLayout,
+    component_data: ComponentDataLayout,
+    transform: TransformLayout,
+    drawable: DrawableLayout,
+    collide: CollideLayout,
+    proxy: ProxyLayout,
+    body: BodyLayout,
+    physics_shape: PhysicsShapeLayout,
+    probes: ProbesLayout,
+    aim_sweep: AimSweepLayout,
+    camera: CameraLayout,
+    collision_scene: CollisionSceneLayout,
+    collision_instance: CollisionInstanceLayout,
+    collision_mesh: CollisionMeshLayout,
+    trigger_shape: TriggerShapeLayout,
+    trigger_object: TriggerObjectLayout,
+    script: ScriptLayout,
 }
 
 impl Layout {
@@ -585,25 +713,44 @@ pub fn set_for(details: &ProcessDetails) {
     crate::game_memory::set_architecture(details.arch);
 }
 
-/// A field's offset in the layout, if it's set
+/// A field's offset in the layout (`group.field`), if it's set
 pub fn field_offset(layout: &Layout, name: &str) -> Option<usize> {
     let (group, field) = name.split_once('.')?;
-    let value = serde_json::to_value(layout).ok()?;
-    let text = value.get(group)?.get(field)?.as_str()?;
-    usize::from_str_radix(text.trim_start_matches("0x"), 16).ok()
+    layout.offset(group, field)
 }
 
-/// The layout with one field changed
+/// The layout with one field (`group.field`) changed
 pub fn with_field(layout: &Layout, name: &str, offset: usize) -> anyhow::Result<Layout> {
     use anyhow::Context;
     let (group, field) = name.split_once('.').with_context(|| format!("{} isn't group.field", name))?;
-    let mut value = serde_json::to_value(layout)?;
-    let slot = value
-        .get_mut(group)
-        .and_then(|g| g.get_mut(field))
-        .with_context(|| format!("the layout has no {}", name))?;
-    *slot = serde_json::Value::String(format!("{:#X}", offset));
-    Ok(serde_json::from_value(value)?)
+    let mut changed = layout.clone();
+    if !changed.set(group, field, offset) {
+        anyhow::bail!("the layout has no {} that's an offset", name);
+    }
+    Ok(changed)
+}
+
+/// The fields that differ between two layouts, as (group.field, old, new), each value as the offsets file has it
+pub fn differences(old: &Layout, new: &Layout) -> Vec<(String, String, String)> {
+    fn describe(value: &serde_json::Value) -> String {
+        match value {
+            serde_json::Value::String(text) => text.clone(),
+            serde_json::Value::Null => "none".to_string(),
+            serde_json::Value::Array(items) => format!("[{}]", items.iter().map(describe).collect::<Vec<_>>().join(", ")),
+            other => other.to_string(),
+        }
+    }
+    let (old, new) = (serde_json::to_value(old).unwrap_or_default(), serde_json::to_value(new).unwrap_or_default());
+    let mut found = vec![];
+    for (group, fields) in new.as_object().into_iter().flatten() {
+        for (field, value) in fields.as_object().into_iter().flatten() {
+            let before = old.get(group).and_then(|g| g.get(field));
+            if before != Some(value) {
+                found.push((format!("{}.{}", group, field), before.map_or("?".to_string(), describe), describe(value)));
+            }
+        }
+    }
+    found
 }
 
 #[cfg(test)]
@@ -619,6 +766,25 @@ mod tests {
         assert_eq!(changed.proxy.in_use_size, 0x99);
         assert_eq!(changed.proxy.centre, layout.proxy.centre);
         assert_eq!(with_field(&layout, "proxy.body_owner", 0xF8).unwrap().proxy.body_owner, Some(0xF8));
+        // Lists aren't offsets
+        assert!(with_field(&layout, "camera.collision", 0x8).is_err());
+        assert!(with_field(&layout, "proxy.nothing", 0x8).is_err());
+        let changes = differences(&layout, &changed);
+        assert_eq!(changes, vec![("proxy.in_use_size".to_string(), "0x58".to_string(), "0x99".to_string())]);
+    }
+
+    #[test]
+    fn fields_say_what_they_are() {
+        let fields = Layout::default().fields();
+        let kind = |name: &str| fields.iter().find(|f| f.name == name).map(|f| f.kind);
+        assert_eq!(kind("proxy.centre"), Some(FieldKind::Offset));
+        assert_eq!(kind("proxy.size"), Some(FieldKind::ReadSize));
+        assert_eq!(kind("camera.lens_fov"), Some(FieldKind::Value));
+        assert_eq!(fields.iter().find(|f| f.name == "proxy.body_owner").map(|f| f.offset), Some(None));
+        // Every field serialised is listed, and no others
+        let json = serde_json::to_value(Layout::default()).unwrap();
+        let named: usize = json.as_object().unwrap().values().map(|g| g.as_object().unwrap().len()).sum();
+        assert_eq!(fields.len(), named);
     }
 
     use super::*;

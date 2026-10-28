@@ -5,14 +5,13 @@
 //! try by that group's checks, and keeps the best. It runs `check` quietly and without the trigger script scan, on the
 //! running game or a snapshot.
 //!
-//! Read sizes (`READ_SIZES`) grow with the fields; values that aren't offsets (`NOT_OFFSETS`, add new ones there) never
-//! move. Panics from bad layouts are caught. It recovered a +8 shift of TR2013's proxy from a snapshot in 23s.
+//! Read sizes (`@read_size` in the layout) grow with the fields; values that aren't offsets (`@value`) never move.
+//! Panics from bad layouts are caught. It recovered a +8 shift of TR2013's proxy from a snapshot in 23s.
 
 use anyhow::{Context, Result};
 use crate::check::{self, Options};
 use crate::game_memory::Handle;
-use crate::layout::Layout;
-use crate::layout::{field_offset, with_field};
+use crate::layout::{differences, with_field, FieldKind, Layout};
 use crate::process_details::ProcessDetails;
 use crate::snapshot::Snapshot;
 use std::path::Path;
@@ -52,55 +51,6 @@ const CHECK_GROUPS: &[(&str, &[&str])] = &[
     ("ProxyShapePreviousCentre", &["proxy", "body", "physics_shape"]),
     ("ProxyShapeGap", &["proxy", "body", "physics_shape"]),
     ("ProxyBodyGap", &["proxy", "body"]),
-];
-
-/// Layout values that aren't offsets into a structure: how much is read (which grow when fields move on), and type
-/// numbers, masks and indices (which never move)
-pub const READ_SIZES: &[&str] = &[
-    "instance.size",
-    "proxy.size",
-    "physics_shape.size",
-    "collision_instance.size",
-    "collision_instance.placement_size",
-    "collision_mesh.header_size",
-    "trigger_shape.record_size",
-    "script.node_size",
-];
-pub const NOT_OFFSETS: &[&str] = &[
-    "proxy.contact_size",
-    "proxy.collides",
-    "proxy.movement_collides",
-    "component_data.entry_size",
-    "aim_sweep.max_handles",
-    "aim_sweep.handle_size",
-    "aim_sweep.inventory_size",
-    "aim_sweep.type_size",
-    "transform.bone_size",
-    "collide.entry_size",
-    "collide.capsule_type",
-    "collide.capsule_type_mask",
-    "collide.capsule_size",
-    "physics_shape.capsule_type",
-    "probes.size",
-    "camera.lens_near",
-    "camera.lens_far",
-    "camera.lens_fov",
-    "camera.lens_aspect",
-    "collision_instance.player_kind",
-    "collision_mesh.format_float",
-    "collision_mesh.format_half",
-    "collision_mesh.triangle_size",
-    "collision_mesh.triangle_ignored",
-    "trigger_shape.box_type",
-    "trigger_shape.plane_type",
-    "trigger_shape.sphere_type",
-    "trigger_shape.poly_type",
-    "trigger_shape.poly_point_size",
-    // In a polygon's entries, not the record
-    "trigger_shape.poly_sweep",
-    "trigger_object.volume_box",
-    "trigger_object.volume_sphere",
-    "script.link_size",
 ];
 
 // The game to check against, the version, and how to run `check` on a layout
@@ -146,30 +96,20 @@ fn groups_of(check: &str) -> &'static [&'static str] {
     CHECK_GROUPS.iter().find(|(name, _)| *name == check).map_or(&[], |(_, groups)| groups)
 }
 
-// The group's fields that are offsets, and its read sizes
-fn fields(layout: &Layout, group: &str) -> (Vec<(String, usize)>, Vec<(String, usize)>) {
-    let value = serde_json::to_value(layout).unwrap_or_default();
-    let names: Vec<String> = value
-        .get(group)
-        .and_then(|g| g.as_object())
-        .map_or(vec![], |g| g.keys().map(|k| format!("{}.{}", group, k)).collect());
-    let mut offsets = vec![];
-    let mut sizes = vec![];
-    for name in names {
-        if let Some(offset) = field_offset(layout, &name) {
-            if READ_SIZES.contains(&name.as_str()) {
-                sizes.push((name, offset));
-            } else if !NOT_OFFSETS.contains(&name.as_str()) {
-                offsets.push((name, offset));
-            }
-        }
-    }
-    (offsets, sizes)
+// The group's fields of this kind that are set
+fn fields(layout: &Layout, group: &str, kind: FieldKind) -> Vec<(String, usize)> {
+    let prefix = format!("{}.", group);
+    layout
+        .fields()
+        .into_iter()
+        .filter(|f| f.kind == kind && f.name.starts_with(&prefix))
+        .filter_map(|f| Some((f.name, f.offset?)))
+        .collect()
 }
 
 // The layout with the group's fields from `from` on moved by `shift`
 fn shifted(layout: &Layout, group: &str, from: usize, shift: i64) -> Option<Layout> {
-    let (offsets, sizes) = fields(layout, group);
+    let (offsets, sizes) = (fields(layout, group, FieldKind::Offset), fields(layout, group, FieldKind::ReadSize));
     let mut changed = layout.clone();
     for (name, offset) in offsets.iter().filter(|(_, offset)| *offset >= from) {
         let moved = *offset as i64 + shift;
@@ -188,8 +128,7 @@ fn shifted(layout: &Layout, group: &str, from: usize, shift: i64) -> Option<Layo
 
 // The best way to move the group's fields, if any is better than how they are
 fn fit_group(target: &Target, layout: &Layout, group: &str, current: (i64, i64)) -> Option<(Layout, (i64, i64), String)> {
-    let (offsets, _) = fields(layout, group);
-    let mut starts: Vec<usize> = offsets.iter().map(|(_, o)| *o).collect();
+    let mut starts: Vec<usize> = fields(layout, group, FieldKind::Offset).iter().map(|(_, o)| *o).collect();
     starts.sort();
     starts.dedup();
     let mut best: Option<(Layout, (i64, i64), String)> = None;
@@ -294,19 +233,4 @@ fn hide_panics() -> PanicHook {
     let previous = std::panic::take_hook();
     std::panic::set_hook(Box::new(|_| {}));
     previous
-}
-
-// The fields that differ between two layouts, as (group.field, old, new)
-fn differences(old: &Layout, new: &Layout) -> Vec<(String, String, String)> {
-    let (old, new) = (serde_json::to_value(old).unwrap_or_default(), serde_json::to_value(new).unwrap_or_default());
-    let mut found = vec![];
-    for (group, fields) in new.as_object().into_iter().flatten() {
-        for (field, value) in fields.as_object().into_iter().flatten() {
-            let before = old.get(group).and_then(|g| g.get(field));
-            if before != Some(value) {
-                found.push((format!("{}.{}", group, field), before.map_or("?".to_string(), |b| b.to_string()), value.to_string()));
-            }
-        }
-    }
-    found
 }
