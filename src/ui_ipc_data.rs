@@ -556,6 +556,13 @@ pub struct UiDoubleBuffer {
     buffers: [UiData; 2],
 }
 
+// `UiDoubleBuffer`'s size, which the 64-bit exe and the 32-bit overlay have to agree on (the mapping's named after it,
+// so they'd never meet). Every build checks it here, so a field that's another size in the 32-bit overlay (one that's
+// pointer sized) fails its build rather than leaving TR2013's overlay blank. Change it with the layout: the error says
+// what it is now ("found one with a size of ...").
+const SHARED_SIZE: usize = 18_643_352;
+const _: [(); SHARED_SIZE] = [(); size_of::<UiDoubleBuffer>()];
+
 impl UiDoubleBuffer {
     // Copies the current value into the other buffer, changes it there, then makes that one current. Done in
     // place since `UiData` is too big to pass around by value.
