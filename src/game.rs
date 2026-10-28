@@ -7,6 +7,7 @@
 use crate::collision::{self, AttachedProxy, ProxyCapsules};
 use crate::components::{self, Components};
 use crate::game_memory::{read_floats, read_pointer, resolve, Handle};
+use crate::layout::Layout;
 use crate::position::Position;
 use crate::process_details::{AddressOffsets, AddressType};
 use crate::ui_ipc_data::Probe;
@@ -35,6 +36,16 @@ impl Clone for Game {
 impl Game {
     pub fn new(handle: Handle, base_address: usize, offsets: &AddressOffsets) -> Game {
         Game { handle, base_address, offsets: offsets.clone(), attached_bodies: Default::default() }
+    }
+
+    /// Where things are in its structures
+    pub fn layout(&self) -> &'static Layout {
+        self.handle.layout()
+    }
+
+    /// The same game, read with another layout (e.g. one being worked out)
+    pub fn with_layout(&self, layout: &Layout) -> Game {
+        Game::new(self.handle.with_layout(layout), self.base_address, &self.offsets)
     }
 
     /// Whether the version has offsets for this
@@ -96,7 +107,7 @@ impl Game {
     /// The proxies attached to Lara's `proxy`: those its body's attached bodies belong to, where the layout says how to
     /// find them (TR2013's combat proxy)
     pub fn attached_proxies(&self, proxy: usize) -> Vec<usize> {
-        let layout = crate::layout::current();
+        let layout = self.layout();
         let body = layout.proxy.body.and_then(|offset| read_pointer(self.handle, proxy + offset)).filter(|&b| b != 0);
         match body {
             Some(body) => {
@@ -113,7 +124,7 @@ impl Game {
         let instances = self.resolve(AddressType::InstanceArray)?;
         let inventories = self.resolve(AddressType::InventoryPool)?;
         let types = self.resolve(AddressType::TypePool)?;
-        let lara = read_pointer(self.handle, proxy + crate::layout::current().proxy.instance?)?;
+        let lara = read_pointer(self.handle, proxy + self.layout().proxy.instance?)?;
         crate::aim_sweep::read(self.handle, instances, inventories, types, lara)
     }
 

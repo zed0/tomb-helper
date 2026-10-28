@@ -9,7 +9,7 @@
 use anyhow::{bail, Context, Result};
 use crate::components::{self, Components};
 use crate::game::Game;
-use crate::game_memory::{f32_at, resolve, vector_at, Handle};
+use crate::game_memory::{f32_at, resolve, vector_at, Handle, Memory};
 use crate::layout::field_offset;
 use crate::process_details::{AddressType, ProcessDetails};
 use crate::snapshot::Snapshot;
@@ -167,7 +167,7 @@ fn lara_proxy(game: &Game, components: &mut Components) -> Option<(Vector3<f32>,
 // As much of the object as can be read: `SPAN`, or (from a snapshot, which only has what `check` read) the proxy's size
 // in the layout
 fn read_object(game: &Game, address: usize) -> Option<Vec<u8>> {
-    [SPAN, crate::layout::current().proxy.size].iter().find_map(|&size| {
+    [SPAN, game.layout().proxy.size].iter().find_map(|&size| {
         let mut bytes = vec![0u8; size];
         game.handle.copy_address(address, &mut bytes).ok().map(|_| bytes)
     })
@@ -179,14 +179,14 @@ pub fn derive(source: &Game, source_details: &ProcessDetails, target: &Game, tar
     if fields(group).is_empty() {
         bail!("no fields of {} can be found by their values yet", group);
     }
-    let found_in = |game: &Game, details: &ProcessDetails, what: &str| {
-        crate::layout::set_for(details);
+    let (source, target) = (&source.with_layout(&source_details.layout), &target.with_layout(&target_details.layout));
+    let found_in = |game: &Game, what: &str| {
         let mut components = Components::new(game.base_address);
         components.allow_scans(4096);
         lara_proxy(game, &mut components).with_context(|| format!("Lara's proxy wasn't found in the {}", what))
     };
-    let (source_lara, source_object) = found_in(source, source_details, "source")?;
-    let (target_lara, target_object) = found_in(target, target_details, "target")?;
+    let (source_lara, source_object) = found_in(source, "source")?;
+    let (target_lara, target_object) = found_in(target, "target")?;
     let target_bytes = read_object(target, target_object).context("the target's proxy couldn't be read")?;
 
     let mut found = vec![];
@@ -275,7 +275,6 @@ pub fn apply(
             Err(e) => notes.push(format!("{:<34} couldn't be compared with {}: {:#}", "proxy", details.version.version, e)),
         }
     }
-    crate::layout::set(layout.clone());
     for (name, says) in said {
         let current = field_offset(&layout, name);
         if settled.contains(name) || current.is_none() {
@@ -305,7 +304,7 @@ fn snapshot_game(path: &str) -> Result<(Game, ProcessDetails)> {
     let snapshot = Snapshot::load(Path::new(path)).with_context(|| format!("couldn't load {}", path))?;
     let snapshot: &'static Snapshot = Box::leak(Box::new(snapshot));
     let details = snapshot.details()?;
-    Ok((Game::new(Handle::Snapshot(snapshot), snapshot.header.base_address, &details.address_offsets), details))
+    Ok((Game::new(Handle::new(Memory::Snapshot(snapshot), &details), snapshot.header.base_address, &details.address_offsets), details))
 }
 
 /// `debug value-layout <source snapshot> [<group>] [--to <snapshot>]`: the running game's (or the other snapshot's)

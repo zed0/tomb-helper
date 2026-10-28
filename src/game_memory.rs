@@ -1,18 +1,18 @@
-//! Reading the game's memory: its pointer size (8 bytes, or 4 for 32-bit TR2013), pointers and values read from it, and
-//! little endian values at an offset in bytes copied out of it. Everything reading game pointers goes through these.
+//! Reading the game's memory: pointers (8 bytes, or 4 for 32-bit TR2013) and values read from it, and little endian
+//! values at an offset in bytes copied out of it. Everything reading game pointers goes through these.
 //!
-//! `Handle` is the running game, a recording of it or a snapshot; everything reading the game's structures takes one
-//! (`ProcessHandle` is only for `process_memory`'s own readers). `resolve` follows offsets file chains, `read_pointer`
-//! is None for null; use these and the `*_at` accessors rather than reading pointers by hand.
+//! `Handle` is the running game, a recording of it or a snapshot, with its version's pointer size and layout (where
+//! things are in its structures); everything reading the game's structures takes one (`ProcessHandle` is only for
+//! `process_memory`'s own readers). `resolve` follows offsets file chains, `read_pointer` is None for null; use these
+//! and the `*_at` accessors rather than reading pointers by hand.
 
+use crate::layout::{self, Layout};
 use crate::pe_image::PeImage;
+use crate::process_details::ProcessDetails;
 use crate::snapshot::{Recording, Snapshot};
 use nalgebra::Vector3;
 use process_memory::{Architecture, CopyAddress, Pid, ProcessHandle};
 use std::io;
-use std::sync::atomic::{AtomicUsize, Ordering};
-
-static POINTER_SIZE: AtomicUsize = AtomicUsize::new(8);
 
 /// How big a game of this architecture's pointers are
 pub fn pointer_size_of(arch: Architecture) -> usize {
@@ -21,21 +21,6 @@ pub fn pointer_size_of(arch: Architecture) -> usize {
     } else {
         4
     }
-}
-
-/// Reads the game's pointers at this architecture's size from now on (`layout::set_for` does this on connecting)
-pub fn set_architecture(arch: Architecture) {
-    POINTER_SIZE.store(pointer_size_of(arch), Ordering::Relaxed);
-}
-
-/// How big the game's pointers are
-pub fn pointer_size() -> usize {
-    POINTER_SIZE.load(Ordering::Relaxed)
-}
-
-/// The pointer at the start of `bytes`, at the game's pointer size
-pub fn pointer_from(bytes: &[u8]) -> usize {
-    sized_pointer_from(bytes, pointer_size())
 }
 
 /// A little endian pointer `size` bytes long at the start of `bytes` (or as much of it as there is)
@@ -48,7 +33,7 @@ pub fn sized_pointer_from(bytes: &[u8], size: usize) -> usize {
 
 /// Where a pointer chain from the offsets file leads (`TrackedMemory`'s way): the first offset is from the module's
 /// base, each later one is added to the pointer read where the chain has got to
-pub fn resolve(handle: impl CopyAddress + Copy, base_address: usize, offsets: &[usize]) -> Option<usize> {
+pub fn resolve(handle: Handle, base_address: usize, offsets: &[usize]) -> Option<usize> {
     let (first, rest) = offsets.split_first()?;
     let mut address = base_address + first;
     for offset in rest {
@@ -58,15 +43,16 @@ pub fn resolve(handle: impl CopyAddress + Copy, base_address: usize, offsets: &[
 }
 
 /// The pointer at `address`, None if it can't be read or is null
-pub fn read_pointer(handle: impl CopyAddress, address: usize) -> Option<usize> {
+pub fn read_pointer(handle: Handle, address: usize) -> Option<usize> {
     read_pointer_or_null(handle, address).ok().filter(|&pointer| pointer != 0)
 }
 
 /// The pointer at `address`, which may be null
-pub fn read_pointer_or_null(handle: impl CopyAddress, address: usize) -> io::Result<usize> {
-    let mut bytes = vec![0u8; pointer_size()];
-    handle.copy_address(address, &mut bytes)?;
-    Ok(pointer_from(&bytes))
+pub fn read_pointer_or_null(handle: Handle, address: usize) -> io::Result<usize> {
+    let mut bytes = [0u8; 8];
+    let bytes = &mut bytes[..handle.pointer_size];
+    handle.copy_address(address, bytes)?;
+    Ok(handle.pointer_from(bytes))
 }
 
 /// `N` bytes, None if they can't be read
@@ -140,11 +126,6 @@ pub fn read_floats<const N: usize>(handle: impl CopyAddress, address: usize) -> 
     Some(floats_at(&bytes, 0))
 }
 
-/// A pointer at the game's pointer size
-pub fn pointer_at(bytes: &[u8], offset: usize) -> usize {
-    pointer_from(&bytes[offset..])
-}
-
 pub fn u16_at(bytes: &[u8], offset: usize) -> u16 {
     u16::from_le_bytes(bytes[offset..offset + 2].try_into().unwrap())
 }
@@ -175,14 +156,22 @@ pub fn vector_at(bytes: &[u8], offset: usize) -> Vector3<f32> {
     Vector3::new(f32_at(bytes, offset), f32_at(bytes, offset + 4), f32_at(bytes, offset + 8))
 }
 
-/// What the game's memory is read through: the running game, the running game while keeping what's read (for a
-/// snapshot), or a snapshot of it. The code reading the game's structures takes this, so that it can be tested against
-/// snapshots.
+/// Where the game's memory is read from: the running game, the running game while keeping what's read (for a
+/// snapshot), or a snapshot of it
 #[derive(Clone, Copy)]
-pub enum Handle {
+pub enum Memory {
     Live(Pid, ProcessHandle),
     Recording(Pid, ProcessHandle, &'static Recording),
     Snapshot(&'static Snapshot),
+}
+
+/// The game's memory (`Memory`), read as its version's: at its pointer size, with its layout. The code reading the
+/// game's structures takes this, so that it can be tested against snapshots, and so two games can be read at once.
+#[derive(Clone, Copy)]
+pub struct Handle {
+    memory: Memory,
+    pointer_size: usize,
+    layout: &'static Layout,
 }
 
 // Process handles can be used from any thread; the rest is immutable or locked
@@ -191,41 +180,71 @@ unsafe impl Sync for Handle {}
 
 impl CopyAddress for Handle {
     fn copy_address(&self, address: usize, buffer: &mut [u8]) -> io::Result<()> {
-        match self {
-            Handle::Live(_, handle) => handle.copy_address(address, buffer),
-            Handle::Recording(_, handle, recording) => {
+        match self.memory {
+            Memory::Live(_, handle) => handle.copy_address(address, buffer),
+            Memory::Recording(_, handle, recording) => {
                 handle.copy_address(address, buffer)?;
                 recording.add(address, buffer);
                 Ok(())
             }
-            Handle::Snapshot(snapshot) => snapshot.copy_address(address, buffer),
+            Memory::Snapshot(snapshot) => snapshot.copy_address(address, buffer),
         }
     }
 }
 
 impl Handle {
+    /// The memory, read as a game of this version
+    pub fn new(memory: Memory, details: &ProcessDetails) -> Handle {
+        Handle { memory, pointer_size: pointer_size_of(details.arch), layout: layout::intern(&details.layout) }
+    }
+
+    /// The same game, read with another layout (e.g. one being tried)
+    pub fn with_layout(self, layout: &Layout) -> Handle {
+        Handle { layout: layout::intern(layout), ..self }
+    }
+
+    /// Where things are in the game's structures
+    pub fn layout(&self) -> &'static Layout {
+        self.layout
+    }
+
+    /// How big the game's pointers are
+    pub fn pointer_size(&self) -> usize {
+        self.pointer_size
+    }
+
+    /// The pointer at the start of `bytes`
+    pub fn pointer_from(&self, bytes: &[u8]) -> usize {
+        sized_pointer_from(bytes, self.pointer_size)
+    }
+
+    /// The pointer at `offset` in `bytes`
+    pub fn pointer_at(&self, bytes: &[u8], offset: usize) -> usize {
+        self.pointer_from(&bytes[offset..])
+    }
+
     /// A read that isn't kept in a recording, for scans through all of the game's memory (`regions`)
     pub fn scan_read(&self, address: usize, buffer: &mut [u8]) -> io::Result<()> {
-        match self {
-            Handle::Live(_, handle) | Handle::Recording(_, handle, _) => handle.copy_address(address, buffer),
-            Handle::Snapshot(snapshot) => snapshot.copy_address(address, buffer),
+        match self.memory {
+            Memory::Live(_, handle) | Memory::Recording(_, handle, _) => handle.copy_address(address, buffer),
+            Memory::Snapshot(snapshot) => snapshot.copy_address(address, buffer),
         }
     }
 
     /// The game's committed, readable, private memory (its heaps), as (start, size); for a snapshot, what it has
     pub fn regions(&self) -> Vec<(usize, usize)> {
-        match self {
-            Handle::Live(_, handle) | Handle::Recording(_, handle, _) => private_regions(*handle),
-            Handle::Snapshot(snapshot) => snapshot.regions(),
+        match self.memory {
+            Memory::Live(_, handle) | Memory::Recording(_, handle, _) => private_regions(handle),
+            Memory::Snapshot(snapshot) => snapshot.regions(),
         }
     }
 
     /// The game's main module as it is in memory
     pub fn image(&self) -> io::Result<PeImage> {
-        match self {
-            Handle::Live(pid, _) => PeImage::dump(*pid),
-            Handle::Recording(pid, _, recording) => recording.image(*pid),
-            Handle::Snapshot(snapshot) => Ok(snapshot.image.clone()),
+        match self.memory {
+            Memory::Live(pid, _) => PeImage::dump(pid),
+            Memory::Recording(pid, _, recording) => recording.image(pid),
+            Memory::Snapshot(snapshot) => Ok(snapshot.image.clone()),
         }
     }
 }

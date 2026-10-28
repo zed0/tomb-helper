@@ -21,11 +21,10 @@ const CANDIDATES_SHOWN: usize = 5;
 // Windows never maps the lowest 64KB, so anything below this isn't a pointer
 const MIN_POINTER: usize = 0x10000;
 
-/// The running game, for the live tools, with its version's layout in use
+/// The running game, for the live tools
 pub fn connect(version: Option<String>) -> Result<Connection> {
     let connection = find_process::find_process(known_process_details(), version)
         .context("No known game version is running (pass --version to force one from the offsets file)")?;
-    crate::layout::set_for(&connection.details);
     println!("Found {}", connection.details);
     Ok(connection)
 }

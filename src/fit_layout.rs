@@ -10,7 +10,7 @@
 
 use anyhow::{Context, Result};
 use crate::check::{self, Options};
-use crate::game_memory::Handle;
+use crate::game_memory::{Handle, Memory};
 use crate::layout::{differences, with_field, FieldKind, Layout};
 use crate::process_details::ProcessDetails;
 use crate::snapshot::Snapshot;
@@ -164,7 +164,8 @@ pub fn fit_layout(groups: &[&str], snapshot: Option<&str>, version: Option<Strin
         Some(path) => {
             let snapshot = Snapshot::load(Path::new(path)).with_context(|| format!("couldn't load {}", path))?;
             let snapshot: &'static Snapshot = Box::leak(Box::new(snapshot));
-            Target { handle: Handle::Snapshot(snapshot), base_address: snapshot.header.base_address, details: snapshot.details()? }
+            let details = snapshot.details()?;
+            Target { handle: Handle::new(Memory::Snapshot(snapshot), &details), base_address: snapshot.header.base_address, details }
         }
         None => {
             let connection = crate::chains::connect(version)?;

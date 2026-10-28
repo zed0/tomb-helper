@@ -4,9 +4,8 @@
 //! table -> DrawableComponent -> InstanceDrawable -> CommonRenderModelInstance -> CommonRenderModel -> the `Mesh`
 //! header). Where everything is is in the layout (`layout::InstanceLayout`).
 
-use crate::game_memory::{Handle, pointer_at, read_c_string, read_pointer, u32_at, u64_at, vector_at};
+use crate::game_memory::{Handle, read_c_string, read_pointer, u32_at, u64_at, vector_at};
 use crate::components::{self, Components};
-use crate::layout;
 use crate::position::Position;
 use nalgebra::{Rotation3, Vector3};
 use process_memory::CopyAddress;
@@ -48,7 +47,7 @@ impl ObjectList {
 
     // Every live instance. Placed ones are named after their placement, spawned ones after their object type.
     pub fn instances(&mut self, handle: Handle) -> io::Result<Vec<Instance>> {
-        let layout = layout::current();
+        let layout = handle.layout();
         let (instance, placement_layout) = (&layout.instance, &layout.placement);
         let words = crate::words::current();
         let mut instances = vec![];
@@ -59,11 +58,11 @@ impl ObjectList {
                 if u32_at(slot, instance.header) == 0 {
                     return Ok(instances);
                 }
-                if pointer_at(slot, instance.in_use) == 0 {
+                if handle.pointer_at(slot, instance.in_use) == 0 {
                     continue;
                 }
                 let address = self.array_address + (first_slot + index) * instance.size;
-                let placement = instance.placement.map_or(0, |offset| pointer_at(slot, offset));
+                let placement = instance.placement.map_or(0, |offset| handle.pointer_at(slot, offset));
                 let (name, full_name) = match placement {
                     0 => (String::new(), String::new()),
                     _ => {
@@ -115,13 +114,13 @@ pub fn sort_by_distance(instances: &mut [Instance], to: &Position) {
 // The game keeps the instance's own position and rotation up to date, but not always its TransformComponent
 // (Lara's stays where she loaded in), so that's only used for the scale.
 pub fn read_transform(handle: Handle, instance_address: usize) -> io::Result<[f32; 16]> {
-    let layout = layout::current();
+    let layout = handle.layout();
     let mut instance = vec![0u8; layout.instance.size];
     handle.copy_address(instance_address, &mut instance)?;
     // Each axis' scale, unscaled if instances don't point at their transform
     let scale = match layout.instance.transform {
         Some(offset) => {
-            let transform = pointer_at(&instance, offset);
+            let transform = handle.pointer_at(&instance, offset);
             if transform == 0 {
                 return Err(crate::game_memory::unreadable("instance has no transform"));
             }
@@ -162,7 +161,7 @@ pub fn origin(transform: &[f32; 16]) -> Position {
 
 pub fn read_position(handle: Handle, instance_address: usize) -> io::Result<Position> {
     let mut bytes = [0u8; 12];
-    handle.copy_address(instance_address + layout::current().instance.position, &mut bytes)?;
+    handle.copy_address(instance_address + handle.layout().instance.position, &mut bytes)?;
     Ok(read_position_from(&bytes, 0))
 }
 
@@ -172,7 +171,7 @@ pub fn read_bounds(
     components: &mut Components,
     instance_address: usize,
 ) -> Option<(Position, Position)> {
-    let layout = &layout::current().drawable;
+    let layout = &handle.layout().drawable;
     let drawable = components.get(handle, instance_address, components::DRAWABLE)?;
     let instance_drawable = read_pointer(handle, drawable + layout.instance_drawable)?;
     let model_instance = read_pointer(handle, instance_drawable + layout.model_instance)?;
@@ -189,7 +188,7 @@ pub fn read_bounds(
 
 /// What an instance is (its object type's name, e.g. "laracroft")
 pub fn object_name(handle: Handle, instance_address: usize) -> Option<String> {
-    let address = read_chain(handle, instance_address, &layout::current().instance.object_name)?;
+    let address = read_chain(handle, instance_address, &handle.layout().instance.object_name)?;
     Some(read_c_string(handle, address))
 }
 

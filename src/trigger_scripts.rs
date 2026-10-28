@@ -14,8 +14,8 @@
 //! like any other instance, whose outputs are its events. Which of them means Lara isn't known, so they're all "script".
 
 use anyhow::{bail, Context, Result};
-use crate::game_memory::{Handle, pointer_from, pointer_size, read_pointer, read_u32, read_u64, u16_at};
-use crate::layout::{self, ScriptLayout};
+use crate::game_memory::{Handle, read_pointer, read_u32, read_u64, u16_at};
+use crate::layout::ScriptLayout;
 use crate::ui_ipc_data::{trigger_action_bit, ACTS_ON_INSTANCES, DOES_SOMETHING_ELSE, NO_SCRIPT};
 use process_memory::CopyAddress;
 use std::collections::{HashMap, HashSet};
@@ -142,7 +142,7 @@ impl TriggerScripts {
         if due {
             self.last_scan = Some(Instant::now());
             let (handle, base_address, classes) = (self.handle, self.base_address, self.classes.clone());
-            let layout = layout::current();
+            let layout = self.handle.layout();
             self.running = Some(thread::spawn(move || scan(handle, base_address, classes, &layout.script)));
         }
     }
@@ -155,7 +155,7 @@ pub fn scripts_now(
     triggers: &[u64],
     names: &HashMap<u64, String>,
 ) -> Result<HashMap<u64, TriggerScript>> {
-    let (_, nodes) = scan(handle, base_address, None, &layout::current().script)?;
+    let (_, nodes) = scan(handle, base_address, None, &handle.layout().script)?;
     Ok(categorise(&nodes, &triggers.iter().copied().collect(), names))
 }
 
@@ -228,7 +228,7 @@ fn scan(
         Some(c) => c,
         None => {
             let image = handle.image().context("couldn't read the game")?;
-            Arc::new(find_classes(&image.data, base_address, layout))
+            Arc::new(find_classes(&image.data, base_address, handle.pointer_size(), layout))
         }
     };
     if classes.triggers.is_empty() {
@@ -238,7 +238,7 @@ fn scan(
     let image_end = base_address + crate::find_process::get_image_size(handle, base_address).unwrap_or(0);
     let lowest = *classes.triggers.keys().min().unwrap();
     let highest = *classes.triggers.keys().max().unwrap();
-    let pointer_size = pointer_size();
+    let pointer_size = handle.pointer_size();
     let mut nodes = vec![];
     let mut chunk = vec![0u8; CHUNK];
     for (start, size) in handle.regions() {
@@ -252,7 +252,7 @@ fn scan(
                 continue;
             }
             for (i, word) in chunk[..length].chunks_exact(pointer_size).enumerate() {
-                let value = pointer_from(word);
+                let value = handle.pointer_from(word);
                 // Vtables are in the game's image, which rules out nearly everything without a lookup
                 if value < lowest || value > highest {
                     continue;
@@ -304,13 +304,13 @@ fn read_graph(handle: Handle, layout: &ScriptLayout, graph: usize) -> Option<Gra
     if node_count > MAX_GRAPH_NODES || link_count > MAX_LINKS {
         return None;
     }
-    let pointer_size = pointer_size();
+    let pointer_size = handle.pointer_size();
     let mut node_bytes = vec![0u8; node_count * pointer_size];
     handle.copy_address(nodes_at, &mut node_bytes).ok()?;
     let mut link_bytes = vec![0u8; link_count * layout.link_size];
     let links_at = read_pointer(handle, header.checked_add(layout.links)?)?;
     handle.copy_address(links_at, &mut link_bytes).ok()?;
-    let nodes = node_bytes.chunks_exact(pointer_size).map(pointer_from).collect();
+    let nodes = node_bytes.chunks_exact(pointer_size).map(|b| handle.pointer_from(b)).collect();
     let mut links: HashMap<u16, Vec<u16>> = HashMap::new();
     for link in link_bytes.chunks_exact(layout.link_size) {
         let (from, to) = (u16_at(link, 0), u16_at(link, 2));
@@ -339,8 +339,8 @@ fn leads_to(graph: &Graph, start: usize) -> Vec<usize> {
 }
 
 // Trigger nodes' vtables, and those of nodes that say what a script does
-fn find_classes(data: &[u8], base_address: usize, layout: &ScriptLayout) -> Classes {
-    let vtables = crate::rtti::all_vtables(data, base_address);
+fn find_classes(data: &[u8], base_address: usize, pointer_size: usize, layout: &ScriptLayout) -> Classes {
+    let vtables = crate::rtti::all_vtables(data, base_address, pointer_size);
     let words = crate::words::current();
     let trigger_kind = |name: &str| match name {
         PLAYER_NODE => Some(NodeKind::Player),

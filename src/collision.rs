@@ -3,9 +3,9 @@
 //! camera and weapon, or TR2013's combat proxy) (`read_proxy`), including which of them is pushing her (a contact on
 //! its surface).
 
-use crate::game_memory::{Handle, f32_at, floats_at, pointer_at, read_pointer, read_pointer_or_null, read_u32, u32_at, u64_at, vector_at};
+use crate::game_memory::{Handle, f32_at, floats_at, read_pointer, read_pointer_or_null, read_u32, u32_at, u64_at, vector_at};
 use crate::components::{self, Components};
-use crate::layout;
+use crate::layout::{ProbesLayout, ProxyLayout};
 use crate::object_list;
 use crate::position::Position;
 use crate::ui_ipc_data::{Capsule, Probe};
@@ -48,14 +48,14 @@ pub fn read_capsule_shapes(
     components: &mut Components,
     instance_address: usize,
 ) -> io::Result<Vec<CapsuleShape>> {
-    let layout = &layout::current().collide;
+    let layout = &handle.layout().collide;
     let collide = match components.get(handle, instance_address, components::COLLIDE) {
         Some(c) => c,
         None => return Ok(vec![]),
     };
     let mut header = vec![0u8; layout.shapes.max(layout.shape_count) + 8];
     handle.copy_address(collide, &mut header)?;
-    let shapes = pointer_at(&header, layout.shapes);
+    let shapes = handle.pointer_at(&header, layout.shapes);
     let count = u32_at(&header, layout.shape_count) as usize;
     if shapes == 0 || count > MAX_HIT_SHAPES {
         return Ok(vec![]);
@@ -71,7 +71,7 @@ pub fn read_capsule_shapes(
             continue;
         }
         let mut shape = vec![0u8; layout.capsule_size];
-        handle.copy_address(pointer_at(entry, layout.entry_shape), &mut shape)?;
+        handle.copy_address(handle.pointer_at(entry, layout.entry_shape), &mut shape)?;
 
         let rotation = quaternion_at(&shape, layout.capsule_rotation);
         let (a, b) = capsule_ends(vector_at(&shape, layout.capsule_centre), rotation, f32_at(&shape, layout.capsule_length));
@@ -96,7 +96,7 @@ pub fn place_capsules(
         Some(count) => count,
         None => return Ok(vec![]),
     };
-    let layout = layout::current();
+    let layout = handle.layout();
     let bone_size = layout.transform.bone_size;
     let transform = match layout.instance.transform {
         Some(offset) => read_pointer_or_null(handle, instance_address + offset)?,
@@ -147,7 +147,7 @@ struct ProxyShape {
 }
 
 // The shape in use, then the one it's changing to
-fn proxy_shapes(layout: &layout::ProxyLayout) -> [ProxyShape; 2] {
+fn proxy_shapes(layout: &ProxyLayout) -> [ProxyShape; 2] {
     [
         ProxyShape {
             size: layout.in_use_size,
@@ -202,7 +202,7 @@ pub struct AttachedBodies {
 impl AttachedBodies {
     /// Those attached to `body`, walking the body list again if they may have changed
     pub fn of(&mut self, handle: Handle, body: usize) -> &[usize] {
-        let parent = layout::current().body.parent;
+        let parent = handle.layout().body.parent;
         let still_attached = || {
             let family: Vec<usize> = std::iter::once(body).chain(self.bodies.iter().copied()).collect();
             self.bodies.iter().all(|&b| read_pointer(handle, b + parent).is_some_and(|p| family.contains(&p)))
@@ -220,7 +220,7 @@ impl AttachedBodies {
 // Every body attached (directly or not) to `body`, from the whole body list: from its start where the list links back
 // (checked as it goes, so a wrong `body.previous` only means starting at hers)
 fn walk_attached(handle: Handle, body: usize) -> Vec<usize> {
-    let layout = &layout::current().body;
+    let layout = &handle.layout().body;
     let link = |at: usize, offset: usize| read_pointer(handle, at + offset);
     let mut start = body;
     if let Some(previous) = layout.previous {
@@ -258,7 +258,7 @@ fn walk_attached(handle: Handle, body: usize) -> Vec<usize> {
 // The shapes of a proxy (Lara's cdc::ProxyComponent) in world space, with those of the proxies attached to it (when
 // `attached_bodies` is given: the bodies remembered as attached to hers)
 pub fn read_proxy(handle: Handle, proxy: usize, attached_bodies: Option<&mut AttachedBodies>) -> io::Result<ProxyCapsules> {
-    let layout = &layout::current().proxy;
+    let layout = &handle.layout().proxy;
     let shapes = proxy_shapes(layout);
     let mut bytes = vec![0u8; layout.size];
     handle.copy_address(proxy, &mut bytes)?;
@@ -270,7 +270,7 @@ pub fn read_proxy(handle: Handle, proxy: usize, attached_bodies: Option<&mut Att
     let mut capsules: Vec<ProxyCapsule> = vec![];
 
     // The physics shape is what's actually swept, so prefer it for the shape in use
-    let body = layout.body.map(|offset| pointer_at(&bytes, offset)).filter(|&body| body != 0);
+    let body = layout.body.map(|offset| handle.pointer_at(&bytes, offset)).filter(|&body| body != 0);
     // Radius and length
     let size_at = |offset: usize| {
         let [radius, length] = floats_at(&bytes, offset);
@@ -332,7 +332,7 @@ pub fn read_proxy(handle: Handle, proxy: usize, attached_bodies: Option<&mut Att
 
 /// The proxy a body belongs to, where the layout says how to find it (TR2013)
 pub fn owner_proxy(handle: Handle, body: usize) -> Option<usize> {
-    let all = layout::current();
+    let all = handle.layout();
     let proxy = read_pointer(handle, body + all.body.owner?)?.checked_sub(all.proxy.body_owner?)?;
     // It's the body's proxy if that has the body (so a wrong offset finds nothing rather than something else)
     (read_pointer(handle, proxy + all.proxy.body?)? == body).then_some(proxy)
@@ -340,7 +340,7 @@ pub fn owner_proxy(handle: Handle, body: usize) -> Option<usize> {
 
 // Whether the proxy a body belongs to collides, by its flags, where they say so (TR2013)
 fn owner_collides(handle: Handle, body: usize) -> Option<bool> {
-    let all = layout::current();
+    let all = handle.layout();
     let proxy = owner_proxy(handle, body)?;
     Some(read_u32(handle, proxy + all.proxy.flags?)? as usize & all.proxy.collides != 0)
 }
@@ -348,7 +348,7 @@ fn owner_collides(handle: Handle, body: usize) -> Option<bool> {
 /// A proxy attached to Lara's (TR2013's combat proxy, found through its body): its shape in use, and whether it
 /// collides, from its flags
 pub fn read_attached_proxy(handle: Handle, proxy: usize) -> io::Result<(Capsule, bool)> {
-    let layout = &layout::current().proxy;
+    let layout = &handle.layout().proxy;
     let capsule = read_proxy(handle, proxy, None)?
         .shapes
         .first()
@@ -372,7 +372,7 @@ pub fn read_attached_proxy(handle: Handle, proxy: usize) -> io::Result<(Capsule,
 
 /// The world space points where the proxy is touching things (its own and its attached proxies')
 pub fn read_contacts(handle: Handle, proxy: usize) -> Vec<Vector3<f32>> {
-    let layout = &layout::current().proxy;
+    let layout = &handle.layout().proxy;
     let contacts = match layout.contacts {
         Some(offset) => offset,
         None => return vec![],
@@ -408,7 +408,7 @@ fn segment_distance(a: Vector3<f32>, b: Vector3<f32>, c: Vector3<f32>, d: Vector
 
 // The capsule, its centre, and whether it's touching something
 fn read_physics_capsule(handle: Handle, body: usize) -> Option<(Capsule, Vector3<f32>, bool)> {
-    let all = layout::current();
+    let all = handle.layout();
     let layout = &all.physics_shape;
     let shape = read_pointer(handle, body + all.body.shape)?;
     let mut bytes = vec![0u8; layout.size];
@@ -441,18 +441,16 @@ pub const PROBE_OWNER_DISTANCE: f32 = 300.0;
 const PROBE_HIT_TOLERANCE: f32 = 10.0;
 
 pub fn read_probes(handle: Handle, probes_address: usize) -> io::Result<Vec<Probe>> {
-    let layout = &layout::current().probes;
+    let layout = &handle.layout().probes;
     let mut bytes = vec![0u8; layout.records + MAX_PROBES * layout.size];
     handle.copy_address(probes_address, &mut bytes)?;
-    Ok(parse_probes(&bytes).collect())
+    Ok(parse_probes(layout, &bytes).collect())
 }
 
 /// The probes in `bytes`, which start with their count (at most `MAX_PROBES`, and those there are bytes for)
-pub fn parse_probes(bytes: &[u8]) -> impl Iterator<Item = Probe> + '_ {
-    let all = layout::current();
+pub fn parse_probes<'a>(layout: &'a ProbesLayout, bytes: &'a [u8]) -> impl Iterator<Item = Probe> + 'a {
     let count = bytes.get(..4).map_or(0, |count| (u32_at(count, 0) as usize).min(MAX_PROBES));
-    bytes.get(all.probes.records..).unwrap_or_default().chunks_exact(all.probes.size).take(count).map(move |record| {
-        let layout = &all.probes;
+    bytes.get(layout.records..).unwrap_or_default().chunks_exact(layout.size).take(count).map(move |record| {
         let start = vector_at(record, layout.start);
         let end = vector_at(record, layout.end);
         let hit = vector_at(record, layout.hit);

@@ -3,8 +3,8 @@
 //! space triangles near a point, closest first, tagged floor, wall or ceiling by their normal. `raycast` finds where a
 //! line first hits them.
 
-use crate::game_memory::{Handle, floats_at, pointer_at, read_u32, u16_at, u32_at, vector_at};
-use crate::layout;
+use crate::game_memory::{Handle, floats_at, read_u32, u16_at, u32_at, vector_at};
+use crate::layout::CollisionInstanceLayout;
 use crate::object_list;
 use crate::position::Position;
 use crate::ui_ipc_data::{SurfaceKind, Triangle, COLLISION_KINDS};
@@ -79,7 +79,7 @@ impl CollisionMeshes {
         detailed: bool,
         other_kinds: u32,
     ) -> io::Result<()> {
-        let layout = layout::current();
+        let layout = handle.layout();
         let (scene_layout, instance) = (&layout.collision_scene, &layout.collision_instance);
         let mesh_layout = &layout.collision_mesh;
         let mut scene = vec![0u8; scene_layout.first.max(scene_layout.count) + 8];
@@ -95,17 +95,17 @@ impl CollisionMeshes {
         // Many meshes are loaded twice and placed in the same place, with different kinds; the index of the one kept
         let mut seen = HashMap::new();
         let mut kind_counts = [0u32; COLLISION_KINDS];
-        let mut address = pointer_at(&scene, scene_layout.first);
+        let mut address = handle.pointer_at(&scene, scene_layout.first);
         let mut bytes = vec![0u8; instance.size];
         let mut visited = 0;
         while address != 0 && visited < count {
             visited += 1;
             handle.copy_address(address, &mut bytes)?;
-            let next = pointer_at(&bytes, instance.next);
+            let next = handle.pointer_at(&bytes, instance.next);
             // Without a filter (TR2013), every mesh counts as Lara's
             let kinds = match instance.filter {
                 Some(offset) => {
-                    let filter = pointer_at(&bytes, offset);
+                    let filter = handle.pointer_at(&bytes, offset);
                     if !filters.contains_key(&filter) {
                         let kinds = read_u32(handle, filter + instance.filter_kinds)
                             .ok_or_else(|| crate::game_memory::unreadable("unreadable collision filter"))?;
@@ -124,7 +124,7 @@ impl CollisionMeshes {
                 continue;
             }
             let is_detailed = !for_lara;
-            let mesh = pointer_at(&bytes, instance.mesh);
+            let mesh = handle.pointer_at(&bytes, instance.mesh);
             if !headers.contains_key(&mesh) {
                 headers.insert(mesh, self.mesh_header(handle, mesh)?);
             }
@@ -147,8 +147,8 @@ impl CollisionMeshes {
                     mesh,
                     flipped: instance.flags.map_or(false, |offset| u16_at(&bytes, offset) & 1 != 0),
                     detailed: is_detailed,
-                    min: vector_at(&bytes, instance.min) + origin(&bytes),
-                    max: vector_at(&bytes, instance.max) + origin(&bytes),
+                    min: vector_at(&bytes, instance.min) + origin(instance, &bytes),
+                    max: vector_at(&bytes, instance.max) + origin(instance, &bytes),
                     placed,
                 });
             }
@@ -164,7 +164,7 @@ impl CollisionMeshes {
 
     // Drops the cached mesh if the header changed, so it gets loaded again when it's needed
     fn mesh_header(&mut self, handle: Handle, address: usize) -> io::Result<Vec<u8>> {
-        let mut header = vec![0u8; layout::current().collision_mesh.header_size];
+        let mut header = vec![0u8; handle.layout().collision_mesh.header_size];
         handle.copy_address(address, &mut header)?;
         if self.meshes.get(&address).map_or(false, |m| m.header != header) {
             self.meshes.remove(&address);
@@ -181,7 +181,7 @@ impl CollisionMeshes {
         detailed_radius: f32,
         max: usize,
     ) -> Vec<Triangle> {
-        let layout = &layout::current().collision_instance;
+        let layout = &handle.layout().collision_instance;
         let centre = centre.vector();
         let mut found = vec![];
         for placement in &mut self.placements {
@@ -194,7 +194,8 @@ impl CollisionMeshes {
             if handle.copy_address(placement.address, &mut bytes).is_err() {
                 continue;
             }
-            let (min, max) = (vector_at(&bytes, layout.min) + origin(&bytes), vector_at(&bytes, layout.max) + origin(&bytes));
+            let origin = origin(layout, &bytes);
+            let (min, max) = (vector_at(&bytes, layout.min) + origin, vector_at(&bytes, layout.max) + origin);
             if box_distance(&centre, &min, &max) > radius || !place(handle, placement, &mut self.meshes, &bytes) {
                 continue;
             }
@@ -214,7 +215,7 @@ impl CollisionMeshes {
     /// How far along the ray from `origin` towards `direction` (unit length) it first hits one of the meshes, if it does
     /// within `max`
     pub fn raycast(&mut self, handle: Handle, origin: Vector3<f32>, direction: Vector3<f32>, max: f32) -> Option<f32> {
-        let layout = &layout::current().collision_instance;
+        let layout = &handle.layout().collision_instance;
         let margin = Vector3::repeat(RAY_MARGIN);
         let mut nearest: Option<f32> = None;
         for placement in &mut self.placements {
@@ -241,7 +242,7 @@ impl CollisionMeshes {
 // Places the placement's mesh in the world with the matrix in `bytes` (the instance as it is now), loading it if need
 // be; false if it can't be read
 fn place(handle: Handle, placement: &mut Placement, meshes: &mut HashMap<usize, Mesh>, bytes: &[u8]) -> bool {
-    let layout = &layout::current().collision_instance;
+    let layout = &handle.layout().collision_instance;
     if !meshes.contains_key(&placement.mesh) {
         match read_mesh(handle, placement.mesh) {
             Ok(mesh) => meshes.insert(placement.mesh, mesh),
@@ -251,7 +252,7 @@ fn place(handle: Handle, placement: &mut Placement, meshes: &mut HashMap<usize, 
     }
     let mut matrix: [f32; 16] = floats_at(bytes, layout.matrix);
     // The origin goes on the translation (the last row)
-    let origin = origin(bytes);
+    let origin = origin(layout, bytes);
     for axis in 0..3 {
         matrix[12 + axis] += origin[axis];
     }
@@ -265,8 +266,8 @@ fn place(handle: Handle, placement: &mut Placement, meshes: &mut HashMap<usize, 
 }
 
 // What the instance's vertices are relative to, after its matrix (TR2013's level meshes), or none
-fn origin(bytes: &[u8]) -> Vector3<f32> {
-    layout::current().collision_instance.origin.map_or(Vector3::zeros(), |offset| vector_at(bytes, offset))
+fn origin(layout: &CollisionInstanceLayout, bytes: &[u8]) -> Vector3<f32> {
+    layout.origin.map_or(Vector3::zeros(), |offset| vector_at(bytes, offset))
 }
 
 // Whether the ray reaches the box within `max`
@@ -310,7 +311,7 @@ fn ray_triangle(origin: &Vector3<f32>, direction: &Vector3<f32>, triangle: &Tria
 }
 
 pub fn read_mesh(handle: Handle, address: usize) -> io::Result<Mesh> {
-    let layout = &layout::current().collision_mesh;
+    let layout = &handle.layout().collision_mesh;
     let mut header = vec![0u8; layout.header_size];
     handle.copy_address(address, &mut header)?;
     let vertex_count = u32_at(&header, layout.vertex_count) as usize;
@@ -319,11 +320,11 @@ pub fn read_mesh(handle: Handle, address: usize) -> io::Result<Mesh> {
     let format = u16_at(&header, layout.vertex_format) as usize;
     let vertices = if format == layout.format_float {
         let mut bytes = vec![0u8; vertex_count * FLOAT_VERTEX_SIZE];
-        handle.copy_address(pointer_at(&header, layout.vertices), &mut bytes)?;
+        handle.copy_address(handle.pointer_at(&header, layout.vertices), &mut bytes)?;
         bytes.chunks_exact(FLOAT_VERTEX_SIZE).map(|v| vector_at(v, 0)).collect()
     } else if format == layout.format_half {
         let mut bytes = vec![0u8; vertex_count * HALF_VERTEX_SIZE];
-        handle.copy_address(pointer_at(&header, layout.vertices), &mut bytes)?;
+        handle.copy_address(handle.pointer_at(&header, layout.vertices), &mut bytes)?;
         bytes
             .chunks_exact(HALF_VERTEX_SIZE)
             .map(|v| Vector3::new(half_at(v, 0), half_at(v, 2), half_at(v, 4)))
@@ -334,7 +335,7 @@ pub fn read_mesh(handle: Handle, address: usize) -> io::Result<Mesh> {
     };
 
     let mut bytes = vec![0u8; triangle_count * layout.triangle_size];
-    handle.copy_address(pointer_at(&header, layout.triangles), &mut bytes)?;
+    handle.copy_address(handle.pointer_at(&header, layout.triangles), &mut bytes)?;
     let triangles = bytes
         .chunks_exact(layout.triangle_size)
         .filter(|t| t[layout.triangle_flags] as usize & layout.triangle_ignored == 0)

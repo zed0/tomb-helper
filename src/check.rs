@@ -121,8 +121,7 @@ pub fn run_with(handle: Handle, base_address: usize, details: ProcessDetails, op
 }
 
 fn run_report(handle: Handle, base_address: usize, details: ProcessDetails, report: &mut Report) -> Result<()> {
-    crate::layout::set_for(&details);
-    let game = Game::new(handle, base_address, &details.address_offsets);
+    let game = Game::new(handle.with_layout(&details.layout), base_address, &details.address_offsets);
     let mut components = Components::new(base_address);
     // So that every component type near Lara has its slot learnt
     components.allow_scans(NEARBY * 4);
@@ -279,7 +278,7 @@ fn check_instances(game: &Game, report: &mut Report) -> Option<Vec<Instance>> {
         }
     };
 
-    let layout = crate::layout::current();
+    let layout = game.layout();
     let mut classes = crate::rtti::Classes::new(game.base_address);
     let sample: Vec<&Instance> = instances.iter().step_by((instances.len() / SAMPLE).max(1)).collect();
     let transforms = sample
@@ -352,7 +351,7 @@ fn check_lara(
     nearby: &[Instance],
     position: &Position,
 ) -> Option<usize> {
-    if crate::layout::current().instance.components.is_none() {
+    if game.layout().instance.components.is_none() {
         report.skip("Lara", "instances have no component table to find her PlayerComponent in".to_string());
         return None;
     }
@@ -377,7 +376,7 @@ fn check_lara(
 
 fn check_bounds(game: &Game, report: &mut Report, components: &mut Components, nearby: &[Instance]) {
     // They're found through the instance's DrawableComponent
-    if crate::layout::current().instance.components.is_none() {
+    if game.layout().instance.components.is_none() {
         return report.skip("model bounds", "instances have no component table".to_string());
     }
     let bounds: Vec<(Position, Position)> = nearby
@@ -402,7 +401,7 @@ fn check_camera(game: &Game, report: &mut Report) {
             // Where GameRender can be read (not from a snapshot), it has to be the world-to-view matrix, not just a
             // rotation (the camera-to-world ones are too)
             let offset = game.offsets.get(&AddressType::CameraView).and_then(|c| c.last().copied()).unwrap_or(0);
-            let camera = crate::camera_fields::Camera::read(game, &crate::layout::current().camera);
+            let camera = crate::camera_fields::Camera::read(game, &game.layout().camera);
             let is_view = camera.map(|c| c.is_view(offset));
             report.result(
                 "camera view",
@@ -418,7 +417,7 @@ fn check_camera(game: &Game, report: &mut Report) {
     }
     match game.resolve(AddressType::CameraLens).and_then(|a| read_floats::<8>(game.handle, a)) {
         Some(lens) => {
-            let camera = &crate::layout::current().camera;
+            let camera = &game.layout().camera;
             let field = |i: usize| lens[i.min(lens.len() - 1)];
             let (near, far, fov, aspect) =
                 (field(camera.lens_near), field(camera.lens_far), field(camera.lens_fov), field(camera.lens_aspect));

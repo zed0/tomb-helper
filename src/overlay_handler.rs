@@ -696,7 +696,7 @@ impl Handler for OverlayHandler {
         };
         let triangle_milliseconds = started.elapsed().as_secs_f32() * 1000.0;
 
-        let camera = &crate::layout::current().camera;
+        let camera = &self.game.layout().camera;
         let lens_fields = [camera.lens_near, camera.lens_far, camera.lens_fov, camera.lens_aspect].map(|f| f as u32);
         let camera_projection = self.camera_lens.map_or([0.0; 16], |lens| projection_from_lens(&lens, lens_fields));
         // 0 tells the overlay there's no camera

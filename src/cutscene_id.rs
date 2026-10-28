@@ -7,7 +7,7 @@
 use anyhow::{bail, Context, Result};
 use crate::cutscene_timing_info::TimingInfo;
 use crate::game::Game;
-use crate::game_memory::{pointer_from, pointer_size, resolve, u32_at};
+use crate::game_memory::{resolve, u32_at};
 use crate::process_details::AddressType;
 use crate::readable_from_path::ReadableFromPath;
 use crate::offsets_file::describe_chain;
@@ -98,10 +98,10 @@ fn search(game: &Game, prefix: &[usize], levels: usize, expected: &HashSet<u32>,
         Some(bytes) => bytes,
         None => return vec![],
     };
-    let size = pointer_size();
+    let size = game.handle.pointer_size();
     let mut found = vec![];
     for x in (0..bytes.len().saturating_sub(size)).step_by(size) {
-        if pointer_from(&bytes[x..]) == 0 {
+        if game.handle.pointer_from(&bytes[x..]) == 0 {
             continue;
         }
         let next: Vec<usize> = [prefix, &[x]].concat();

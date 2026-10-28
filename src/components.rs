@@ -6,8 +6,7 @@
 //! Learning slots is budgeted per `start_refresh`, so a single refresh may not know every class yet.
 
 use crate::rtti::Classes;
-use crate::game_memory::{Handle, pointer_from, pointer_size, read_pointer};
-use crate::layout;
+use crate::game_memory::{Handle, read_pointer};
 use process_memory::CopyAddress;
 use std::collections::{HashMap, HashSet};
 
@@ -122,7 +121,7 @@ impl Components {
 
     /// Learns the slot of every component in the table
     fn learn(&mut self, handle: Handle, instance: usize, table: &Table) {
-        let size = pointer_size();
+        let size = handle.pointer_size();
         for first in (0..table.slots).step_by(SLOTS_PER_READ) {
             let count = SLOTS_PER_READ.min(table.slots - first);
             let mut bytes = vec![0u8; count * size];
@@ -130,7 +129,7 @@ impl Components {
                 return;
             }
             for (i, pointer) in bytes.chunks_exact(size).enumerate() {
-                let component = pointer_from(pointer);
+                let component = handle.pointer_from(pointer);
                 if component == 0 || !table.is_back_pointer(handle, component, instance) {
                     continue;
                 }
@@ -148,26 +147,28 @@ pub struct Table {
     pub slots: usize,
     // Where it starts in the instance, if it's in it
     inline: Option<usize>,
+    pointer_size: usize,
 }
 
 impl Table {
     /// The instance's tables: the one it points at first, then the one in it, where the layout has them
     pub fn all(handle: Handle, instance: usize) -> Vec<Table> {
-        let layout = &layout::current().instance;
+        let layout = &handle.layout().instance;
+        let pointer_size = handle.pointer_size();
         let mut tables = vec![];
         if let Some(address) = layout.components.and_then(|offset| read_pointer(handle, instance.wrapping_add(offset))) {
-            tables.push(Table { address, slots: MAX_SLOTS, inline: None });
+            tables.push(Table { address, slots: MAX_SLOTS, inline: None, pointer_size });
         }
         if let Some(offset) = layout.inline_components {
-            let slots = layout.size.saturating_sub(offset) / pointer_size();
-            tables.push(Table { address: instance.wrapping_add(offset), slots, inline: Some(offset) });
+            let slots = layout.size.saturating_sub(offset) / pointer_size;
+            tables.push(Table { address: instance.wrapping_add(offset), slots, inline: Some(offset), pointer_size });
         }
         tables
     }
 
     fn slot(&self, index: usize) -> Slot {
         match self.inline {
-            Some(offset) => Slot::Inline(offset + index * pointer_size()),
+            Some(offset) => Slot::Inline(offset + index * self.pointer_size),
             None => Slot::Table(index),
         }
     }
@@ -175,14 +176,14 @@ impl Table {
     fn has(&self, slot: Slot) -> bool {
         match (slot, self.inline) {
             (Slot::Table(index), None) => index < self.slots,
-            (Slot::Inline(offset), Some(start)) => offset >= start && (offset - start) / pointer_size() < self.slots,
+            (Slot::Inline(offset), Some(start)) => offset >= start && (offset - start) / self.pointer_size < self.slots,
             _ => false,
         }
     }
 
     fn address_of(&self, instance: usize, slot: Slot) -> usize {
         match slot {
-            Slot::Table(index) => self.address.wrapping_add(index * pointer_size()),
+            Slot::Table(index) => self.address.wrapping_add(index * self.pointer_size),
             Slot::Inline(offset) => instance.wrapping_add(offset),
         }
     }
@@ -190,7 +191,7 @@ impl Table {
     // Whether the component is the instance's: a table elsewhere can be shorter than the slots used, so a slot can hold
     // something else, but one in the instance holds only its own (and not all of TR2013's point back at it)
     fn is_back_pointer(&self, handle: Handle, component: usize, instance: usize) -> bool {
-        self.inline.is_some() || read_pointer(handle, component.wrapping_add(layout::current().component.instance)) == Some(instance)
+        self.inline.is_some() || read_pointer(handle, component.wrapping_add(handle.layout().component.instance)) == Some(instance)
     }
 }
 

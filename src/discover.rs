@@ -8,12 +8,11 @@
 //! `PlayerProxy` (the proxies attached to hers are found through its body); `--save` writes them to the offsets file.
 
 use anyhow::{Context, Result};
-use crate::game_memory::{pointer_at, pointer_size, Handle};
+use crate::game_memory::Handle;
 use crate::chains;
 use crate::components;
 use crate::rtti::{Classes, COLLISION_SCENE_CLIENT, GAME_RENDER, MULTIBODY_CLIENT};
 use crate::derive::References;
-use crate::layout;
 use crate::offsets_file::{self, describe_chain};
 use crate::pe_image::PeImage;
 use crate::process_details::AddressType;
@@ -79,7 +78,7 @@ pub fn find_statics(handle: Handle, base_address: usize, image: &PeImage) -> BTr
     }
     let best = |class: &str| by_class.get(class).and_then(|s| s.iter().max_by_key(|(_, count)| *count).copied());
 
-    let layout = layout::current();
+    let layout = handle.layout();
     let mut found: BTreeMap<AddressType, Vec<usize>> = BTreeMap::new();
     match best(GAME_RENDER) {
         Some((rva, count)) => {
@@ -141,12 +140,12 @@ pub struct PlayerProxy {
 /// Lara's proxy: the static ProxyComponent whose instance (at `instance_offset`, else the first pointer in it that
 /// leads to one) is hers
 pub fn find_player_proxy(handle: Handle, image: &PeImage, base_address: usize, instance_offset: usize) -> Option<PlayerProxy> {
-    let vtables: Vec<usize> = crate::rtti::all_vtables(&image.data, base_address)
+    let vtables: Vec<usize> = crate::rtti::all_vtables(&image.data, base_address, handle.pointer_size())
         .into_iter()
         .filter(|(_, name)| name == components::PROXY)
         .map(|(vtable, _)| vtable)
         .collect();
-    let size = pointer_size();
+    let size = handle.pointer_size();
     let is_lara = |instance: usize| {
         crate::object_list::object_name(handle, instance).map_or(false, |name| name.to_lowercase().contains(LARA_NAME))
     };
@@ -170,8 +169,8 @@ pub fn find_player_proxy(handle: Handle, image: &PeImage, base_address: usize, i
 fn field_of_class(handle: Handle, classes: &mut Classes, object: usize, class: &str) -> Option<usize> {
     let mut bytes = vec![0u8; MULTIBODY_CLIENT_SIZE];
     handle.copy_address(object, &mut bytes).ok()?;
-    (0..MULTIBODY_CLIENT_SIZE).step_by(pointer_size()).find(|&offset| {
-        let pointer = pointer_at(&bytes, offset);
+    (0..MULTIBODY_CLIENT_SIZE).step_by(handle.pointer_size()).find(|&offset| {
+        let pointer = handle.pointer_at(&bytes, offset);
         pointer != 0 && classes.name(handle, pointer).as_deref() == Some(class)
     })
 }
@@ -184,9 +183,9 @@ fn find_instance_array(
     image: &PeImage,
     base_address: usize,
 ) -> Option<(usize, usize)> {
-    let layout = &layout::current().instance;
+    let layout = &handle.layout().instance;
     let data = &image.data;
-    let step = pointer_size();
+    let step = handle.pointer_size();
     let header = |rva: usize| data.get(rva + layout.header..rva + layout.header + 4).map_or(0, |b| u32::from_le_bytes(b.try_into().unwrap()));
     // How many slots in a row from each position have a header, worked out from the end
     let positions = data.len() / step;
@@ -218,7 +217,7 @@ fn instances_check_out(
     rva: usize,
     slots: usize,
 ) -> bool {
-    let layout = &layout::current().instance;
+    let layout = &handle.layout().instance;
     let sampled: Vec<usize> = (0..slots).step_by((slots / INSTANCES_CHECKED).max(1)).collect();
     let in_use = |slot: usize| image.pointer_at(rva + slot * layout.size + layout.in_use).is_some_and(|p| p != 0);
     match layout.transform {

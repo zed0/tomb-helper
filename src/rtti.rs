@@ -5,7 +5,7 @@
 //! `Classes` maps vtables to class names (cached) and `all_vtables` lists every vtable in an image and its class.
 //! Tested on fake images of both pointer sizes.
 
-use crate::game_memory::{Handle, pointer_size, read_pointer, read_u32, sized_pointer_from};
+use crate::game_memory::{Handle, read_pointer, read_u32, sized_pointer_from};
 use process_memory::CopyAddress;
 use std::collections::HashMap;
 
@@ -35,10 +35,6 @@ struct Format {
 }
 
 impl Format {
-    fn current() -> Format {
-        Format::for_pointer_size(pointer_size())
-    }
-
     fn for_pointer_size(pointer_size: usize) -> Format {
         if pointer_size == 4 {
             Format { pointer_size: 4, signature: 0, descriptor: 0xC, descriptor_is_rva: false, name: 0x8 }
@@ -78,7 +74,7 @@ impl Classes {
             .entry(vtable)
             .or_insert_with(|| {
                 // Garbage pointers can be anywhere, and reading from them just fails
-                let format = Format::current();
+                let format = Format::for_pointer_size(handle.pointer_size());
                 let locator = read_pointer(handle, vtable.checked_sub(format.pointer_size)?)?;
                 let field = read_u32(handle, locator.wrapping_add(format.descriptor))? as usize;
                 let descriptor = format.descriptor_address(field, base_address);
@@ -99,11 +95,11 @@ fn class_name(bytes: &[u8]) -> Option<String> {
 /// Every vtable in the game's image (its data laid out as in memory, e.g. `PeImage::dump`) and its class's name.
 /// A vtable starts right after a pointer to its locator. 64-bit locators also have their own RVA at +0x14, and
 /// 32-bit ones the address of their class hierarchy at +0x10, which rules out most things that just look like one.
-pub fn all_vtables(data: &[u8], base_address: usize) -> Vec<(usize, String)> {
-    find_vtables(data, base_address, &Format::current())
+pub fn all_vtables(data: &[u8], base_address: usize, pointer_size: usize) -> Vec<(usize, String)> {
+    find_vtables(data, base_address, &Format::for_pointer_size(pointer_size))
 }
 
-/// `all_vtables` of an image (e.g. a dump on disk), whatever game tomb-helper is connected to, if any
+/// `all_vtables` of an image (e.g. a dump on disk)
 pub fn image_vtables(image: &crate::pe_image::PeImage) -> Vec<(usize, String)> {
     let format = Format::for_pointer_size(image.pointer_size());
     find_vtables(&image.data, image.image_base as usize, &format)

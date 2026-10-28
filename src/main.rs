@@ -145,7 +145,6 @@ fn load_offsets(offsets: &mut OffsetsSource, current: Vec<ProcessDetails>) -> Ve
 }
 
 fn create_handlers(config: &Config, connection: &Connection) -> Vec<Box<dyn Handler>> {
-    layout::set_for(&connection.details);
     fn boxed<H: Handler + 'static>(handler: H) -> Box<dyn Handler> {
         Box::new(handler)
     }

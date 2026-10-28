@@ -2,16 +2,15 @@
 //! ROTTR (Steam)'s; a version's entry in the offsets file can override any of them in its "layout" section, e.g.
 //! `"layout": {"instance": {"position": "0x20"}}`. Run `tomb-helper check` to test them against the running game.
 //!
-//! Optional offsets (e.g. TR2013's missing instance `transform`) are `null`. `set_for(details)`, on connecting, sets
-//! the layout and the game's pointer size (`game_memory`). New fields read from the game go here, with ROTTR's value as
+//! Optional offsets (e.g. TR2013's missing instance `transform`) are `null`. A game's layout goes with its memory
+//! (`game_memory::Handle::layout`, interned here so handles can be copied). New fields read from the game go here, with ROTTR's value as
 //! the default, rather than in constants. A field that isn't an offset is marked as a read size (`@read_size`, how much
 //! of the structure is read, which grows when fields move on) or `@value` (a record size, count, type number, mask or
 //! index, which never moves), which `check --fit` and the class layouts go by.
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use std::sync::{Arc, OnceLock, RwLock};
-
-use crate::process_details::ProcessDetails;
+use std::collections::HashSet;
+use std::sync::Mutex;
 
 use crate::offsets_file::Hex;
 
@@ -139,7 +138,7 @@ macro_rules! group {
         $($(#[$field_meta:meta])* $field:ident $(@ $kind:ident)? $(: $ty:ty)? = $default:expr,)*
     }) => {
         $(#[$meta])*
-        #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+        #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
         #[serde(default, deny_unknown_fields)]
         pub struct $name {
             $(
@@ -182,7 +181,7 @@ macro_rules! group {
 // The layout, of these groups
 macro_rules! layout {
     ($($group:ident: $type:ident,)*) => {
-        #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+        #[derive(Debug, Clone, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
         #[serde(default, deny_unknown_fields)]
         pub struct Layout {
             $(pub $group: $type,)*
@@ -692,25 +691,20 @@ impl Layout {
     }
 }
 
-static CURRENT: RwLock<Option<Arc<Layout>>> = RwLock::new(None);
-static DEFAULT: OnceLock<Arc<Layout>> = OnceLock::new();
-
-/// The layout of the game tomb-helper is connected to (ROTTR (Steam)'s until it connects)
-pub fn current() -> Arc<Layout> {
-    if let Some(layout) = CURRENT.read().unwrap().as_ref() {
-        return layout.clone();
+/// The layout for as long as tomb-helper runs, for `Handle`s to share: each distinct layout is kept once (a few for the
+/// versions it connects to, or for `check --fit` every layout it tries)
+pub fn intern(layout: &Layout) -> &'static Layout {
+    static INTERNED: Mutex<Option<HashSet<&'static Layout>>> = Mutex::new(None);
+    let mut interned = INTERNED.lock().unwrap_or_else(|e| e.into_inner());
+    let interned = interned.get_or_insert_with(HashSet::new);
+    match interned.get(layout) {
+        Some(kept) => kept,
+        None => {
+            let kept: &'static Layout = Box::leak(Box::new(layout.clone()));
+            interned.insert(kept);
+            kept
+        }
     }
-    DEFAULT.get_or_init(|| Arc::new(Layout::default())).clone()
-}
-
-pub fn set(layout: Layout) {
-    *CURRENT.write().unwrap() = Some(Arc::new(layout));
-}
-
-/// Uses the layout of a game version, and reads its pointers at its size (`game_memory`)
-pub fn set_for(details: &ProcessDetails) {
-    set(details.layout.clone());
-    crate::game_memory::set_architecture(details.arch);
 }
 
 /// A field's offset in the layout (`group.field`), if it's set

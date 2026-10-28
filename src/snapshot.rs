@@ -1,5 +1,5 @@
 //! Snapshots of what `check` reads from a running game, to test the code reading the game's structures without the game.
-//! `check --snapshot [<file>]` runs `check` while recording every read (`game_memory::Handle::Recording`), then saves the main
+//! `check --snapshot [<file>]` runs `check` while recording every read (`game_memory::Memory::Recording`), then saves the main
 //! module, the memory read and the report `check` gives from the snapshot. `check --replay [<dir>]` checks each saved
 //! snapshot again and reports any whose results have changed, e.g. after a refactor or a change to the offsets file.
 //! Snapshots are big (the image is tens of MB), so they live in the data folder (`snapshot_dir()`), not the repo.
@@ -8,7 +8,7 @@
 //! the snapshot's regions are scanned instead when it's replayed, so they find the same things.
 
 use anyhow::{bail, Context, Result};
-use crate::game_memory::Handle;
+use crate::game_memory::{Handle, Memory};
 use crate::offsets_file::known_process_details;
 use crate::pe_image::PeImage;
 use crate::process_details::ProcessDetails;
@@ -186,7 +186,7 @@ pub fn take(out: Option<&str>, version: Option<String>) -> Result<()> {
     let connection = crate::chains::connect(version)?;
     let (base_address, details) = (connection.base_address, connection.details);
     let recording: &'static Recording = Box::leak(Box::default());
-    let handle = Handle::Recording(connection.pid, connection.process, recording);
+    let handle = Handle::new(Memory::Recording(connection.pid, connection.process, recording), &details);
     // Failing checks are still worth a snapshot
     let _ = crate::check::run(handle, base_address, details.clone());
     let image = handle.image().context("couldn't dump the game")?;
@@ -202,7 +202,7 @@ pub fn take(out: Option<&str>, version: Option<String>) -> Result<()> {
     // What it reports from the snapshot is what it should go on reporting
     println!();
     println!("Checking the snapshot");
-    let (lines, _) = crate::check::run_lines(Handle::Snapshot(snapshot), base_address, details);
+    let (lines, _) = crate::check::run_lines(Handle::new(Memory::Snapshot(snapshot), &details), base_address, details);
     let header = Header { report: lines, ..snapshot.header.clone() };
     let path = match out {
         Some(path) => PathBuf::from(path),
@@ -235,7 +235,7 @@ pub fn replay(path: &Path, accept: bool) -> Result<Vec<String>> {
     // It stays in memory (handles are `Copy`, so they borrow it for good); there are only a few
     let snapshot: &'static Snapshot = Box::leak(Box::new(snapshot));
     let details = snapshot.details()?;
-    let (lines, _) = crate::check::run_lines(Handle::Snapshot(snapshot), snapshot.header.base_address, details);
+    let (lines, _) = crate::check::run_lines(Handle::new(Memory::Snapshot(snapshot), &details), snapshot.header.base_address, details);
     let report = &snapshot.header.report;
     let gone = report.iter().filter(|line| !lines.contains(line)).map(|line| format!("- {}", line));
     let new = lines.iter().filter(|line| !report.contains(line)).map(|line| format!("+ {}", line));

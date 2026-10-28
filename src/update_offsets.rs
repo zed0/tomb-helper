@@ -12,7 +12,7 @@
 //! and 8); what can't be confirmed goes to `unverified`. Saves with `offsets_file::save`, then runs `check::run`.
 
 use anyhow::{anyhow, Context, Result};
-use crate::game_memory::{resolve, Handle};
+use crate::game_memory::{resolve, Handle, Memory};
 use crate::chains;
 use crate::check;
 use crate::collision;
@@ -20,7 +20,7 @@ use crate::components::{self, Components};
 use crate::derive::{self, DerivedOffset, References};
 use crate::discover;
 use crate::find_process;
-use crate::layout::{self, Layout};
+use crate::layout::{Layout, ProbesLayout};
 use crate::object_list::ObjectList;
 use crate::offsets_file::{describe_chain, known_process_details};
 use crate::pe_image::PeImage;
@@ -51,7 +51,6 @@ pub fn run(
 ) -> Result<(ProcessDetails, Result<()>)> {
     let known = known_process_details();
     let (pid, handle, base_address, existing, template) = attach(&known, new_game)?;
-    layout::set_for(&template);
     match &existing {
         Some(details) => println!("Found {}, updating its offsets", details),
         None => println!(
@@ -64,7 +63,7 @@ pub fn run(
 
     // How each offset list was found, for the summary
     let mut found: BTreeMap<AddressType, (Vec<usize>, String)> = BTreeMap::new();
-    let memory = Handle::Live(pid, handle);
+    let memory = Handle::new(Memory::Live(pid, handle), &template);
     let statics = discover::find_statics(memory, base_address, &image);
     for (address_type, chain) in statics {
         let how = match template.address_offsets.get(&address_type) {
@@ -108,8 +107,8 @@ pub fn run(
         Some((address, position)) => {
             println!("Lara's instance is at {:#X}, at ({:.0}, {:.0}, {:.0})", address, position.x, position.y, position.z);
             // Y and Z follow X, so they use its chain
-            targets.push((AddressType::XPosition, address + layout::current().instance.position));
-            match find_probes(&image, &position) {
+            targets.push((AddressType::XPosition, address + memory.layout().instance.position));
+            match find_probes(&memory.layout().probes, &image, &position) {
                 Some(rva) => {
                     println!("Ground probes at mod+{:X}", rva);
                     found.insert(AddressType::PlayerProbes, (vec![rva], "Lara's probes".to_string()));
@@ -119,7 +118,7 @@ pub fn run(
         }
         None => println!("Lara: NOT FOUND (no instance with a PlayerComponent or proxy; load into a level)"),
     }
-    let version = read_version(handle, base_address, &template);
+    let version = read_version(memory, base_address, &template);
     if let Some((address, string)) = &version {
         println!("Version string \"{}\"", string);
         targets.push((AddressType::Version, *address));
@@ -130,7 +129,7 @@ pub fn run(
         let unchanged = template
             .address_offsets
             .get(&address_type)
-            .filter(|chain| resolve(handle, base_address, chain) == Some(target));
+            .filter(|chain| resolve(memory, base_address, chain) == Some(target));
         match unchanged {
             Some(chain) => {
                 found.insert(address_type, (chain.clone(), "unchanged".to_string()));
@@ -207,17 +206,15 @@ pub fn run(
             let names: Vec<String> = sources.iter().map(|(_, d)| d.to_string()).collect();
             println!("Working out Lara's proxy from the values in it, as in {}...", names.join(", "));
             let offsets: crate::process_details::AddressOffsets = found.iter().map(|(t, (chain, _))| (*t, chain.clone())).collect();
-            let target = crate::game::Game::new(memory, base_address, &offsets);
+            let target = crate::game::Game::new(memory.with_layout(&layout), base_address, &offsets);
             let target_details = ProcessDetails { address_offsets: offsets.clone(), layout: layout.clone(), ..template.clone() };
             layout = crate::value_layout::apply(layout, &sources, &target, &target_details, &mut settled, &mut layout_notes);
-            crate::layout::set_for(&ProcessDetails { layout: layout.clone(), ..template.clone() });
         }
 
         // The camera's fields by what they have to be (no other build needed), moving the camera's chains with them
         let offsets: crate::process_details::AddressOffsets = found.iter().map(|(t, (chain, _))| (*t, chain.clone())).collect();
-        let game = crate::game::Game::new(memory, base_address, &offsets);
+        let game = crate::game::Game::new(memory.with_layout(&layout), base_address, &offsets);
         layout = crate::camera_fields::apply(layout, &game, &mut found, &mut layout_notes);
-        crate::layout::set_for(&ProcessDetails { layout: layout.clone(), ..template.clone() });
     }
 
     // Anything not found keeps what it was (for a known build), or is left for review (for a new one)
@@ -284,7 +281,7 @@ pub fn run(
         save_dump(&details, &image);
     }
     println!("\nChecking it...");
-    let checked = check::run(Handle::Live(pid, handle), base_address, details.clone());
+    let checked = check::run(memory, base_address, details.clone());
     Ok((details, checked))
 }
 
@@ -498,8 +495,7 @@ fn find_lara(handle: Handle, base_address: usize, array_rva: usize) -> Option<(u
 
 /// The static list of ground probes: a count, then records, at least one of which starts at Lara's feet. Prefers ones
 /// the code refers to.
-fn find_probes(image: &PeImage, lara: &Position) -> Option<usize> {
-    let layout = &layout::current().probes;
+fn find_probes(layout: &ProbesLayout, image: &PeImage, lara: &Position) -> Option<usize> {
     let data = &image.data;
     let sane = |p: &Position| [p.x, p.y, p.z].iter().all(|v| v.is_finite() && v.abs() < MAX_COORDINATE);
     let probes_at = |rva: usize| -> bool {
@@ -508,7 +504,7 @@ fn find_probes(image: &PeImage, lara: &Position) -> Option<usize> {
             return false;
         }
         let (mut found, mut hers) = (0, false);
-        for probe in collision::parse_probes(&data[rva..data.len().min(rva + layout.records + count * layout.size)]) {
+        for probe in collision::parse_probes(layout, &data[rva..data.len().min(rva + layout.records + count * layout.size)]) {
             if !sane(&probe.start) || !sane(&probe.end) || !PROBE_LENGTH.contains(&probe.start.distance(&probe.end)) {
                 return false;
             }
@@ -527,7 +523,7 @@ fn find_probes(image: &PeImage, lara: &Position) -> Option<usize> {
 }
 
 /// Where the version string is and what it says, if the previous build's `Version` offsets still find one
-fn read_version(handle: ProcessHandle, base_address: usize, template: &ProcessDetails) -> Option<(usize, String)> {
+fn read_version(handle: Handle, base_address: usize, template: &ProcessDetails) -> Option<(usize, String)> {
     let address = resolve(handle, base_address, template.address_offsets.get(&AddressType::Version)?)?;
     let mut bytes = [0u8; VERSION_LENGTH];
     handle.copy_address(address, &mut bytes).ok()?;
@@ -568,6 +564,6 @@ mod tests {
         put_probes(&mut data, 0x2000, &[([5000.0, 0.0, 0.0], [5000.0, 0.0, -40.0])]);
         put_probes(&mut data, 0x3000, &[([100.0, 200.0, 10.0], [100.0, 200.0, -9000.0])]);
         let image = PeImage { data, is_64: true, image_base: 0x1_4000_0000 };
-        assert_eq!(find_probes(&image, &lara), Some(0x1000));
+        assert_eq!(find_probes(&Layout::default().probes, &image, &lara), Some(0x1000));
     }
 }

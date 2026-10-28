@@ -15,7 +15,7 @@ use crate::watch::{self, Breakpoint, Hit};
 
 // Where a group's structure is in the running game, for the ones there's a way to find
 fn group_address(game: &Game, components: &mut Components, group: &str) -> Result<usize> {
-    let layout = crate::layout::current();
+    let layout = game.layout();
     let missing = |what: &str| format!("{} wasn't found", what);
     match group {
         // GameRender: what the camera's chains go through
@@ -43,7 +43,7 @@ fn group_address(game: &Game, components: &mut Components, group: &str) -> Resul
 
 // Lara's instance: her static proxy's (TR2013), or the one with a PlayerComponent nearest her position
 fn lara_instance(game: &Game, components: &mut Components) -> Option<usize> {
-    let layout = crate::layout::current();
+    let layout = game.layout();
     if let (Some(proxy), Some(offset)) = (game.resolve(AddressType::PlayerProxy), layout.proxy.instance) {
         return read_pointer(game.handle, proxy + offset);
     }

@@ -5,8 +5,7 @@
 //! weapon's instance -> its type record -> the tuning block. Where everything is is in `layout::AimSweepLayout`.
 
 use crate::collision::AttachedProxy;
-use crate::game_memory::{Handle, pointer_size, read_floats, read_pointer, read_u32};
-use crate::layout;
+use crate::game_memory::{Handle, read_floats, read_pointer, read_u32};
 use crate::object_list;
 use crate::ui_ipc_data::Capsule;
 use nalgebra::Vector3;
@@ -34,7 +33,7 @@ fn read_handle(handle: Handle, address: usize) -> Option<(usize, usize)> {
 /// The record a handle (index, id) refers to in a pool, if it's still that one: the pool's handle entries say which
 /// record, and the record says which index and id it is
 fn pool_record(handle: Handle, pool: usize, (index, id): (usize, usize), record_size: usize, record_index: usize) -> Option<usize> {
-    let layout = &layout::current().aim_sweep;
+    let layout = &handle.layout().aim_sweep;
     if id == 0 || index >= layout.max_handles {
         return None;
     }
@@ -49,17 +48,17 @@ fn pool_record(handle: Handle, pool: usize, (index, id): (usize, usize), record_
 
 /// The instance a handle refers to, if it's still that one
 fn instance(handle: Handle, instances: usize, (index, id): (usize, usize)) -> Option<usize> {
-    let layout = &layout::current().aim_sweep;
+    let layout = &handle.layout().aim_sweep;
     if id == 0 || index >= layout.max_handles {
         return None;
     }
-    let instance = instances + layout.instance_base + index * layout::current().instance.size;
+    let instance = instances + layout.instance_base + index * handle.layout().instance.size;
     (read_handle(handle, instance + layout.instance_index)? == (index, id)).then(|| instance)
 }
 
 /// The tuning block of the weapon Lara has out, if she has one out
 fn tuning_block(handle: Handle, instances: usize, inventories: usize, types: usize, lara: usize) -> Option<usize> {
-    let layout = &layout::current().aim_sweep;
+    let layout = &handle.layout().aim_sweep;
     let lara_handle = read_handle(handle, lara + layout.type_handle)?;
     let inventory = pool_record(handle, inventories, lara_handle, layout.inventory_size, layout.inventory_index)?;
     let key = read_index(handle, inventory + layout.current_item)?;
@@ -69,7 +68,7 @@ fn tuning_block(handle: Handle, instances: usize, inventories: usize, types: usi
         return None;
     }
     // A null node is the end of the bucket
-    let mut node = read_pointer(handle, buckets + (key % bucket_count) * pointer_size())?;
+    let mut node = read_pointer(handle, buckets + (key % bucket_count) * handle.pointer_size())?;
     for _ in 0..MAX_NODES {
         if read_index(handle, node + layout.node_key)? == key {
             break;
@@ -85,7 +84,7 @@ fn tuning_block(handle: Handle, instances: usize, inventories: usize, types: usi
 
 // A tuning block's sweep in Lara's space (start, end, radius), if it's a sane one
 fn read_sweep(handle: Handle, block: usize) -> Option<([f32; 3], [f32; 3], f32)> {
-    let layout = &layout::current().aim_sweep;
+    let layout = &handle.layout().aim_sweep;
     let start = read_floats::<3>(handle, block + layout.start)?;
     let middle = read_floats::<3>(handle, block + layout.middle)?;
     let [radius] = read_floats::<1>(handle, block + layout.radius)?;
@@ -105,7 +104,7 @@ fn read_sweep(handle: Handle, block: usize) -> Option<([f32; 3], [f32; 3], f32)>
 /// The aim sweep in world space, as a capsule, if Lara has a weapon out, and whether it's pushing her. `lara` is her
 /// instance.
 pub fn read(handle: Handle, instances: usize, inventories: usize, types: usize, lara: usize) -> Option<AttachedProxy> {
-    let layout = &layout::current().aim_sweep;
+    let layout = &handle.layout().aim_sweep;
     let block = tuning_block(handle, instances, inventories, types, lara)?;
     let (start, end, radius) = read_sweep(handle, block)?;
     let m = object_list::read_transform(handle, lara).ok()?;

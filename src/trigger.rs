@@ -4,9 +4,8 @@
 //! trigger categories by name (`categorise`, `words.trigger_categories`); and trigger shapes (`read_shape`: box, plane,
 //! sphere, polygon volume), as world space outlines and faces (polygon caps are ear clipped, as they can be concave).
 
-use crate::game_memory::{Handle, floats_at, pointer_at, read_pointer, read_u32, u32_at, vector_at};
+use crate::game_memory::{Handle, floats_at, read_pointer, read_u32, u32_at, vector_at};
 use crate::components::{self, Components};
-use crate::layout;
 use crate::object_list;
 use crate::position::Position;
 use crate::ui_ipc_data::TriggerCategory;
@@ -63,7 +62,7 @@ const MAX_COMPONENT_DATA: usize = 64;
 const MAX_COMPONENT_NAME: usize = 48;
 
 pub fn read_kinds(handle: Handle, components: &mut Components, instance_address: usize) -> Kinds {
-    let layout = layout::current();
+    let layout = handle.layout();
     if let (None, Some(offset)) = (layout.instance.components, layout.instance.component_data) {
         let names = read_component_names(handle, instance_address + offset);
         let words = crate::words::current();
@@ -84,7 +83,7 @@ pub fn read_kinds(handle: Handle, components: &mut Components, instance_address:
 
 // The names of the components in an instance's component data, in lower case
 fn read_component_names(handle: Handle, pointer_address: usize) -> Vec<String> {
-    let layout = &layout::current().component_data;
+    let layout = &handle.layout().component_data;
     let data = match read_pointer(handle, pointer_address) {
         Some(data) => data,
         None => return vec![],
@@ -101,7 +100,7 @@ fn read_component_names(handle: Handle, pointer_address: usize) -> Vec<String> {
         .chunks_exact(layout.entry_size)
         .filter_map(|entry| {
             let mut name = [0u8; MAX_COMPONENT_NAME];
-            handle.copy_address(pointer_at(entry, layout.name), &mut name).ok()?;
+            handle.copy_address(handle.pointer_at(entry, layout.name), &mut name).ok()?;
             let end = name.iter().position(|&c| c == 0)?;
             Some(String::from_utf8_lossy(&name[..end]).to_lowercase())
         })
@@ -111,7 +110,7 @@ fn read_component_names(handle: Handle, pointer_address: usize) -> Vec<String> {
 // Where triggers are game objects (TR2013), the instance's object and whether it's a volume (else a plane), if it's a
 // trigger
 fn trigger_object(handle: Handle, components: &mut Components, instance_address: usize) -> Option<(usize, bool)> {
-    let offset = layout::current().instance.game_object?;
+    let offset = handle.layout().instance.game_object?;
     let object = read_pointer(handle, instance_address + offset)?;
     match components.classes.name(handle, object)?.as_str() {
         components::TRIGGER_VOLUME => Some((object, true)),
@@ -122,7 +121,7 @@ fn trigger_object(handle: Handle, components: &mut Components, instance_address:
 
 // A trigger's shape from its game object (TR2013)
 fn read_object_shape(handle: Handle, object: usize, volume: bool) -> Option<Shape> {
-    let layout = &layout::current().trigger_object;
+    let layout = &handle.layout().trigger_object;
     // Up to the end of the sizes (at most 3 floats)
     let mut bytes = vec![0u8; layout.volume_size.max(layout.plane_size) + std::mem::size_of::<[f32; 3]>()];
     handle.copy_address(object, &mut bytes).ok()?;
@@ -163,7 +162,7 @@ pub fn read_shape(handle: Handle, components: &mut Components, instance_address:
 
 // A trigger's shape from its ShapeComponent (ROTTR, SOTTR)
 fn read_component_shape(handle: Handle, components: &mut Components, instance_address: usize) -> Option<Shape> {
-    let layout = &layout::current().trigger_shape;
+    let layout = &handle.layout().trigger_shape;
     let component = components.get(handle, instance_address, components::SHAPE)?;
     let record = read_pointer(handle, component + layout.shape)?;
     let mut bytes = vec![0u8; layout.record_size];
@@ -182,7 +181,7 @@ fn read_component_shape(handle: Handle, components: &mut Components, instance_ad
             return None;
         }
         let mut points = vec![0u8; count * layout.poly_point_size];
-        handle.copy_address(pointer_at(&bytes, layout.poly_points), &mut points).ok()?;
+        handle.copy_address(handle.pointer_at(&bytes, layout.poly_points), &mut points).ok()?;
         let point = |p: &[u8]| (vector_at(p, 0), vector_at(p, layout.poly_sweep));
         Shape::Poly(points.chunks_exact(layout.poly_point_size).map(point).collect())
     } else {

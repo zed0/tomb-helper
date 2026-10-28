@@ -11,7 +11,7 @@
 
 use anyhow::{Context, Result};
 use crate::game::Game;
-use crate::game_memory::{pointer_size, read_floats, read_pointer, read_u8};
+use crate::game_memory::{read_floats, read_pointer, read_u8};
 use crate::layout::Layout;
 use crate::pe_image::PeImage;
 use crate::process_details::AddressType;
@@ -68,7 +68,7 @@ impl Found {
 
 /// Finds them in the running game, whose image is `image`
 pub fn find(game: &Game, image: &PeImage) -> Found {
-    let layout = crate::layout::current();
+    let layout = game.layout();
     let mut found = Found::default();
     let mut classes = Classes::new(game.base_address);
     let mut components = crate::components::Components::new(game.base_address);
@@ -147,12 +147,12 @@ fn read_vector(game: &Game, address: usize) -> Option<[f32; 3]> {
 
 // The pointers in `span` bytes at `address`, by offset
 fn pointers(game: &Game, address: usize, span: usize) -> Vec<(usize, usize)> {
-    let size = pointer_size();
+    let size = game.handle.pointer_size();
     let mut bytes = vec![0u8; span];
     if game.handle.copy_address(address, &mut bytes).is_err() {
         return vec![];
     }
-    (0..span).step_by(size).map(|o| (o, crate::game_memory::pointer_from(&bytes[o..]))).filter(|(_, p)| *p != 0).collect()
+    (0..span).step_by(size).map(|o| (o, game.handle.pointer_from(&bytes[o..]))).filter(|(_, p)| *p != 0).collect()
 }
 
 // The path from GameRender to the controller (as offsets, each followed), the controller, and where its sphere is
@@ -182,7 +182,7 @@ fn find_controller(game: &Game, classes: &mut Classes) -> Option<(Vec<usize>, us
 
 // Where the controller's collision sphere is: inline, or a pointer to it
 fn find_sphere(game: &Game, classes: &mut Classes, controller: usize) -> Option<usize> {
-    let size = pointer_size();
+    let size = game.handle.pointer_size();
     (size..CONTROLLER_SPAN).step_by(size).find(|&o| {
         classes.name(game.handle, controller + o).as_deref() == Some(SPHERE)
             || read_pointer(game.handle, controller + o)
@@ -192,7 +192,7 @@ fn find_sphere(game: &Game, classes: &mut Classes, controller: usize) -> Option<
 
 // The offset near `next` at which every body's next points back to it
 fn find_previous(game: &Game, body: usize, next: usize) -> Option<usize> {
-    let size = pointer_size();
+    let size = game.handle.pointer_size();
     let candidates = (next.saturating_sub(PREVIOUS_NEAR)..=next + PREVIOUS_NEAR).step_by(size).filter(|&o| o != next);
     candidates
         .filter_map(|previous| {

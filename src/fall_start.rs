@@ -8,7 +8,7 @@
 
 use anyhow::{bail, Context, Result};
 use crate::game::Game;
-use crate::game_memory::{f32_at, pointer_from, pointer_size, resolve};
+use crate::game_memory::{f32_at, resolve};
 use crate::process_details::AddressType;
 use crate::rtti::{Classes, PLAYER};
 use crate::tracked_memory::TrackedMemory;
@@ -34,13 +34,13 @@ const STILL: f32 = 0.01;
 /// Her player object: the object of class `Player` her instance points to, directly or through one more pointer
 pub fn find_player(game: &Game, instance: usize) -> Option<(usize, Vec<usize>)> {
     let mut classes = Classes::new(game.base_address);
-    let size = pointer_size();
+    let size = game.handle.pointer_size();
     let pointers = |address: usize| -> Vec<(usize, usize)> {
         let mut bytes = vec![0u8; SEARCH_SPAN];
         if game.handle.copy_address(address, &mut bytes).is_err() {
             return vec![];
         }
-        (0..SEARCH_SPAN).step_by(size).map(|o| (o, pointer_from(&bytes[o..]))).filter(|(_, p)| *p != 0).collect()
+        (0..SEARCH_SPAN).step_by(size).map(|o| (o, game.handle.pointer_from(&bytes[o..]))).filter(|(_, p)| *p != 0).collect()
     };
     for (first, object) in pointers(instance) {
         if classes.name(game.handle, object).as_deref() == Some(PLAYER) {
@@ -96,7 +96,7 @@ pub fn with_found(game: &Game, mut layout: crate::layout::Layout, found: &Found)
 fn player_in_chain(game: &Game) -> Option<usize> {
     let chain = game.offsets.get(&AddressType::XPosition)?;
     let n = chain.len();
-    if n < 3 || Some(chain[n - 2]) != crate::layout::current().player.instance {
+    if n < 3 || Some(chain[n - 2]) != game.layout().player.instance {
         return None;
     }
     let player = resolve(game.handle, game.base_address, &[&chain[..n - 2], &[0]].concat())?;

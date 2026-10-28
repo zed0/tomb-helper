@@ -2,7 +2,7 @@
 //! version it is, by image size first, else by the version string in its memory (or `force_version`).
 
 use crate::game::Game;
-use crate::game_memory::Handle;
+use crate::game_memory::{self, Handle};
 use crate::process_details::{AddressType, ProcessDetails};
 use process_memory::{CopyAddress, DataMember, Memory, Pid, ProcessHandle, TryIntoProcessHandle};
 use std::ptr::{null, null_mut};
@@ -20,7 +20,7 @@ pub struct Connection {
 impl Connection {
     /// For reading its memory
     pub fn handle(&self) -> Handle {
-        Handle::Live(self.pid, self.process)
+        Handle::new(game_memory::Memory::Live(self.pid, self.process), &self.details)
     }
 
     /// For finding things in it, through its version's offsets
