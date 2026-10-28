@@ -11,7 +11,6 @@ use iced_x86::{
     ConstantOffsets, Decoder, DecoderOptions, FlowControl, Instruction, InstructionInfoFactory, Mnemonic, OpAccess, OpKind,
     Register,
 };
-use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 
@@ -126,6 +125,9 @@ impl<'a> Tracer<'a> {
 
     /// The return addresses of the direct calls (`call rel32`) to each function in the code
     fn callers(&self) -> &HashMap<usize, Vec<usize>> {
+        // Not in parallel: traces run on rayon's threads, and one waiting for parallel work here could be given another
+        // trace that gets here too, initialising the cell again on the same thread, which deadlocks (with every other
+        // thread waiting for it)
         self.callers.get_or_init(|| {
             let data = &self.image.data;
             let mut code: Vec<(usize, usize)> =
@@ -135,8 +137,8 @@ impl<'a> Tracer<'a> {
             }
             let in_code = |rva: usize| code.iter().any(|(start, end)| (*start..*end).contains(&rva));
             let calls: Vec<(usize, usize)> = code
-                .par_iter()
-                .flat_map(|(start, end)| (*start..end.saturating_sub(5)).into_par_iter())
+                .iter()
+                .flat_map(|(start, end)| *start..end.saturating_sub(5))
                 .filter(|&rva| data[rva] == 0xE8)
                 .filter_map(|rva| {
                     let displacement = i32::from_le_bytes(data[rva + 1..rva + 5].try_into().unwrap());
