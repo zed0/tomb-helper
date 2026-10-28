@@ -7,76 +7,76 @@
 //! handlers if the running version's offsets changed. It disconnects when the game exits.
 
 use crate::action::Action;
-use crate::config::{Hotkey, CutsceneTiming, Config};
-use crate::handler::{Handler, HelperState};
+use crate::config::{Config, CutsceneTiming, Hotkey};
 use crate::cutscene_handler::CutsceneHandler;
 use crate::cutscene_timing_generator_handler::CutsceneTimingGeneratorHandler;
-use crate::overlay_handler::OverlayHandler;
+use crate::find_process::Connection;
+use crate::handler::{Handler, HelperState};
+use crate::hotkeys::{Callback, Hotkeys, KeyCode};
 use crate::offsets_file::OffsetsSource;
+use crate::overlay_handler::OverlayHandler;
 use crate::position_handler::PositionHandler;
 use crate::process_details::ProcessDetails;
-use crate::find_process::Connection;
-use itertools::Itertools;
-use crate::hotkeys::{Callback, Hotkeys, KeyCode};
-use std::sync::{Arc, mpsc};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::{thread, time};
 use signal_hook::consts::SIGINT;
 use signal_hook::flag;
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Arc};
+use std::{thread, time};
 
 // First, so its `println!` and the rest, which log too, are the ones every module after it uses
 #[macro_use]
 mod logging;
 mod action;
-mod config;
-mod cutscene_handler;
-mod cutscene_id;
-mod cutscene_timing_generator_handler;
+mod aim_sweep;
 mod camera_fields;
 mod chains;
 mod check;
 mod class_fields;
 mod cli;
+mod code_trace;
 mod collision;
 mod collision_mesh;
 mod components;
-mod code_trace;
+mod config;
+mod cutscene_handler;
+mod cutscene_id;
+mod cutscene_timing_generator_handler;
+mod cutscene_timing_info;
 mod derive;
-mod normalised;
 mod discover;
-mod pe_image;
-mod position_handler;
-mod handler;
-mod hotkeys;
-mod aim_sweep;
-mod inject32;
-mod layout;
-mod object_list;
-mod overlay_handler;
-mod port;
-mod position;
-mod process_details;
 mod fall_start;
-mod flight_fields;
 mod find_process;
 mod fit_layout;
+mod flight_fields;
 mod game;
 mod game_memory;
+mod handler;
+mod hotkeys;
+mod inject32;
+mod layout;
+mod normalised;
+mod object_list;
 mod offsets_file;
+mod overlay_handler;
+mod pe_image;
+mod port;
+mod position;
+mod position_handler;
+mod process_details;
+mod readable_from_path;
+mod rtti;
+mod snapshot;
+mod targets;
 mod tracked_memory;
-mod watch;
-mod watch_fields;
-mod words;
 mod tracked_position;
 mod trigger;
 mod trigger_scripts;
 mod update_offsets;
 mod value_layout;
-mod cutscene_timing_info;
-mod readable_from_path;
-mod rtti;
-mod snapshot;
-mod targets;
+mod watch;
+mod watch_fields;
+mod words;
 // Shared with the overlay, which uses the other half of it
 #[allow(dead_code)]
 mod ui_ipc_data;
@@ -93,7 +93,7 @@ fn main() {
     logging::log_panics();
     let args: Vec<String> = std::env::args().skip(1).collect();
     logging::write(logging::Stream::Out, &format!("tomb-helper {} started {:?}\n", env!("CARGO_PKG_VERSION"), args));
-    if std::env::args().len() > 1 {
+    if !args.is_empty() {
         if let Err(e) = cli::run() {
             eprintln!("{:#}", e);
             std::process::exit(1);
@@ -180,28 +180,9 @@ fn connect(
     println!("Connecting to {} with PID {}", connection.details, pid);
 
     let mut handlers = create_handlers(config, &connection);
-
     let (tx, rx) = mpsc::channel();
-
-    let key_groups = config
-        .hotkeys
-        .clone()
-        .into_iter()
-        .map(|h: Hotkey| -> (KeyCode, Action) { (h.key, h.action) })
-        .into_group_map();
-
-    let mut callbacks: std::collections::HashMap<KeyCode, Callback> = std::collections::HashMap::new();
-    for (key, actions) in key_groups {
-        let current_tx = tx.clone();
-        callbacks.insert(key, Box::new(move |repeated| {
-            for action in actions.iter().filter(|action| !repeated || action.repeats()) {
-                let _ = current_tx.send(*action);
-            }
-        }));
-    }
     // Polls the keys until it's dropped, when this returns
-    let _hotkeys = Hotkeys::start(callbacks);
-
+    let _hotkeys = Hotkeys::start(hotkey_callbacks(&config.hotkeys, tx));
     println!("Started!");
 
     let mut last_offsets_check = time::Instant::now();
@@ -217,28 +198,18 @@ fn connect(
 
         if last_offsets_check.elapsed() > OFFSETS_CHECK_INTERVAL {
             last_offsets_check = time::Instant::now();
-            if offsets.changed() {
-                *known = load_offsets(offsets, known.clone());
-                match find_process::find_process(known.clone(), config.force_version.clone()) {
-                    Some(found) if found.pid == pid => {
-                        find_process::close_handle(found.process);
-                        // Recreating handlers loses their state (and re-downloads cutscene info), so
-                        // only do it when something they use has changed
-                        let details = &connection.details;
-                        if found.details.version.version != details.version.version
-                            || found.details.address_offsets != details.address_offsets
-                        {
-                            // Drop the old handlers first, so e.g. the overlay is ejected before it's re-injected
-                            handlers.clear();
-                            connection.details = found.details;
-                            handlers = create_handlers(config, &connection);
-                            println!("Reloaded offsets for {}", connection.details);
-                        }
-                    }
-                    _ => {
-                        println!("{} no longer matches any offsets, disconnecting", connection.details);
-                        return;
-                    }
+            match reload_offsets(config, &connection, offsets, known) {
+                Reload::Same => {}
+                Reload::Changed(details) => {
+                    // Drop the old handlers first, so e.g. the overlay is ejected before it's re-injected
+                    handlers.clear();
+                    connection.details = details;
+                    handlers = create_handlers(config, &connection);
+                    println!("Reloaded offsets for {}", connection.details);
+                }
+                Reload::Gone => {
+                    println!("{} no longer matches any offsets, disconnecting", connection.details);
+                    return;
                 }
             }
         }
@@ -246,30 +217,81 @@ fn connect(
         if let Ok(action) = rx.try_recv() {
             dispatch(&mut handlers, action, config.debug_logging);
         }
-
-        for handler in &mut handlers {
-            if let Err(e) = handler.handle_tick() {
-                report(&*e, config.debug_logging);
-            }
-        }
-
-        // The overlay shows the other handlers' state, and its buttons ask for actions
-        let mut state = HelperState::default();
-        for handler in &handlers {
-            handler.report(&mut state);
-        }
-        let mut requested = vec![];
-        for handler in &mut handlers {
-            handler.show(&state);
-            requested.extend(handler.take_actions());
-        }
-        for action in requested {
-            dispatch(&mut handlers, action, config.debug_logging);
-        }
+        tick(&mut handlers, config.debug_logging);
     }
 }
 
-fn dispatch(handlers: &mut Vec<Box<dyn Handler>>, action: Action, debug_logging: bool) {
+// What a change to the offsets file means for the game connected to
+enum Reload {
+    // Nothing its handlers use changed (recreating them loses their state, and re-downloads cutscene info)
+    Same,
+    Changed(ProcessDetails),
+    // It isn't a known version any more
+    Gone,
+}
+
+// Loads the offsets file again if it's changed, and says whether the connected game's entry has
+fn reload_offsets(config: &Config, connection: &Connection, offsets: &mut OffsetsSource, known: &mut Vec<ProcessDetails>) -> Reload {
+    if !offsets.changed() {
+        return Reload::Same;
+    }
+    *known = load_offsets(offsets, known.clone());
+    match find_process::find_process(known.clone(), config.force_version.clone()) {
+        Some(found) if found.pid == connection.pid => {
+            find_process::close_handle(found.process);
+            let details = &connection.details;
+            if found.details.version.version != details.version.version || found.details.address_offsets != details.address_offsets {
+                Reload::Changed(found.details)
+            } else {
+                Reload::Same
+            }
+        }
+        _ => Reload::Gone,
+    }
+}
+
+// Sends each key's actions down `tx` when it's pressed, and while it's held those that repeat
+fn hotkey_callbacks(hotkeys: &[Hotkey], tx: mpsc::Sender<Action>) -> HashMap<KeyCode, Callback> {
+    let mut actions: HashMap<KeyCode, Vec<Action>> = HashMap::new();
+    for hotkey in hotkeys {
+        actions.entry(hotkey.key).or_default().push(hotkey.action);
+    }
+    actions
+        .into_iter()
+        .map(|(key, actions)| {
+            let tx = tx.clone();
+            let callback: Callback = Box::new(move |repeated| {
+                for action in actions.iter().filter(|action| !repeated || action.repeats()) {
+                    let _ = tx.send(*action);
+                }
+            });
+            (key, callback)
+        })
+        .collect()
+}
+
+// Every handler's tick, then the overlay shows the other handlers' state, and its buttons ask for actions
+fn tick(handlers: &mut [Box<dyn Handler>], debug_logging: bool) {
+    for handler in handlers.iter_mut() {
+        if let Err(e) = handler.handle_tick() {
+            report(&*e, debug_logging);
+        }
+    }
+    let mut state = HelperState::default();
+    for handler in handlers.iter() {
+        handler.report(&mut state);
+    }
+    let mut requested = vec![];
+    for handler in handlers.iter_mut() {
+        handler.show(&state);
+        requested.extend(handler.take_actions());
+    }
+    for action in requested {
+        dispatch(handlers, action, debug_logging);
+    }
+}
+
+fn dispatch(handlers: &mut [Box<dyn Handler>], action: Action, debug_logging: bool) {
     for handler in handlers {
         if let Err(e) = handler.handle_action(action) {
             report(&*e, debug_logging);
@@ -287,7 +309,7 @@ fn report(error: &(dyn std::error::Error + 'static), debug_logging: bool) {
     }
 }
 
-fn print_help(hotkeys: &Vec<Hotkey>) {
+fn print_help(hotkeys: &[Hotkey]) {
     for hotkey in hotkeys {
         println!("{:?} => {:?}", hotkey.key, hotkey.action);
     }

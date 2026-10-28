@@ -25,7 +25,8 @@ use crate::object_list::ObjectList;
 use crate::offsets_file::{describe_chain, known_process_details};
 use crate::pe_image::PeImage;
 use crate::position::Position;
-use crate::process_details::{AddressType, ProcessDetails, VersionIdentifier};
+use crate::game::Game;
+use crate::process_details::{AddressOffsets, AddressType, ProcessDetails, VersionIdentifier};
 use process_memory::{Architecture, CopyAddress, Pid, ProcessHandle, TryIntoProcessHandle};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
@@ -40,6 +41,26 @@ const VERSION_LENGTH: usize = 64;
 /// `update-offsets`: fails if the checks do
 pub fn update_offsets(from: Option<String>, from_version: Option<String>, dry_run: bool, new_game: Option<NewGame>) -> Result<()> {
     run(from, from_version, dry_run, new_game.as_ref())?.1
+}
+
+// What update-offsets has found, as it goes
+#[derive(Default)]
+struct Found {
+    // Each offset list, and how it was found for the summary
+    chains: BTreeMap<AddressType, (Vec<usize>, String)>,
+    // Offsets found but not for sure, kept in the file to look at but not used
+    unverified: BTreeMap<AddressType, Vec<usize>>,
+    layout: Layout,
+    // How the layout changed, for the summary
+    notes: Vec<String>,
+    // Layout fields already worked out, which later steps don't overrule
+    settled: HashSet<String>,
+}
+
+impl Found {
+    fn offsets(&self) -> AddressOffsets {
+        self.chains.iter().map(|(t, (chain, _))| (*t, chain.clone())).collect()
+    }
 }
 
 /// Finds, saves (unless `dry_run`) and checks the running build's offsets: the entry, and how the checks went
@@ -60,103 +81,13 @@ pub fn run(
     }
     println!("Dumping the game...");
     let image = PeImage::dump(pid).context("Could not dump the game")?;
-
-    // How each offset list was found, for the summary
-    let mut found: BTreeMap<AddressType, (Vec<usize>, String)> = BTreeMap::new();
     let memory = Handle::new(Memory::Live(pid, handle), &template);
-    let statics = discover::find_statics(memory, base_address, &image);
-    for (address_type, chain) in statics {
-        let how = match template.address_offsets.get(&address_type) {
-            Some(previous) if *previous == chain => "RTTI, unchanged",
-            Some(_) => "RTTI, moved",
-            None => "RTTI, new",
-        };
-        found.insert(address_type, (chain, how.to_string()));
-    }
+    let mut found = Found { layout: template.layout.clone(), ..Default::default() };
 
-    let array = found
-        .get(&AddressType::InstanceArray)
-        .map(|(chain, _)| chain.clone())
-        .or_else(|| existing.as_ref().and_then(|d| d.address_offsets.get(&AddressType::InstanceArray).cloned()));
-    // Where her proxy is a static (TR2013), it says which instance she is, and where in it that is
-    let mut layout = template.layout.clone();
-    let mut layout_notes: Vec<String> = vec![];
-    let proxy = layout
-        .proxy
-        .instance
-        .filter(|_| found.contains_key(&AddressType::PlayerProxy))
-        .and_then(|offset| discover::find_player_proxy(memory, &image, base_address, offset));
-    if let Some(proxy) = &proxy {
-        if layout.proxy.instance != Some(proxy.instance_offset) {
-            layout_notes.push(format!(
-                "{:<34} {:#X} -> {:#X} (where Lara's proxy points at her)",
-                "proxy.instance",
-                layout.proxy.instance.unwrap_or(0),
-                proxy.instance_offset
-            ));
-            layout.proxy.instance = Some(proxy.instance_offset);
-        }
-    }
-    let proxy_lara = proxy.map(|p| p.lara);
-    let lara = match proxy_lara {
-        Some(address) => crate::object_list::read_position(memory, address).ok().map(|position| (address, position)),
-        None => array.and_then(|array| find_lara(memory, base_address, array[0])),
-    };
-    let mut targets = vec![];
-    match lara {
-        Some((address, position)) => {
-            println!("Lara's instance is at {:#X}, at ({:.0}, {:.0}, {:.0})", address, position.x, position.y, position.z);
-            // Y and Z follow X, so they use its chain
-            targets.push((AddressType::XPosition, address + memory.layout().instance.position));
-            match find_probes(&memory.layout().probes, &image, &position) {
-                Some(rva) => {
-                    println!("Ground probes at mod+{:X}", rva);
-                    found.insert(AddressType::PlayerProbes, (vec![rva], "Lara's probes".to_string()));
-                }
-                None => println!("Ground probes: NOT FOUND"),
-            }
-        }
-        None => println!("Lara: NOT FOUND (no instance with a PlayerComponent or proxy; load into a level)"),
-    }
-    let version = read_version(memory, base_address, &template);
-    if let Some((address, string)) = &version {
-        println!("Version string \"{}\"", string);
-        targets.push((AddressType::Version, *address));
-    }
-    // The chains the previous build used are kept if they still get there, otherwise look for the code's
-    let mut moved = vec![];
-    for (address_type, target) in targets {
-        let unchanged = template
-            .address_offsets
-            .get(&address_type)
-            .filter(|chain| resolve(memory, base_address, chain) == Some(target));
-        match unchanged {
-            Some(chain) => {
-                found.insert(address_type, (chain.clone(), "unchanged".to_string()));
-            }
-            None => moved.push((address_type, target)),
-        }
-    }
-    if !moved.is_empty() {
-        let chains = chains::best_code_chains(&image, memory, base_address, &moved);
-        for (address_type, _) in &moved {
-            match chains.get(address_type) {
-                Some((chain, sites)) => {
-                    found.insert(*address_type, (chain.clone(), format!("code chain, {} sites", sites)));
-                }
-                None => println!("{:?}: no code chain reaches it", address_type),
-            }
-        }
-    }
-    if let Some((x, how)) = found.get(&AddressType::XPosition).cloned() {
-        for (address_type, offset) in [(AddressType::YPosition, 4), (AddressType::ZPosition, 8)] {
-            let mut chain = x.clone();
-            *chain.last_mut().unwrap() += offset;
-            found.insert(address_type, (chain, format!("XPosition + {} ({})", offset, how)));
-        }
-    }
-
-    let mut unverified: BTreeMap<AddressType, Vec<usize>> = BTreeMap::new();
+    find_statics(&mut found, memory, base_address, &image, &template);
+    let lara = find_lara(&mut found, memory, base_address, &image, existing.as_ref());
+    let (targets, version) = find_targets(&mut found, memory, base_address, &image, &template, lara);
+    chains_reaching(&mut found, memory, base_address, &image, &template, targets);
     let previous = match &from {
         Some(from) => {
             let old = derive::load(from)?;
@@ -165,114 +96,30 @@ pub fn run(
         }
         None => previous_build(&template, &image),
     };
-    // Layout fields already worked out, which later steps don't overrule
-    let mut settled: HashSet<String> = HashSet::new();
     if let Some((old, old_details)) = &previous {
-        println!("Deriving the rest from {}...", old_details);
-        for DerivedOffset { address_type, chain, sure, how } in derive::derive_lines(old, old_details, &image) {
-            match chain {
-                Some(chain) if sure && !found.contains_key(&address_type) => {
-                    found.insert(address_type, (chain, format!("derived: {}", how)));
-                }
-                Some(chain) if !found.contains_key(&address_type) => {
-                    unverified.insert(address_type, chain);
-                }
-                _ => {}
-            }
-        }
+        derive_from(&mut found, old, old_details, &image);
     }
-
-    // A new build's (or game's) layout, where its classes' code says where their fields are: from the previous build,
-    // or for a new game, other games of the engine
     if existing.is_none() {
-        let is_new_game = !known.iter().any(|d| d.executable_name.eq_ignore_ascii_case(&template.executable_name));
-        let others = if is_new_game { other_games(&image) } else { vec![] };
-        let references: Vec<(&PeImage, &ProcessDetails)> = match &previous {
-            Some((old, old_details)) => vec![(old, old_details)],
-            None => others.iter().map(|(image, details)| (image, details)).collect(),
-        };
-        if !references.is_empty() {
-            let names: Vec<String> = references.iter().map(|(_, d)| d.to_string()).collect();
-            println!("Working out the layout from how its classes' code uses it in {}...", names.join(", "));
-            // Fields placed between moved ones are only right within a game (`--from` can be another game's dump)
-            let same_game = references.iter().all(|(_, d)| d.name == template.name);
-            layout = class_layout(layout, &references, &image, same_game, &mut settled, &mut layout_notes);
-        }
-
-        // Lara's proxy's fields by the values in them (she's standing somewhere ordinary, as for everything here):
-        // the games share their gameplay data, so the same values are in the same fields, wherever those are
-        let sources = crate::value_layout::sources(&template, previous.as_ref().map(|(_, d)| d), &known);
-        if !sources.is_empty() {
-            let names: Vec<String> = sources.iter().map(|(_, d)| d.to_string()).collect();
-            println!("Working out Lara's proxy from the values in it, as in {}...", names.join(", "));
-            let offsets: crate::process_details::AddressOffsets = found.iter().map(|(t, (chain, _))| (*t, chain.clone())).collect();
-            let target = crate::game::Game::new(memory.with_layout(&layout), base_address, &offsets);
-            let target_details = ProcessDetails { address_offsets: offsets.clone(), layout: layout.clone(), ..template.clone() };
-            layout = crate::value_layout::apply(layout, &sources, &target, &target_details, &mut settled, &mut layout_notes);
-        }
-
-        // The camera's fields by what they have to be (no other build needed), moving the camera's chains with them
-        let offsets: crate::process_details::AddressOffsets = found.iter().map(|(t, (chain, _))| (*t, chain.clone())).collect();
-        let game = crate::game::Game::new(memory.with_layout(&layout), base_address, &offsets);
-        layout = crate::camera_fields::apply(layout, &game, &mut found, &mut layout_notes);
+        work_out_layout(&mut found, memory, base_address, &image, &template, previous.as_ref(), &known);
     }
-
-    // Anything not found keeps what it was (for a known build), or is left for review (for a new one)
-    let mut offsets: BTreeMap<AddressType, Vec<usize>> = BTreeMap::new();
-    for (address_type, chain) in &template.address_offsets {
-        // An unsure guess doesn't replace what a known build has, but is kept to look at
-        if found.contains_key(address_type) || (existing.is_none() && unverified.contains_key(address_type)) {
-            continue;
-        }
-        if existing.is_some() {
-            offsets.insert(*address_type, chain.clone());
-            found.insert(*address_type, (chain.clone(), "kept".to_string()));
-        } else {
-            unverified.insert(*address_type, chain.clone());
-        }
-    }
-    for (address_type, (chain, _)) in &found {
-        offsets.insert(*address_type, chain.clone());
-    }
-    // What the chains found say of the layout
-    let (with_chains, note) = crate::targets::layout_from_chains(layout, &offsets.clone().into_iter().collect());
-    layout = with_chains;
-    layout_notes.extend(note);
+    keep_the_rest(&mut found, &template, existing.is_some());
 
     let image_size = image.size_of_image();
     let version_name = match (&existing, &version, new_game.and_then(|new| new.version.clone())) {
         (Some(details), _, _) => details.version.version.clone(),
         (None, _, Some(named)) => named,
-        (None, Some((_, string)), None) => format!("{} (image size {})", string, image_size),
+        (None, Some(string), None) => format!("{} (image size {})", string, image_size),
         (None, None, None) => format!("unknown build (image size {})", image_size),
     };
     let details = ProcessDetails {
         version: VersionIdentifier { version: version_name, image_size: Some(image_size) },
         arch: image.architecture(),
-        address_offsets: offsets.into_iter().collect(),
-        unverified: unverified.iter().map(|(t, c)| (*t, c.clone())).collect(),
-        layout,
+        address_offsets: found.offsets(),
+        unverified: found.unverified.iter().map(|(t, c)| (*t, c.clone())).collect(),
+        layout: found.layout.clone(),
         ..template.clone()
     };
-
-    println!();
-    println!("{}:", details);
-    for (address_type, (chain, how)) in &found {
-        println!("  {:<17} {:<44} {}", format!("{:?}", address_type), describe_chain(chain), how);
-    }
-    for (address_type, chain) in &unverified {
-        println!("  {:<17} {:<44} UNVERIFIED, not used", format!("{:?}", address_type), describe_chain(chain));
-    }
-    if !layout_notes.is_empty() {
-        println!("  Layout:");
-        for note in &layout_notes {
-            println!("    {}", note);
-        }
-    }
-    if !unverified.is_empty() {
-        println!("  (Offsets marked unverified are kept in the file to look at; pass --from with the previous build's");
-        println!("  exe or a dump of it to derive them, or check them with `tomb-helper debug probe` and move them over.)");
-    }
+    print_summary(&details, &found);
 
     if dry_run {
         println!("\n--dry-run, so not saved");
@@ -283,6 +130,233 @@ pub fn run(
     println!("\nChecking it...");
     let checked = check::run(memory, base_address, details.clone());
     Ok((details, checked))
+}
+
+// The statics found through the RTTI classes of what they point to
+fn find_statics(found: &mut Found, memory: Handle, base_address: usize, image: &PeImage, template: &ProcessDetails) {
+    for (address_type, chain) in discover::find_statics(memory, base_address, image) {
+        let how = match template.address_offsets.get(&address_type) {
+            Some(previous) if *previous == chain => "RTTI, unchanged",
+            Some(_) => "RTTI, moved",
+            None => "RTTI, new",
+        };
+        found.chains.insert(address_type, (chain, how.to_string()));
+    }
+}
+
+// Lara's instance and where she is: through her proxy where it's a static (TR2013), which also says where it points at
+// her, else the instance with a PlayerComponent
+fn find_lara(
+    found: &mut Found,
+    memory: Handle,
+    base_address: usize,
+    image: &PeImage,
+    existing: Option<&ProcessDetails>,
+) -> Option<(usize, Position)> {
+    let proxy = found
+        .layout
+        .proxy
+        .instance
+        .filter(|_| found.chains.contains_key(&AddressType::PlayerProxy))
+        .and_then(|offset| discover::find_player_proxy(memory, image, base_address, offset));
+    match proxy {
+        Some(proxy) => {
+            if found.layout.proxy.instance != Some(proxy.instance_offset) {
+                let note = format!(
+                    "{:<34} {:#X} -> {:#X} (where Lara's proxy points at her)",
+                    "proxy.instance",
+                    found.layout.proxy.instance.unwrap_or(0),
+                    proxy.instance_offset
+                );
+                found.notes.push(note);
+                found.layout.proxy.instance = Some(proxy.instance_offset);
+            }
+            crate::object_list::read_position(memory, proxy.lara).ok().map(|position| (proxy.lara, position))
+        }
+        None => {
+            let array = found
+                .chains
+                .get(&AddressType::InstanceArray)
+                .map(|(chain, _)| chain.clone())
+                .or_else(|| existing.and_then(|d| d.address_offsets.get(&AddressType::InstanceArray).cloned()));
+            array.and_then(|array| lara_with_player_component(memory, base_address, array[0]))
+        }
+    }
+}
+
+// Where the values found by what they are (her position, and the version string) are, for the chains reaching them;
+// the ground probes, by her; and the version string
+fn find_targets(
+    found: &mut Found,
+    memory: Handle,
+    base_address: usize,
+    image: &PeImage,
+    template: &ProcessDetails,
+    lara: Option<(usize, Position)>,
+) -> (Vec<(AddressType, usize)>, Option<String>) {
+    let mut targets = vec![];
+    match lara {
+        Some((address, position)) => {
+            println!("Lara's instance is at {:#X}, at ({:.0}, {:.0}, {:.0})", address, position.x, position.y, position.z);
+            // Y and Z follow X, so they use its chain
+            targets.push((AddressType::XPosition, address + memory.layout().instance.position));
+            match find_probes(&memory.layout().probes, image, &position) {
+                Some(rva) => {
+                    println!("Ground probes at mod+{:X}", rva);
+                    found.chains.insert(AddressType::PlayerProbes, (vec![rva], "Lara's probes".to_string()));
+                }
+                None => println!("Ground probes: NOT FOUND"),
+            }
+        }
+        None => println!("Lara: NOT FOUND (no instance with a PlayerComponent or proxy; load into a level)"),
+    }
+    let version = read_version(memory, base_address, template);
+    if let Some((address, string)) = &version {
+        println!("Version string \"{}\"", string);
+        targets.push((AddressType::Version, *address));
+    }
+    (targets, version.map(|(_, string)| string))
+}
+
+// The chains to the targets: the previous build's if they still get there, otherwise those the code uses
+fn chains_reaching(
+    found: &mut Found,
+    memory: Handle,
+    base_address: usize,
+    image: &PeImage,
+    template: &ProcessDetails,
+    targets: Vec<(AddressType, usize)>,
+) {
+    let mut moved = vec![];
+    for (address_type, target) in targets {
+        let unchanged = template
+            .address_offsets
+            .get(&address_type)
+            .filter(|chain| resolve(memory, base_address, chain) == Some(target));
+        match unchanged {
+            Some(chain) => {
+                found.chains.insert(address_type, (chain.clone(), "unchanged".to_string()));
+            }
+            None => moved.push((address_type, target)),
+        }
+    }
+    if !moved.is_empty() {
+        let chains = chains::best_code_chains(image, memory, base_address, &moved);
+        for (address_type, _) in &moved {
+            match chains.get(address_type) {
+                Some((chain, sites)) => {
+                    found.chains.insert(*address_type, (chain.clone(), format!("code chain, {} sites", sites)));
+                }
+                None => println!("{:?}: no code chain reaches it", address_type),
+            }
+        }
+    }
+    if let Some((x, how)) = found.chains.get(&AddressType::XPosition).cloned() {
+        for (address_type, offset) in [(AddressType::YPosition, 4), (AddressType::ZPosition, 8)] {
+            let mut chain = x.clone();
+            *chain.last_mut().unwrap() += offset;
+            found.chains.insert(address_type, (chain, format!("XPosition + {} ({})", offset, how)));
+        }
+    }
+}
+
+// The rest of the offsets, from the previous build's (sure ones are used, the rest kept to look at)
+fn derive_from(found: &mut Found, old: &PeImage, old_details: &ProcessDetails, image: &PeImage) {
+    println!("Deriving the rest from {}...", old_details);
+    for DerivedOffset { address_type, chain, sure, how } in derive::derive_lines(old, old_details, image) {
+        match chain {
+            Some(chain) if sure && !found.chains.contains_key(&address_type) => {
+                found.chains.insert(address_type, (chain, format!("derived: {}", how)));
+            }
+            Some(chain) if !found.chains.contains_key(&address_type) => {
+                found.unverified.insert(address_type, chain);
+            }
+            _ => {}
+        }
+    }
+}
+
+// A new build's (or game's) layout: where its classes' code says their fields are (from the previous build, or for a
+// new game the engine's other games), Lara's proxy's fields by the values in them, and the camera's by what they have
+// to be
+fn work_out_layout(
+    found: &mut Found,
+    memory: Handle,
+    base_address: usize,
+    image: &PeImage,
+    template: &ProcessDetails,
+    previous: Option<&(PeImage, ProcessDetails)>,
+    known: &[ProcessDetails],
+) {
+    let is_new_game = !known.iter().any(|d| d.executable_name.eq_ignore_ascii_case(&template.executable_name));
+    let others = if is_new_game { other_games(image) } else { vec![] };
+    let references: Vec<(&PeImage, &ProcessDetails)> = match previous {
+        Some((old, old_details)) => vec![(old, old_details)],
+        None => others.iter().map(|(image, details)| (image, details)).collect(),
+    };
+    if !references.is_empty() {
+        let names: Vec<String> = references.iter().map(|(_, d)| d.to_string()).collect();
+        println!("Working out the layout from how its classes' code uses it in {}...", names.join(", "));
+        // Fields placed between moved ones are only right within a game (`--from` can be another game's dump)
+        let same_game = references.iter().all(|(_, d)| d.name == template.name);
+        found.layout = class_layout(found.layout.clone(), &references, image, same_game, &mut found.settled, &mut found.notes);
+    }
+
+    // With Lara standing somewhere ordinary, as for everything here: the games share their gameplay data, so the same
+    // values are in the same fields, wherever those are
+    let sources = crate::value_layout::sources(template, previous.map(|(_, d)| d), known);
+    if !sources.is_empty() {
+        let names: Vec<String> = sources.iter().map(|(_, d)| d.to_string()).collect();
+        println!("Working out Lara's proxy from the values in it, as in {}...", names.join(", "));
+        let offsets = found.offsets();
+        let target = Game::new(memory.with_layout(&found.layout), base_address, &offsets);
+        let target_details = ProcessDetails { address_offsets: offsets, layout: found.layout.clone(), ..template.clone() };
+        found.layout = crate::value_layout::apply(found.layout.clone(), &sources, &target, &target_details, &mut found.settled, &mut found.notes);
+    }
+
+    // No other build needed, and the camera's chains move with them
+    let game = Game::new(memory.with_layout(&found.layout), base_address, &found.offsets());
+    found.layout = crate::camera_fields::apply(found.layout.clone(), &game, &mut found.chains, &mut found.notes);
+}
+
+// Anything not found keeps what it was (for a known build), or is left for review (for a new one), and the layout gets
+// what the chains say of it
+fn keep_the_rest(found: &mut Found, template: &ProcessDetails, known_build: bool) {
+    for (address_type, chain) in &template.address_offsets {
+        // An unsure guess doesn't replace what a known build has, but is kept to look at
+        if found.chains.contains_key(address_type) || (!known_build && found.unverified.contains_key(address_type)) {
+            continue;
+        }
+        if known_build {
+            found.chains.insert(*address_type, (chain.clone(), "kept".to_string()));
+        } else {
+            found.unverified.insert(*address_type, chain.clone());
+        }
+    }
+    let (layout, note) = crate::targets::layout_from_chains(found.layout.clone(), &found.offsets());
+    found.layout = layout;
+    found.notes.extend(note);
+}
+
+fn print_summary(details: &ProcessDetails, found: &Found) {
+    println!();
+    println!("{}:", details);
+    for (address_type, (chain, how)) in &found.chains {
+        println!("  {:<17} {:<44} {}", format!("{:?}", address_type), describe_chain(chain), how);
+    }
+    for (address_type, chain) in &found.unverified {
+        println!("  {:<17} {:<44} UNVERIFIED, not used", format!("{:?}", address_type), describe_chain(chain));
+    }
+    if !found.notes.is_empty() {
+        println!("  Layout:");
+        for note in &found.notes {
+            println!("    {}", note);
+        }
+    }
+    if !found.unverified.is_empty() {
+        println!("  (Offsets marked unverified are kept in the file to look at; pass --from with the previous build's");
+        println!("  exe or a dump of it to derive them, or check them with `tomb-helper debug probe` and move them over.)");
+    }
 }
 
 /// Keeps the build's image for the next build's `--from` (a Denuvo build's exe can't be read from disk), unless there's
@@ -483,7 +557,7 @@ fn attach_new(new: &NewGame) -> Result<(Pid, ProcessHandle, usize, Option<Proces
 }
 
 /// Lara's instance (the one with a PlayerComponent) and where she is
-fn find_lara(handle: Handle, base_address: usize, array_rva: usize) -> Option<(usize, Position)> {
+fn lara_with_player_component(handle: Handle, base_address: usize, array_rva: usize) -> Option<(usize, Position)> {
     let instances = ObjectList::new(base_address + array_rva).instances(handle).ok()?;
     let mut components = Components::new(base_address);
     components.allow_scans(instances.len());

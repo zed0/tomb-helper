@@ -29,7 +29,7 @@ use process_memory::{Architecture, Pid};
 use crate::trigger::{self, Shape};
 use crate::trigger_scripts::{SetOffBy, TriggerScript, TriggerScripts};
 use crate::handler::HelperState;
-use crate::ui_ipc_data::{REQUEST_RESTORE_POSITION, REQUEST_STORE_POSITION, REQUEST_TOGGLE_FLYING, name_bytes, text_bytes, trigger_action_bit, trigger_action_mask, projection_from_lens, BoxKind, Capsule, HotkeyLabel, Line, ObjectBox, ObjectCategory, SharedMemoryManager, TriggerCategory, TriggerFace, TriggerLabel, UiSettings, HOTKEY_LABELS, HOTKEY_LABEL_LENGTH, MAX_ATTACHED, MAX_OBJECTS, MAX_TRIANGLES, MAX_TRIGGERS, UNCHECKED};
+use crate::ui_ipc_data::{REQUEST_RESTORE_POSITION, REQUEST_STORE_POSITION, REQUEST_TOGGLE_FLYING, name_bytes, text_bytes, trigger_action_bit, trigger_action_mask, projection_from_lens, BoxKind, Capsule, HotkeyLabel, Line, ObjectBox, ObjectCategory, SharedMemoryManager, TriggerCategory, TriggerFace, TriggerLabel, Triangle, UiSettings, HOTKEY_LABELS, HOTKEY_LABEL_LENGTH, MAX_ATTACHED, MAX_OBJECTS, MAX_TRIANGLES, MAX_TRIGGERS, UNCHECKED};
 
 // The overlay's builds, next to the exe (`build.rs` puts the 32-bit one there)
 const OVERLAY_DLL: &str = "tomb_helper_ui.dll";
@@ -139,6 +139,15 @@ struct DrawnProxies {
     attached: Vec<Capsule>,
     attached_touching: [bool; MAX_ATTACHED],
     attached_active: bool,
+}
+
+// Where the overlay reads the camera from each frame (0 where the game has no camera offsets), which of the lens's floats
+// are which, and the projection to use until it reads the camera itself
+struct CameraData {
+    projection: [f32; 16],
+    lens_fields: [u32; 4],
+    view_address: u64,
+    lens_address: u64,
 }
 
 // The shown triggers' world space outlines, faces and labels
@@ -517,6 +526,73 @@ impl OverlayHandler {
         let hit = self.collision_meshes.raycast(self.game.handle, origin, forward, MAX_AIM_DISTANCE)?;
         Some(Position::from(origin + forward * hit))
     }
+
+    // Whether the overlay's in the game to draw: once the one from before has unloaded, it's injected
+    fn ready(&mut self) -> Result<bool, Box<dyn Error>> {
+        if !self.active {
+            return Ok(false);
+        }
+        if let Some(since) = self.waiting_to_inject {
+            if self.overlay_loaded()? {
+                if since.elapsed() > UNLOAD_TIMEOUT {
+                    self.waiting_to_inject = None;
+                    self.active = false;
+                    return Err("The overlay from before is still loaded in the game but isn't unloading, so it can't \
+                        be injected again until the game's restarted".into());
+                }
+                return Ok(false);
+            }
+            self.waiting_to_inject = None;
+            self.inject()?;
+        }
+        Ok(true)
+    }
+
+    // Lara's position and the camera, as of this tick
+    fn read_position_and_camera(&mut self) -> Result<(), Box<dyn Error>> {
+        self.position = self.game.lara_position()?;
+        if self.game.has(AddressType::CameraView) {
+            self.camera_view = self.game.read_floats(AddressType::CameraView)?;
+        }
+        if self.game.has(AddressType::CameraLens) {
+            self.camera_lens = Some(self.game.read_floats(AddressType::CameraLens)?);
+        }
+        Ok(())
+    }
+
+    // The collision triangles round Lara, or while she aims where she's aiming if they follow it: where she's aiming
+    // then, the triangles, and how long finding them took
+    fn meshes(&mut self, settings: &TickSettings, aiming: bool) -> (Option<Position>, Vec<Triangle>, f32) {
+        let started = time::Instant::now();
+        let aim_point = if settings.follow_aim && aiming { self.aim_point() } else { None };
+        let triangles = if settings.meshes.any() {
+            let (centre, coarse, detailed) = (aim_point.unwrap_or(self.position), settings.coarse_radius, settings.detailed_radius);
+            self.collision_meshes.triangles_near(self.game.handle, &centre, coarse, detailed, MAX_TRIANGLES)
+        } else {
+            vec![]
+        };
+        (aim_point, triangles, started.elapsed().as_secs_f32() * 1000.0)
+    }
+
+    // Where the overlay reads the camera from each frame, and the projection to use until it does
+    fn camera(&self) -> io::Result<CameraData> {
+        let camera = &self.game.layout().camera;
+        let lens_fields = [camera.lens_near, camera.lens_far, camera.lens_fov, camera.lens_aspect].map(|f| f as u32);
+        // 0 tells the overlay there's no camera
+        let address = |address_type: AddressType| -> io::Result<u64> {
+            if self.game.has(address_type) {
+                self.game.require(address_type).map(|a| a as u64)
+            } else {
+                Ok(0)
+            }
+        };
+        Ok(CameraData {
+            projection: self.camera_lens.map_or([0.0; 16], |lens| projection_from_lens(&lens, lens_fields)),
+            lens_fields,
+            view_address: address(AddressType::CameraView)?,
+            lens_address: address(AddressType::CameraLens)?,
+        })
+    }
 }
 
 // A trigger's name and what sets it off, and on a second line what it does, once that's known
@@ -644,30 +720,10 @@ fn fill<T: Copy>(slots: &mut [T], items: &[T]) -> u32 {
 
 impl Handler for OverlayHandler {
     fn handle_tick(&mut self) -> Result<(), Box<dyn Error>> {
-        if !self.active {
+        if !self.ready()? {
             return Ok(());
         }
-        if let Some(since) = self.waiting_to_inject {
-            if self.overlay_loaded()? {
-                if since.elapsed() > UNLOAD_TIMEOUT {
-                    self.waiting_to_inject = None;
-                    self.active = false;
-                    return Err("The overlay from before is still loaded in the game but isn't unloading, so it can't \
-                        be injected again until the game's restarted".into());
-                }
-                return Ok(());
-            }
-            self.waiting_to_inject = None;
-            self.inject()?;
-        }
-
-        self.position = self.game.lara_position()?;
-        if self.game.has(AddressType::CameraView) {
-            self.camera_view = self.game.read_floats(AddressType::CameraView)?;
-        }
-        if self.game.has(AddressType::CameraLens) {
-            self.camera_lens = Some(self.game.read_floats(AddressType::CameraLens)?);
-        }
+        self.read_position_and_camera()?;
         self.take_requests();
         let settings = TickSettings::read(&self.ui_memory_manager.get().settings);
         self.refresh(&settings)?;
@@ -684,31 +740,9 @@ impl Handler for OverlayHandler {
             (true, Some((address, shapes))) => collision::place_capsules(self.game.handle, *address, shapes)?,
             _ => vec![],
         };
+        let (aim_point, triangles, triangle_milliseconds) = self.meshes(&settings, aiming);
+        let camera = self.camera()?;
 
-        let started = time::Instant::now();
-        let aim_point = if settings.follow_aim && aiming { self.aim_point() } else { None };
-        let mesh_centre = aim_point.unwrap_or(position);
-        let triangles = if settings.meshes.any() {
-            let (coarse, detailed) = (settings.coarse_radius, settings.detailed_radius);
-            self.collision_meshes.triangles_near(self.game.handle, &mesh_centre, coarse, detailed, MAX_TRIANGLES)
-        } else {
-            vec![]
-        };
-        let triangle_milliseconds = started.elapsed().as_secs_f32() * 1000.0;
-
-        let camera = &self.game.layout().camera;
-        let lens_fields = [camera.lens_near, camera.lens_far, camera.lens_fov, camera.lens_aspect].map(|f| f as u32);
-        let camera_projection = self.camera_lens.map_or([0.0; 16], |lens| projection_from_lens(&lens, lens_fields));
-        // 0 tells the overlay there's no camera
-        let address = |address_type: AddressType| -> io::Result<u64> {
-            if self.game.has(address_type) {
-                self.game.require(address_type).map(|a| a as u64)
-            } else {
-                Ok(0)
-            }
-        };
-        let camera_view_address = address(AddressType::CameraView)?;
-        let camera_lens_address = address(AddressType::CameraLens)?;
         let helper_state = &self.helper_state;
         self.ui_memory_manager.get_mut().update(|val| {
             val.position_tools = helper_state.position_tools;
@@ -716,15 +750,15 @@ impl Handler for OverlayHandler {
             val.saved_position = helper_state.saved_position.unwrap_or_default();
             val.flying = helper_state.flying;
             val.hotkeys = self.hotkeys;
-            val.mesh_centre = mesh_centre;
+            val.mesh_centre = aim_point.unwrap_or(position);
             val.aiming = aim_point.is_some();
             val.object_radius = self.config.object_radius;
             val.position = position;
             val.camera_view = self.camera_view;
-            val.camera_projection = camera_projection;
-            val.lens_fields = lens_fields;
-            val.camera_view_address = camera_view_address;
-            val.camera_lens_address = camera_lens_address;
+            val.camera_projection = camera.projection;
+            val.lens_fields = camera.lens_fields;
+            val.camera_view_address = camera.view_address;
+            val.camera_lens_address = camera.lens_address;
             val.object_count = fill(&mut val.objects, &objects);
             val.probe_count = fill(&mut val.probes, &probes);
             val.proxy_count = fill(&mut val.proxies, &proxies.shapes);

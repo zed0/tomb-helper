@@ -11,7 +11,7 @@ use crate::game_memory::read_pointer;
 use crate::layout::field_offset;
 use crate::object_list::ObjectList;
 use crate::process_details::AddressType;
-use crate::watch::{self, Breakpoint, Hit};
+use crate::watch::{self, Breakpoint, Hit, Watch};
 
 // Where a group's structure is in the running game, for the ones there's a way to find
 fn group_address(game: &Game, components: &mut Components, group: &str) -> Result<usize> {
@@ -84,7 +84,8 @@ pub fn watch_fields(names: &[&str], version: Option<String>, seconds: u64, delay
     let addresses: Vec<usize> = fields.iter().map(|(_, _, a)| *a).collect();
     let image_size = find_process::get_image_size(handle, base_address)?;
     let code = Some((base_address, base_address + image_size));
-    let hits = watch::record(pid, handle, base_address, &addresses, seconds, Breakpoint::Access, code, None)?;
+    let watching = Watch { handle, base_addr: base_address, addresses: &addresses, kind: Breakpoint::Access, code_range: code, dump: None };
+    let hits = watch::record(pid, &watching, seconds)?;
     for ((name, offset, _), hits) in fields.iter().zip(&hits) {
         let mut by_count: Vec<(&usize, &Hit)> = hits.iter().collect();
         by_count.sort_by_key(|(rva, hit)| (std::cmp::Reverse(hit.count), **rva));

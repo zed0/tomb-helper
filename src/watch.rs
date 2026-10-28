@@ -405,18 +405,88 @@ fn stack_callers(handle: ProcessHandle, c: &Context, code: (usize, usize), base_
     callers
 }
 
-/// Records which instructions access each address, as RVAs relative to `base_addr`, and with `code_range` (the
-/// range of the game's code) which functions called them
-pub fn record(
-    pid: Pid,
-    handle: ProcessHandle,
-    base_addr: usize,
-    addresses: &[usize],
-    seconds: u64,
-    kind: Breakpoint,
-    code_range: Option<(usize, usize)>,
-    dump: Option<Dump>,
-) -> Result<Vec<BTreeMap<usize, Hit>>> {
+/// What `record` watches for: the instructions that access (or write, or run) each address, as RVAs relative to
+/// `base_addr`, and with `code_range` (the range of the game's code) which functions called them
+pub struct Watch<'a> {
+    pub handle: ProcessHandle,
+    pub base_addr: usize,
+    pub addresses: &'a [usize],
+    pub kind: Breakpoint,
+    pub code_range: Option<(usize, usize)>,
+    pub dump: Option<Dump>,
+}
+
+impl Watch<'_> {
+    // A thread a breakpoint stopped: what it did to each address that set one off goes in `hits`, and it carries on
+    fn stopped(&self, thread: HANDLE, wow64: bool, hits: &mut [BTreeMap<usize, Hit>], formatter: &mut IntelFormatter) {
+        // Which breakpoint it was is in the native context, and the registers the game's code sees in the WOW64 one
+        // for a 32-bit game
+        let (Some(mut debug), Some(mut context)) = (Context::get(thread, false, false), Context::get(thread, wow64, true)) else {
+            return;
+        };
+        for (i, address) in self.addresses.iter().enumerate() {
+            if debug.dr6() & (1 << i) == 0 {
+                continue;
+            }
+            if let Some(instruction) = self.instruction(&context, *address) {
+                self.note(&mut hits[i], &instruction, &context, formatter);
+            }
+        }
+        if self.kind == Breakpoint::Execute {
+            context.clear_dr6();
+            context.set_resume_flag();
+            context.set(thread);
+        } else {
+            debug.clear_dr6();
+            debug.set(thread);
+        }
+    }
+
+    // The instruction that set the breakpoint off: an execute breakpoint stops before it, a data one after it
+    fn instruction(&self, context: &Context, address: usize) -> Option<Instruction> {
+        if self.kind == Breakpoint::Execute {
+            instruction_at(self.handle, context, context.ip())
+        } else {
+            accessing_instruction(self.handle, context, address)
+        }
+    }
+
+    // Counts a hit of the instruction, with the registers, memory and callers kept of it
+    fn note(&self, hits: &mut BTreeMap<usize, Hit>, instruction: &Instruction, context: &Context, formatter: &mut IntelFormatter) {
+        let rva = instruction.ip() as usize - self.base_addr;
+        let hit = hits.entry(rva).or_insert_with(|| {
+            let mut text = String::new();
+            formatter.format(instruction, &mut text);
+            Hit {
+                count: 0,
+                text,
+                displacement: displacement(instruction),
+                callers: BTreeMap::new(),
+                registers: BTreeMap::new(),
+                dumps: vec![],
+            }
+        });
+        hit.count += 1;
+        if self.kind == Breakpoint::Execute {
+            *hit.registers.entry(context.registers()).or_insert(0) += 1;
+        }
+        if let Some(dump) = self.dump.filter(|_| hit.dumps.len() < MAX_DUMPS) {
+            if let Some(at) = context.register(dump.register) {
+                let mut bytes = vec![0_u8; dump.length];
+                if self.handle.copy_address(at as usize, &mut bytes).is_ok() {
+                    hit.dumps.push((at, bytes));
+                }
+            }
+        }
+        if let Some(code_range) = self.code_range {
+            *hit.callers.entry(stack_callers(self.handle, context, code_range, self.base_addr)).or_insert(0) += 1;
+        }
+    }
+}
+
+/// Records what `watch` says to, attached to the process as a debugger for this many seconds
+pub fn record(pid: Pid, watch: &Watch, seconds: u64) -> Result<Vec<BTreeMap<usize, Hit>>> {
+    let Watch { handle, addresses, kind, .. } = *watch;
     let wow64 = is_wow64(handle);
     if unsafe { DebugActiveProcess(pid) } == FALSE {
         bail!("Could not attach as a debugger (error {})", unsafe { GetLastError() });
@@ -491,61 +561,7 @@ pub fn record(
                 if code == STATUS_SINGLE_STEP || code == STATUS_WX86_SINGLE_STEP {
                     traps += 1;
                     if let Some(thread) = threads.get(&event.dwThreadId) {
-                        // Which breakpoint it was is in the native context, and the registers the game's code
-                        // sees in the WOW64 one for a 32-bit game
-                        let debug = Context::get(*thread, false, false);
-                        let context = Context::get(*thread, wow64, true);
-                        if let (Some(mut debug), Some(mut context)) = (debug, context) {
-                            for (i, address) in addresses.iter().enumerate() {
-                                if debug.dr6() & (1 << i) == 0 {
-                                    continue;
-                                }
-                                // An execute breakpoint stops before the instruction, a data one after it
-                                let instruction = if kind == Breakpoint::Execute {
-                                    instruction_at(handle, &context, context.ip())
-                                } else {
-                                    accessing_instruction(handle, &context, *address)
-                                };
-                                if let Some(instruction) = instruction {
-                                    let rva = instruction.ip() as usize - base_addr;
-                                    let hit = hits[i].entry(rva).or_insert_with(|| {
-                                        let mut text = String::new();
-                                        formatter.format(&instruction, &mut text);
-                                        Hit {
-                                            count: 0,
-                                            text,
-                                            displacement: displacement(&instruction),
-                                            callers: BTreeMap::new(),
-                                            registers: BTreeMap::new(),
-                                            dumps: vec![],
-                                        }
-                                    });
-                                    hit.count += 1;
-                                    if kind == Breakpoint::Execute {
-                                        *hit.registers.entry(context.registers()).or_insert(0) += 1;
-                                    }
-                                    if let Some(dump) = dump.filter(|_| hit.dumps.len() < MAX_DUMPS) {
-                                        if let Some(at) = context.register(dump.register) {
-                                            let mut bytes = vec![0_u8; dump.length];
-                                            if handle.copy_address(at as usize, &mut bytes).is_ok() {
-                                                hit.dumps.push((at, bytes));
-                                            }
-                                        }
-                                    }
-                                    if let Some(code_range) = code_range {
-                                        *hit.callers.entry(stack_callers(handle, &context, code_range, base_addr)).or_insert(0) += 1;
-                                    }
-                                }
-                            }
-                            if kind == Breakpoint::Execute {
-                                context.clear_dr6();
-                                context.set_resume_flag();
-                                context.set(*thread);
-                            } else {
-                                debug.clear_dr6();
-                                debug.set(*thread);
-                            }
-                        }
+                        watch.stopped(*thread, wow64, &mut hits, &mut formatter);
                     }
                 } else if is_breakpoint && !attached {
                     // The breakpoint Windows raises once attached; every thread is known by now
@@ -643,7 +659,8 @@ pub fn watch_raw(pid: Pid, address: &str, seconds: u64, delay: u64, kind: Breakp
         bail!("Give between 1 and {} addresses", MAX_WATCHES);
     }
     crate::chains::delay_start(delay);
-    let hits = record(pid, handle, base_addr, &addresses, seconds, kind, Some((base_addr, base_addr + image_size)), dump)?;
+    let code_range = Some((base_addr, base_addr + image_size));
+    let hits = record(pid, &Watch { handle, base_addr, addresses: &addresses, kind, code_range, dump }, seconds)?;
     let mut by_count: Vec<(&usize, &Hit)> = hits.iter().flatten().collect();
     by_count.sort_by_key(|(rva, hit)| (std::cmp::Reverse(hit.count), **rva));
     for (rva, hit) in by_count {
@@ -729,7 +746,8 @@ pub fn watch(names: &[&str], version: Option<String>, seconds: u64, delay: u64, 
     let addresses: Vec<usize> = watched.iter().map(|(_, a)| *a).collect();
 
     let image_size = find_process::get_image_size(handle, base_addr)?;
-    let hits = record(pid, handle, base_addr, &addresses, seconds, kind, Some((base_addr, base_addr + image_size)), None)?;
+    let code_range = Some((base_addr, base_addr + image_size));
+    let hits = record(pid, &Watch { handle, base_addr, addresses: &addresses, kind, code_range, dump: None }, seconds)?;
 
     for ((address_type, address), hits) in watched.iter().zip(&hits) {
         println!("{:?} at {:#X}:", address_type, address);
