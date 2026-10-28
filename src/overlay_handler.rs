@@ -268,7 +268,7 @@ impl OverlayHandler {
         let names: HashMap<u64, String> = all.iter().map(|i| (i.id, i.name.clone())).collect();
         let mut nearby: Vec<Instance> =
             all.into_iter().filter(|i| lara.distance(&i.position) <= self.config.object_radius).collect();
-        nearby.sort_by(|a, b| lara.distance(&a.position).total_cmp(&lara.distance(&b.position)));
+        object_list::sort_by_distance(&mut nearby, &lara);
 
         self.components.start_refresh();
         let nearest: Vec<usize> = nearby.iter().map(|i| i.address).collect();

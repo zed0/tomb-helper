@@ -10,12 +10,11 @@ use anyhow::{bail, Context, Result};
 use crate::game::Game;
 use crate::game_memory::{f32_at, pointer_from, pointer_size, resolve, Handle};
 use crate::process_details::AddressType;
-use crate::rtti::Classes;
+use crate::rtti::{Classes, PLAYER};
 use crate::tracked_memory::TrackedMemory;
 use process_memory::{Architecture, CopyAddress, ProcessHandle};
 use std::time::Duration;
 
-pub const PLAYER: &str = ".?AVPlayer@@";
 // How high she's lifted each time: small enough to land without harm
 const LIFTS: [f32; 2] = [150.0, 300.0];
 // How long to leave her to fall and land, and how soon she should have started falling if the game's running

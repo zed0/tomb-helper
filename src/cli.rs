@@ -6,7 +6,7 @@ use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use std::path::Path;
 
-use crate::offsets_file::{known_process_details, to_json, OffsetsFile, OffsetsSource, VersionEntry};
+use crate::offsets_file::{known_process_details, parse_hex, to_json, OffsetsFile, OffsetsSource, VersionEntry};
 use crate::watch::{Breakpoint, Dump};
 
 #[derive(Parser)]
@@ -126,14 +126,18 @@ enum Debug {
         watch: bool,
     },
     /// Print the pointer chains the code accesses from each reference to a static address (in hex)
-    Trace { image: String, address: String },
+    Trace {
+        image: String,
+        #[arg(value_parser = parse_hex)]
+        address: usize,
+    },
     /// Print the fields of a class (e.g. "ProxyComponent@cdc") its virtual functions use, from an exe or dump
     ClassFields {
         image: String,
         class: String,
         /// Only say which virtual functions use this offset (hex)
-        #[arg(long)]
-        field: Option<String>,
+        #[arg(long, value_parser = parse_hex)]
+        field: Option<usize>,
     },
     /// Work out the running game's layout for a group (e.g. proxy) by the values in it, from a snapshot of another game
     /// or build, with Lara standing somewhere ordinary in both
@@ -210,7 +214,7 @@ enum Debug {
     },
     /// Watch up to 4 addresses (absolute, or +RVA, comma separated) in any process
     WatchRaw {
-        pid: String,
+        pid: u32,
         addresses: String,
         #[arg(long, default_value_t = 5)]
         seconds: u64,
@@ -228,10 +232,10 @@ enum Debug {
     },
     /// Disassemble a running process (prints RVAs)
     Disasm {
-        pid: String,
+        pid: u32,
         address: String,
-        #[arg(default_value = "40")]
-        count: String,
+        #[arg(default_value_t = 40)]
+        count: usize,
     },
     /// Round trip statics between two builds to measure how well references are matched
     CheckMatching {
@@ -280,8 +284,8 @@ fn run_debug(tool: Debug) -> Result<()> {
         Debug::Dump { out } => dump(out.as_deref()),
         Debug::Chains { version } => crate::chains::find_code_chains(version),
         Debug::Probe { version, watch } => crate::chains::probe(version, watch),
-        Debug::Trace { image, address } => crate::derive::trace(&image, &address),
-        Debug::ClassFields { image, class, field } => crate::class_fields::print_class_fields(&image, &class, field.as_deref()),
+        Debug::Trace { image, address } => crate::derive::trace(&image, address),
+        Debug::ClassFields { image, class, field } => crate::class_fields::print_class_fields(&image, &class, field),
         Debug::FindCutsceneId { version, save } => crate::cutscene_id::find_cutscene_id(version, save),
         Debug::CameraFields { version, layout_of } => crate::camera_fields::print_camera_fields(version, layout_of.as_deref()),
         Debug::FindFallStart { version, delay, save } => crate::fall_start::find_fall_start(version, delay, save),
@@ -313,9 +317,9 @@ fn run_debug(tool: Debug) -> Result<()> {
             } else {
                 Breakpoint::Access
             };
-            crate::watch::watch_raw(&pid, &addresses, seconds, delay, kind, dump)
+            crate::watch::watch_raw(pid, &addresses, seconds, delay, kind, dump)
         }
-        Debug::Disasm { pid, address, count } => crate::watch::disasm(&pid, &address, &count),
+        Debug::Disasm { pid, address, count } => crate::watch::disasm(pid, &address, count),
         Debug::CheckMatching { a, b, count } => crate::derive::check_matching(&a, &b, count),
         Debug::OverlayData { version, delay } => crate::overlay_handler::print_overlay_data(version, delay),
     }

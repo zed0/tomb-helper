@@ -11,9 +11,8 @@
 //! `debug disasm` prints instructions with their RVAs.
 
 use anyhow::{bail, Context as _, Result};
-use crate::derive::format_offsets;
 use crate::find_process;
-use crate::offsets_file::known_process_details;
+use crate::offsets_file::{describe_chain, known_process_details, parse_hex};
 use crate::process_details::AddressType;
 use iced_x86::{CodeSize, Decoder, DecoderOptions, Formatter, Instruction, IntelFormatter, Mnemonic, OpKind, Register};
 use process_memory::{CopyAddress, DataMember, Memory, Pid, ProcessHandle, TryIntoProcessHandle};
@@ -623,10 +622,6 @@ impl Samples {
     }
 }
 
-fn parse_hex(text: &str) -> Result<usize> {
-    usize::from_str_radix(text.trim_start_matches("0x"), 16).with_context(|| format!("{}", text))
-}
-
 // An absolute address in hex, or one relative to the main module with a leading `+`
 fn parse_address(text: &str, base_addr: usize) -> Result<usize> {
     match text.strip_prefix('+') {
@@ -638,8 +633,7 @@ fn parse_address(text: &str, base_addr: usize) -> Result<usize> {
 /// `debug watch-raw <pid> <address>[,<address>...]`: record what accesses (or writes, or with `Breakpoint::Execute` runs) any address in a
 /// process, and for the main module's code which functions it was called from (and for an instruction run, the
 /// registers then). Addresses are printed relative to the main module.
-pub fn watch_raw(pid: &str, address: &str, seconds: u64, delay: u64, kind: Breakpoint, dump: Option<Dump>) -> Result<()> {
-    let pid: Pid = pid.parse().context("Bad PID")?;
+pub fn watch_raw(pid: Pid, address: &str, seconds: u64, delay: u64, kind: Breakpoint, dump: Option<Dump>) -> Result<()> {
     let handle = pid.try_into_process_handle()?;
     let base_addr = find_process::get_base_address(pid) as usize;
     let image_size = find_process::get_image_size(handle, base_addr)?;
@@ -691,12 +685,10 @@ fn print_callers(hit: &Hit) {
 }
 
 /// `debug disasm <pid> <address> [count]`: print instructions from a running process's memory
-pub fn disasm(pid: &str, address: &str, count: &str) -> Result<()> {
-    let pid: Pid = pid.parse().context("Bad PID")?;
+pub fn disasm(pid: Pid, address: &str, count: usize) -> Result<()> {
     let handle = pid.try_into_process_handle()?;
     let base_addr = find_process::get_base_address(pid) as usize;
     let address = parse_address(address, base_addr)?;
-    let count: usize = count.parse().context("Bad instruction count")?;
     let mut bytes = vec![0_u8; count * MAX_INSTRUCTION_LENGTH];
     handle.copy_address(address, &mut bytes)?;
     let bitness = if is_wow64(handle) { 32 } else { 64 };
@@ -738,7 +730,7 @@ pub fn watch(names: &[&str], version: Option<String>, seconds: u64, delay: u64, 
         let address = DataMember::<u8>::new_offset(handle, with_base)
             .set_arch(details.arch)
             .get_offset()
-            .with_context(|| format!("{:?} {} doesn't resolve", address_type, format_offsets(offsets)))?;
+            .with_context(|| format!("{:?} {} doesn't resolve", address_type, describe_chain(offsets)))?;
         watched.push((address_type, address));
     }
     if watched.is_empty() || watched.len() > MAX_WATCHES {

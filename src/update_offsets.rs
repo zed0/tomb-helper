@@ -15,13 +15,14 @@ use anyhow::{anyhow, Context, Result};
 use crate::game_memory::{resolve, Handle};
 use crate::chains;
 use crate::check;
+use crate::collision;
 use crate::components::{self, Components};
-use crate::derive::{self, format_offsets, References};
+use crate::derive::{self, References};
 use crate::discover;
 use crate::find_process;
 use crate::layout::{self, Layout};
 use crate::object_list::ObjectList;
-use crate::offsets_file::{known_process_details, Hex, VersionEntry};
+use crate::offsets_file::{describe_chain, known_process_details, Hex, VersionEntry};
 use crate::pe_image::PeImage;
 use crate::position::Position;
 use crate::process_details::{AddressType, ProcessDetails, VersionIdentifier};
@@ -29,9 +30,10 @@ use process_memory::{Architecture, CopyAddress, Pid, ProcessHandle, TryIntoProce
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
 
-// Probes starting this close to Lara are hers
-const PROBE_DISTANCE: f32 = 300.0;
-const MAX_PROBES: usize = 64;
+// How long a probe's ray is (anything else isn't one)
+const PROBE_LENGTH: std::ops::Range<f32> = 1.0..5000.0;
+// Coordinates beyond this are garbage
+const MAX_COORDINATE: f32 = 1e7;
 // Longest version string to read
 const VERSION_LENGTH: usize = 64;
 
@@ -262,10 +264,10 @@ pub fn run(
     println!();
     println!("{} {}:", entry.game, entry.version);
     for (address_type, (chain, how)) in &found {
-        println!("  {:<17} {:<44} {}", format!("{:?}", address_type), format_offsets(chain), how);
+        println!("  {:<17} {:<44} {}", format!("{:?}", address_type), describe_chain(chain), how);
     }
     for (address_type, chain) in &unverified {
-        println!("  {:<17} {:<44} UNVERIFIED, not used", format!("{:?}", address_type), format_offsets(chain));
+        println!("  {:<17} {:<44} UNVERIFIED, not used", format!("{:?}", address_type), describe_chain(chain));
     }
     if !layout_notes.is_empty() {
         println!("  Layout:");
@@ -503,32 +505,21 @@ fn find_lara(handle: Handle, base_address: usize, array_rva: usize) -> Option<(u
 fn find_probes(image: &PeImage, lara: &Position) -> Option<usize> {
     let layout = &layout::current().probes;
     let data = &image.data;
-    let float = |offset: usize| data.get(offset..offset + 4).map(|b| f32::from_le_bytes(b.try_into().unwrap()));
-    let point = |offset: usize| Some([float(offset)?, float(offset + 4)?, float(offset + 8)?]);
-    let length = |a: [f32; 3], b: [f32; 3]| ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt();
-    let lara = [lara.x, lara.y, lara.z];
+    let sane = |p: &Position| [p.x, p.y, p.z].iter().all(|v| v.is_finite() && v.abs() < MAX_COORDINATE);
     let probes_at = |rva: usize| -> bool {
-        let count = match data.get(rva..rva + 4) {
-            Some(b) => u32::from_le_bytes(b.try_into().unwrap()) as usize,
-            None => return false,
-        };
-        if count == 0 || count > MAX_PROBES {
+        let count = data.get(rva..rva + 4).map_or(0, |count| u32::from_le_bytes(count.try_into().unwrap()) as usize);
+        if count == 0 || count > collision::MAX_PROBES {
             return false;
         }
-        let mut hers = false;
-        for i in 0..count {
-            let record = rva + layout.records + i * layout.size;
-            let (start, end) = match (point(record + layout.start), point(record + layout.end)) {
-                (Some(s), Some(e)) => (s, e),
-                _ => return false,
-            };
-            let ray = length(start, end);
-            if !start.iter().chain(end.iter()).all(|v| v.is_finite() && v.abs() < 1e7) || !(1.0..5000.0).contains(&ray) {
+        let (mut found, mut hers) = (0, false);
+        for probe in collision::parse_probes(&data[rva..data.len().min(rva + layout.records + count * layout.size)]) {
+            if !sane(&probe.start) || !sane(&probe.end) || !PROBE_LENGTH.contains(&probe.start.distance(&probe.end)) {
                 return false;
             }
-            hers |= length(start, lara) < PROBE_DISTANCE;
+            found += 1;
+            hers |= probe.start.distance(lara) < collision::PROBE_OWNER_DISTANCE;
         }
-        hers
+        found == count && hers
     };
     let candidates: Vec<usize> = (0..data.len().saturating_sub(layout.records)).step_by(8).filter(|&rva| probes_at(rva)).collect();
     let references = References::new(image);
@@ -550,5 +541,37 @@ fn read_version(handle: ProcessHandle, base_address: usize, template: &ProcessDe
         Some((address, string))
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Probes (count, then records) at `rva`, with each ray's start and end
+    fn put_probes(data: &mut [u8], rva: usize, rays: &[([f32; 3], [f32; 3])]) {
+        let layout = Layout::default().probes;
+        data[rva..rva + 4].copy_from_slice(&(rays.len() as u32).to_le_bytes());
+        for (i, (start, end)) in rays.iter().enumerate() {
+            let record = rva + layout.records + i * layout.size;
+            for (offset, point) in [(layout.start, start), (layout.end, end)] {
+                for (axis, value) in point.iter().enumerate() {
+                    let at = record + offset + axis * 4;
+                    data[at..at + 4].copy_from_slice(&value.to_le_bytes());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn finds_the_probes_starting_at_lara() {
+        let mut data = vec![0u8; 0x4000];
+        let lara = Position { x: 100.0, y: 200.0, z: 0.0 };
+        put_probes(&mut data, 0x1000, &[([100.0, 200.0, 10.0], [100.0, 200.0, -50.0]), ([5000.0, 0.0, 0.0], [5000.0, 0.0, -40.0])]);
+        // Someone else's, and one whose ray is too long to be a probe
+        put_probes(&mut data, 0x2000, &[([5000.0, 0.0, 0.0], [5000.0, 0.0, -40.0])]);
+        put_probes(&mut data, 0x3000, &[([100.0, 200.0, 10.0], [100.0, 200.0, -9000.0])]);
+        let image = PeImage { data, is_64: true, image_base: 0x1_4000_0000 };
+        assert_eq!(find_probes(&image, &lara), Some(0x1000));
     }
 }

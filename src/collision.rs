@@ -434,9 +434,9 @@ fn quaternion_at(bytes: &[u8], offset: usize) -> UnitQuaternion<f32> {
 // The ground probes the game casts for characters: for Lara one per foot (knee height to below the foot) and one for
 // her body (above her head to below her feet). A static count followed by records, for every character near enough,
 // so Lara's are picked out by `probes_near`.
-const MAX_PROBES: usize = 64;
+pub const MAX_PROBES: usize = 64;
 // Probes starting this close to a character are theirs
-const PROBE_OWNER_DISTANCE: f32 = 300.0;
+pub const PROBE_OWNER_DISTANCE: f32 = 300.0;
 // Hits further than this from their probe are left over from an earlier cast
 const PROBE_HIT_TOLERANCE: f32 = 10.0;
 
@@ -444,23 +444,21 @@ pub fn read_probes(handle: Handle, probes_address: usize) -> io::Result<Vec<Prob
     let layout = &layout::current().probes;
     let mut bytes = vec![0u8; layout.records + MAX_PROBES * layout.size];
     handle.copy_address(probes_address, &mut bytes)?;
-    let count = (u32_at(&bytes, 0) as usize).min(MAX_PROBES);
-    Ok(bytes[layout.records..]
-        .chunks_exact(layout.size)
-        .take(count)
-        .map(|record| {
-            let start = vector_at(record, layout.start);
-            let end = vector_at(record, layout.end);
-            let hit = vector_at(record, layout.hit);
-            let has_hit = distance_to_segment(&hit, &start, &end) <= PROBE_HIT_TOLERANCE;
-            Probe {
-                start: Position::from(start),
-                end: Position::from(end),
-                hit: Position::from(hit),
-                has_hit,
-            }
-        })
-        .collect())
+    Ok(parse_probes(&bytes).collect())
+}
+
+/// The probes in `bytes`, which start with their count (at most `MAX_PROBES`, and those there are bytes for)
+pub fn parse_probes(bytes: &[u8]) -> impl Iterator<Item = Probe> + '_ {
+    let all = layout::current();
+    let count = bytes.get(..4).map_or(0, |count| (u32_at(count, 0) as usize).min(MAX_PROBES));
+    bytes.get(all.probes.records..).unwrap_or_default().chunks_exact(all.probes.size).take(count).map(move |record| {
+        let layout = &all.probes;
+        let start = vector_at(record, layout.start);
+        let end = vector_at(record, layout.end);
+        let hit = vector_at(record, layout.hit);
+        let has_hit = distance_to_segment(&hit, &start, &end) <= PROBE_HIT_TOLERANCE;
+        Probe { start: Position::from(start), end: Position::from(end), hit: Position::from(hit), has_hit }
+    })
 }
 
 // The probes starting near the position (a character's feet)

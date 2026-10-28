@@ -21,7 +21,7 @@ use process_memory::CopyAddress;
 use std::collections::{BTreeMap, BTreeSet};
 
 const CAMERA_COMPONENT: &str = ".?AVCameraComponent@@";
-const CONTROLLER: &str = crate::targets::EXPLORATION_CAMERA;
+const CONTROLLER: &str = crate::rtti::EXPLORATION_CAMERA;
 const SPHERE: &str = ".?AVGeomSphere@cdc@@";
 // How far into GameRender, the camera component, a stack entry and the controller to look
 const RENDER_SPAN: usize = 0x1000;

@@ -10,7 +10,7 @@ use crate::game::Game;
 use crate::game_memory::{pointer_from, pointer_size, resolve, u32_at};
 use crate::process_details::AddressType;
 use crate::readable_from_path::ReadableFromPath;
-use crate::targets::describe_chain;
+use crate::offsets_file::describe_chain;
 use process_memory::CopyAddress;
 use std::collections::{BTreeMap, HashSet};
 

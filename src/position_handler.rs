@@ -20,7 +20,7 @@ use crate::game_memory::Handle as GameHandle;
 use crate::handler::{Handler, HelperState};
 use crate::position::Position;
 use crate::process_details::{AddressOffsets, AddressType};
-use crate::targets::{self, Source, Verdict};
+use crate::targets::{self, Source};
 use crate::tracked_memory::TrackedMemory;
 use crate::tracked_position::TrackedPosition;
 use process_memory::{Architecture, Pid, ProcessHandle};
@@ -118,11 +118,7 @@ impl PositionHandler {
     // Whether the position's chains lead to a position, rather than somewhere else in a build they're wrong for
     fn check_position(&mut self) -> Result<(), String> {
         for address_type in self.position_types {
-            let chain = self.game.offsets.get(&address_type).cloned().unwrap_or_default();
-            match targets::verify(&self.game, &mut self.components, address_type, &chain) {
-                Verdict::Plausible(_) => {}
-                Verdict::Implausible(why) | Verdict::Unreadable(why) => return Err(format!("{:?}: {}", address_type, why)),
-            }
+            targets::check(&self.game, &mut self.components, address_type).map_err(|why| format!("{:?}: {}", address_type, why))?;
         }
         Ok(())
     }

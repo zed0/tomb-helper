@@ -6,11 +6,11 @@
 
 use anyhow::{bail, Context, Result};
 use crate::code_trace::{Access, CallResolver, Tracer};
-use crate::derive::{format_offsets, print_entry, References};
+use crate::derive::{print_entry, References};
 use crate::find_process;
 use crate::game_memory::{read_bytes, read_pointer_or_null, Handle};
 use crate::pe_image::PeImage;
-use crate::offsets_file::known_process_details;
+use crate::offsets_file::{describe_chain, known_process_details};
 use crate::process_details::{AddressType, ProcessDetails};
 use process_memory::{CopyAddress, Pid, ProcessHandle};
 use rayon::prelude::*;
@@ -249,7 +249,7 @@ pub fn find_code_chains(version: Option<String>) -> Result<()> {
     let mut lines = vec![];
     println!();
     for ((t, offsets), (_, target)) in entries.iter().zip(&targets) {
-        println!("{:?}: current {} -> {}", t, format_offsets(offsets), target.map_or("unresolved".to_string(), |a| format!("{:#X}", a)));
+        println!("{:?}: current {} -> {}", t, describe_chain(offsets), target.map_or("unresolved".to_string(), |a| format!("{:#X}", a)));
         let found: Vec<Candidate> = candidates.remove(t).unwrap_or_default();
         if found.is_empty() {
             println!("    no code chains found");
@@ -258,7 +258,7 @@ pub fn find_code_chains(version: Option<String>) -> Result<()> {
             let chain: Vec<usize> = c.chain.iter().map(|o| *o as usize).collect();
             println!(
                 "    {:<50} {:>4} sites  {}{}",
-                format_offsets(&chain),
+                describe_chain(&chain),
                 c.sites,
                 c.how,
                 if c.exact { "" } else { " (inside a wider access)" }
@@ -316,7 +316,7 @@ pub fn print_values(pid: Pid, handle: ProcessHandle, base_addr: usize, details: 
             Some(address) => describe_value(handle, address, **t, &details.version.version),
             None => "chain doesn't resolve".to_string(),
         };
-        println!("  {:<17} {:<45} {}", format!("{:?}", t), format_offsets(offsets), value);
+        println!("  {:<17} {:<45} {}", format!("{:?}", t), describe_chain(offsets), value);
     }
 }
 

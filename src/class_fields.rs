@@ -23,6 +23,7 @@ use crate::fit_layout::{NOT_OFFSETS, READ_SIZES};
 use crate::layout::Layout;
 use crate::layout::field_offset;
 use crate::pe_image::PeImage;
+use crate::rtti;
 use iced_x86::Register;
 use std::collections::BTreeMap;
 
@@ -38,7 +39,7 @@ pub fn virtual_functions(image: &PeImage, class: &str) -> Vec<Vec<usize>> {
     let code: Vec<_> = image.sections().into_iter().filter(|s| s.executable).collect();
     let base = image.image_base as usize;
     let pointer = |rva: usize| image.pointer_at(rva)?.checked_sub(base);
-    crate::rtti::image_vtables(image)
+    rtti::image_vtables(image)
         .into_iter()
         .filter(|(_, name)| name == class)
         .map(|(vtable, _)| {
@@ -76,8 +77,6 @@ pub fn usage(image: &PeImage, class: &str) -> Vec<(usize, usize, Vec<Access>)> {
 
 // The class of the object `drawable.model_instance` is in
 const INSTANCE_DRAWABLE: &str = ".?AVInstanceDrawable@cdc@@";
-// Holds the collision scene (`collision_scene.in_client`)
-const MULTIBODY_CLIENT: &str = ".?AVTR9MultibodyClient@@";
 // Virtual functions whose index can differ by up to this much between games (some have virtuals the others don't)
 const SLOT_RANGE: usize = 8;
 // A virtual function only counts as the same one in the other image if this many of its accesses line up
@@ -99,11 +98,11 @@ pub const FIELD_CLASSES: &[(&str, &str)] = &[
     ("collide.shapes", components::COLLIDE),
     ("collide.shape_count", components::COLLIDE),
     ("trigger_shape.shape", components::SHAPE),
-    ("camera", crate::discover::GAME_RENDER),
-    ("collision_scene", crate::discover::COLLISION_SCENE_CLIENT),
-    ("collision_scene.in_client", MULTIBODY_CLIENT),
+    ("camera", rtti::GAME_RENDER),
+    ("collision_scene", rtti::COLLISION_SCENE_CLIENT),
+    ("collision_scene.in_client", rtti::MULTIBODY_CLIENT),
     ("ballistic", components::BALLISTIC),
-    ("player", crate::targets::PLAYER),
+    ("player", rtti::PLAYER),
 ];
 
 /// The class a layout field (`group.field`) is a field of, if it's known
@@ -348,19 +347,16 @@ mod tests {
         assert_eq!(class_of("drawable.model_instance"), Some(INSTANCE_DRAWABLE));
         // Drawable's other fields are in objects with other classes, or none
         assert_eq!(class_of("drawable.mesh_min"), None);
-        assert_eq!(class_of("collision_scene.in_client"), Some(MULTIBODY_CLIENT));
+        assert_eq!(class_of("collision_scene.in_client"), Some(rtti::MULTIBODY_CLIENT));
         assert_eq!(class_of("instance.position"), None);
     }
 }
 
 /// `debug class-fields <image> <class> [--field <offset>]`
-pub fn print_class_fields(image: &str, class: &str, field: Option<&str>) -> Result<()> {
+pub fn print_class_fields(image: &str, class: &str, field: Option<usize>) -> Result<()> {
     let image = crate::derive::load(image)?;
     let class = if class.starts_with(".?AV") { class.to_string() } else { format!(".?AV{}@@", class) };
-    let field = match field {
-        Some(f) => Some(i64::from_str_radix(f.trim_start_matches("0x"), 16)?),
-        None => None,
-    };
+    let field = field.map(|f| f as i64);
     let usage = usage(&image, &class);
     if usage.is_empty() {
         bail!("No vtable for {} in the image", class);

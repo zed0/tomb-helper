@@ -5,13 +5,14 @@
 //! Every check runs for every game, skipping (with the reason) what the layout or offsets say the game doesn't have.
 
 use anyhow::{bail, Result};
-use crate::game::Game;
+use crate::game::{Game, NEAR_LARA};
 use crate::game_memory::{Handle, read_floats, read_pointer};
 use crate::chains;
 use crate::collision::{self, AttachedProxy};
 use crate::collision_mesh::CollisionMeshes;
 use crate::components::{self, Components};
 use crate::object_list::{self, Instance, ObjectList};
+use crate::offsets_file::describe_chain;
 use crate::position::Position;
 use crate::process_details::{AddressType, ProcessDetails};
 use crate::trigger::{self, Shape};
@@ -21,8 +22,6 @@ use crate::ui_ipc_data::SurfaceKind;
 use nalgebra::{Matrix3, Vector3};
 use std::collections::BTreeSet;
 
-// Things of Lara's should be this close to her
-const NEAR_LARA: f32 = 300.0;
 // What's plausible, (more than, less than): her movement and combat proxies' radii, her hit capsules', the aim sweep's
 // length, and the camera's vertical fov (radians) and aspect ratio
 const PROXY_RADIUS: (f32, f32) = (5.0, 100.0);
@@ -134,7 +133,7 @@ fn run_report(handle: Handle, base_address: usize, details: ProcessDetails, repo
     let nearby: Vec<Instance> = match (&lara_position, &instances) {
         (Some(lara), Some(instances)) => {
             let mut nearby = instances.clone();
-            nearby.sort_by(|a, b| a.position.distance(lara).total_cmp(&b.position.distance(lara)));
+            object_list::sort_by_distance(&mut nearby, lara);
             nearby.truncate(NEARBY);
             nearby
         }
@@ -199,7 +198,7 @@ fn check_written(game: &Game, report: &mut Report, components: &mut Components) 
         let in_file = game.offsets.get(&address_type);
         let describe = |(source, chain, _, _): &(targets::Source, Vec<usize>, Option<usize>, Verdict)| {
             let also = if *source == targets::Source::Structure && in_file == Some(chain) { " (the offsets file's too)" } else { "" };
-            format!("through {} {}{}", source.describe(), targets::describe_chain(chain), also)
+            format!("through {} {}{}", source.describe(), describe_chain(chain), also)
         };
         let plausible: Vec<_> = found.iter().filter(|f| matches!(f.3, Verdict::Plausible(_))).collect();
         let implausible: Vec<String> = found
@@ -233,7 +232,7 @@ fn check_written(game: &Game, report: &mut Report, components: &mut Components) 
                 };
                 let ways: Vec<&str> = plausible.iter().map(|f| f.0.describe()).collect();
                 let agree = if ways.len() > 1 {
-                    format!("through {}, which agree on {}", ways.join(" and "), targets::describe_chain(&first.1))
+                    format!("through {}, which agree on {}", ways.join(" and "), describe_chain(&first.1))
                 } else {
                     describe(first)
                 };
@@ -567,7 +566,7 @@ fn check_collision_meshes(game: &Game, report: &mut Report, lara: &Position) {
     let mut classes = crate::rtti::Classes::new(game.base_address);
     // TR2013's scene has no RTTI, so it can only be checked by what's in it
     let class = classes.name(game.handle, scene);
-    if class.is_some() && class.as_deref() != Some(crate::discover::COLLISION_SCENE_CLIENT) {
+    if class.is_some() && class.as_deref() != Some(crate::rtti::COLLISION_SCENE_CLIENT) {
         return report.fail("collision meshes", format!("CollisionScene is a {:?}, not a CollisionSceneClient", class));
     }
     let mut meshes = CollisionMeshes::default();

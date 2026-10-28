@@ -11,20 +11,14 @@
 //! `CameraView`'s chain starts at. Each is checked by the RTTI class of the object it's in, where that's known.
 
 use crate::components::{self, Components, Slot};
-use crate::game::Game;
+use crate::game::{Game, NEAR_LARA};
 use crate::game_memory::{pointer_size, read_floats, read_u32, read_u8, resolve};
 use crate::layout;
+use crate::offsets_file::describe_chain;
+use crate::rtti::{EXPLORATION_CAMERA, PLAYER};
 use crate::process_details::{AddressOffsets, AddressType};
 use nalgebra::Vector3;
 
-// The player object Lara's position chain goes through
-pub const PLAYER: &str = ".?AVPlayer@@";
-// The camera controller whose collision `camera.collision` leads to; the others (aiming, stealth, ...) are laid out
-// differently, so it's only written while this one is in use
-pub const EXPLORATION_CAMERA: &str = ".?AVExplorationCameraController@@";
-
-// Things of Lara's should be this close to her
-const NEAR_LARA: f32 = 300.0;
 // Her physics body can lag behind her proxy (it stays put while its collision is off), but not by this much
 const NEAR_BODY: f32 = 5000.0;
 // Faster than this (per second) is garbage, as is a fall start this far above or below her
@@ -83,6 +77,22 @@ pub enum Verdict {
     Unreadable(String),
 }
 
+impl Verdict {
+    /// What was found if it's plausible, else why not
+    pub fn into_result(self) -> Result<String, String> {
+        match self {
+            Verdict::Plausible(what) => Ok(what),
+            Verdict::Implausible(why) | Verdict::Unreadable(why) => Err(why),
+        }
+    }
+}
+
+/// Whether the value the version's offsets file chain leads to looks right (`verify`), or why not
+pub fn check(game: &Game, components: &mut Components, address_type: AddressType) -> Result<(), String> {
+    let chain = game.offsets.get(&address_type).cloned().unwrap_or_default();
+    verify(game, components, address_type, &chain).into_result().map(|_| ())
+}
+
 /// Where the value can be: through the structures first, then the offsets file's chain (if they're different)
 pub fn candidates(game: &Game, components: &mut Components, address_type: AddressType) -> Vec<(Vec<usize>, Source)> {
     let mut found = vec![];
@@ -101,11 +111,9 @@ pub fn candidates(game: &Game, components: &mut Components, address_type: Addres
 pub fn find(game: &Game, components: &mut Components, address_type: AddressType) -> Result<(Vec<usize>, Source), String> {
     let mut reasons = vec![];
     for (chain, source) in candidates(game, components, address_type) {
-        match verify(game, components, address_type, &chain) {
-            Verdict::Plausible(_) => return Ok((chain, source)),
-            Verdict::Implausible(why) | Verdict::Unreadable(why) => {
-                reasons.push(format!("through {} {}: {}", source.describe(), describe_chain(&chain), why))
-            }
+        match verify(game, components, address_type, &chain).into_result() {
+            Ok(_) => return Ok((chain, source)),
+            Err(why) => reasons.push(format!("through {} {}: {}", source.describe(), describe_chain(&chain), why)),
         }
     }
     if reasons.is_empty() {
@@ -362,11 +370,6 @@ fn owner_check(game: &Game, components: &mut Components, address_type: AddressTy
 fn a(noun: &str) -> String {
     let vowel = noun.chars().next().map_or(false, |c| "AEIOUaeiou".contains(c));
     format!("{} {}", if vowel { "an" } else { "a" }, noun)
-}
-
-/// A chain as the offsets file has it, e.g. [0x14B5BD8, 0x0, 0x33E8, 0x10]
-pub fn describe_chain(chain: &[usize]) -> String {
-    format!("[{}]", chain.iter().map(|o| format!("{:#X}", o)).collect::<Vec<_>>().join(", "))
 }
 
 // ".?AVBallisticComponent@cdc@@" as "cdc::BallisticComponent"

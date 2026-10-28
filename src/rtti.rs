@@ -11,6 +11,17 @@ use std::collections::HashMap;
 
 const MAX_CLASS_NAME: usize = 128;
 
+// Classes more than one tool finds things by (components' are in `components`, script nodes' in `trigger_scripts`)
+pub const GAME_RENDER: &str = ".?AVGameRender@@";
+// Holds the cdc::CollisionSceneClient (`collision_scene.in_client`)
+pub const MULTIBODY_CLIENT: &str = ".?AVTR9MultibodyClient@@";
+pub const COLLISION_SCENE_CLIENT: &str = ".?AVCollisionSceneClient@cdc@@";
+// The player object Lara's position chain goes through
+pub const PLAYER: &str = ".?AVPlayer@@";
+// The camera controller whose collision `camera.collision` leads to; the others (aiming, stealth, ...) are laid out
+// differently, so it's only written while this one is in use
+pub const EXPLORATION_CAMERA: &str = ".?AVExplorationCameraController@@";
+
 // How locators are laid out at the game's pointer size
 struct Format {
     pointer_size: usize,

@@ -14,6 +14,8 @@ use std::io;
 
 /// Lara is the nearest instance with a PlayerComponent, out of this many
 pub const LARA_CANDIDATES: usize = 8;
+/// Things of Lara's should be this close to her
+pub const NEAR_LARA: f32 = 300.0;
 
 pub struct Game {
     pub handle: Handle,

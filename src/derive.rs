@@ -20,7 +20,7 @@
 use anyhow::{anyhow, bail, Context, Result};
 use crate::code_trace::{Access, Tracer};
 use crate::find_process;
-use crate::offsets_file::{to_json, Hex, VersionEntry};
+use crate::offsets_file::{describe_chain, to_json, Hex, VersionEntry};
 use crate::pe_image::PeImage;
 use crate::normalised;
 use crate::offsets_file::known_process_details;
@@ -84,9 +84,8 @@ pub fn load(source: &str) -> Result<PeImage> {
     PeImage::load(Path::new(source)).with_context(|| format!("Could not load {}", source))
 }
 
-pub fn trace(image: &str, address: &str) -> Result<()> {
+pub fn trace(image: &str, address: usize) -> Result<()> {
     let image = load(image)?;
-    let address = usize::from_str_radix(address.trim_start_matches("0x"), 16)?;
     let references = References::new(&image);
     let tracer = Tracer::new(&image);
     for &(target, position) in references.between(address, address) {
@@ -97,7 +96,7 @@ pub fn trace(image: &str, address: &str) -> Result<()> {
                     .iter()
                     .map(|a| {
                         let chain: Vec<usize> = a.chain.iter().map(|o| *o as usize).collect();
-                        format!("{} {:?}", format_offsets(&chain), a.mnemonic)
+                        format!("{} {:?}", describe_chain(&chain), a.mnemonic)
                     })
                     .collect();
                 println!("{:#X}: {}", start, chains.join(" | "));
@@ -673,21 +672,6 @@ fn map_chain(
     (mapped.into_iter().map(|o| o as usize).collect(), sources)
 }
 
-fn format_base(address: usize) -> String {
-    let hex = format!("{:08X}", address);
-    let groups: Vec<&str> = (0..hex.len())
-        .step_by(2)
-        .map(|i| &hex[i..i + 2])
-        .collect();
-    format!("0x{}", groups.join("_"))
-}
-
-pub fn format_offsets(chain: &[usize]) -> String {
-    let mut parts = vec![format_base(chain[0])];
-    parts.extend(chain[1..].iter().map(|o| format!("{:#X}", o)));
-    format!("vec![{}]", parts.join(", "))
-}
-
 fn describe(sources: &[LevelSource]) -> String {
     sources
         .iter()
@@ -857,12 +841,6 @@ mod tests {
             loads_pointer,
             instruction: 0,
         }
-    }
-
-    #[test]
-    fn formats_offsets_like_the_table() {
-        assert_eq!(format_offsets(&[0x0362_1B00, 0xD8, 0x0B70]), "vec![0x03_62_1B_00, 0xD8, 0xB70]");
-        assert_eq!(format_offsets(&[0x00A7_88F0]), "vec![0x00_A7_88_F0]");
     }
 
     #[test]

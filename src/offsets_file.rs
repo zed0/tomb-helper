@@ -48,18 +48,25 @@ impl<'de> Deserialize<'de> for Hex {
             }
 
             fn visit_str<E: de::Error>(self, value: &str) -> Result<Hex, E> {
-                let digits = value
-                    .strip_prefix("0x")
-                    .or_else(|| value.strip_prefix("0X"))
-                    .ok_or_else(|| E::custom(format!("\"{}\" should start with 0x", value)))?
-                    .replace('_', "");
-                usize::from_str_radix(&digits, 16)
-                    .map(Hex)
-                    .map_err(|_| E::custom(format!("\"{}\" isn't a hex number", value)))
+                if !value.starts_with("0x") && !value.starts_with("0X") {
+                    return Err(E::custom(format!("\"{}\" should start with 0x", value)));
+                }
+                parse_hex(value).map(Hex).map_err(E::custom)
             }
         }
         deserializer.deserialize_any(HexVisitor)
     }
+}
+
+/// A hex number, with or without 0x, underscores allowed ("0x0141_E298"); also clap's parser for hex arguments
+pub fn parse_hex(text: &str) -> Result<usize> {
+    let digits = text.strip_prefix("0x").or_else(|| text.strip_prefix("0X")).unwrap_or(text).replace('_', "");
+    usize::from_str_radix(&digits, 16).with_context(|| format!("\"{}\" isn't a hex number", text))
+}
+
+/// A chain as the offsets file has it, e.g. [0x14B5BD8, 0x0, 0x33E8, 0x10]
+pub fn describe_chain(chain: &[usize]) -> String {
+    format!("[{}]", chain.iter().map(|o| format!("{:#X}", o)).collect::<Vec<_>>().join(", "))
 }
 
 fn to_hex(values: &[usize]) -> Vec<Hex> {
@@ -271,6 +278,14 @@ mod tests {
         }]}"#;
         let versions = parse(json).unwrap();
         assert_eq!(versions[0].address_offsets[&AddressType::XPosition], vec![0x0141_E298, 0x0, 0x10]);
+    }
+
+    #[test]
+    fn hex_is_parsed_with_or_without_its_prefix() {
+        assert_eq!(parse_hex("0x0141_E298").unwrap(), 0x0141_E298);
+        assert_eq!(parse_hex("1A").unwrap(), 0x1A);
+        assert!(parse_hex("0xG").is_err());
+        assert_eq!(describe_chain(&[0x14B5BD8, 0x0, 0x10]), "[0x14B5BD8, 0x0, 0x10]");
     }
 
     #[test]

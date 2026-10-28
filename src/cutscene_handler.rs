@@ -9,7 +9,7 @@ use crate::game_memory::Handle as GameHandle;
 use crate::handler::Handler;
 use crate::process_details::{AddressOffsets, AddressType};
 use crate::cutscene_timing_info::{TimingInfo, TimingEntry};
-use crate::targets::{self, Verdict};
+use crate::targets;
 use crate::tracked_memory::TrackedMemory;
 use crate::readable_from_path::ReadableFromPath;
 use process_memory::{Architecture, Pid, ProcessHandle};
@@ -141,12 +141,8 @@ impl CutsceneHandler {
         }
 
         // Not through a chain that's wrong for this build
-        let chain = self.game.offsets.get(&AddressType::CutsceneStatus).cloned().unwrap_or_default();
-        match targets::verify(&self.game, &mut self.components, AddressType::CutsceneStatus, &chain) {
-            Verdict::Plausible(_) => {}
-            Verdict::Implausible(why) | Verdict::Unreadable(why) => {
-                return Err(CutsceneError::new(&format!("The cutscene's state looks wrong ({}), not skipping.", why)).into())
-            }
+        if let Err(why) = targets::check(&self.game, &mut self.components, AddressType::CutsceneStatus) {
+            return Err(CutsceneError::new(&format!("The cutscene's state looks wrong ({}), not skipping.", why)).into());
         }
 
         self.start_fadeout(cutscene_info)?;

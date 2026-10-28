@@ -107,6 +107,11 @@ impl ObjectList {
     }
 }
 
+/// Sorts the instances nearest `to` first
+pub fn sort_by_distance(instances: &mut [Instance], to: &Position) {
+    instances.sort_by(|a, b| a.position.distance(to).total_cmp(&b.position.distance(to)));
+}
+
 // The game keeps the instance's own position and rotation up to date, but not always its TransformComponent
 // (Lara's stays where she loaded in), so that's only used for the scale.
 pub fn read_transform(handle: Handle, instance_address: usize) -> io::Result<[f32; 16]> {

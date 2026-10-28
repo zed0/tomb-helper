@@ -11,19 +11,15 @@ use anyhow::{Context, Result};
 use crate::game_memory::{pointer_at, pointer_size, Handle};
 use crate::chains;
 use crate::components;
-use crate::rtti::Classes;
-use crate::derive::{format_offsets, References};
+use crate::rtti::{Classes, COLLISION_SCENE_CLIENT, GAME_RENDER, MULTIBODY_CLIENT};
+use crate::derive::References;
 use crate::layout;
-use crate::offsets_file::{to_json, Hex, OffsetsFile, OffsetsSource, VersionEntry};
+use crate::offsets_file::{describe_chain, to_json, Hex, OffsetsFile, OffsetsSource, VersionEntry};
 use crate::pe_image::PeImage;
 use crate::process_details::AddressType;
 use process_memory::CopyAddress;
 use std::collections::{BTreeMap, HashMap};
 
-pub const GAME_RENDER: &str = ".?AVGameRender@@";
-// Holds the cdc::CollisionSceneClient
-const MULTIBODY_CLIENT: &str = ".?AVTR9MultibodyClient@@";
-pub const COLLISION_SCENE_CLIENT: &str = ".?AVCollisionSceneClient@cdc@@";
 // Lara's proxy, where it's a static (TR2013), belongs to the instance with this in its name
 const LARA_NAME: &str = "lara";
 // How far into a proxy to look for its instance, where it isn't where the layout says (it moved between TR2013 builds)
@@ -49,7 +45,7 @@ pub fn discover(version: Option<String>, save: bool) -> Result<()> {
             Some(_) => "DIFFERS from the offsets file",
             None => "new",
         };
-        println!("  {:<15} {}  ({})", format!("{:?}", address_type), format_offsets(chain), note);
+        println!("  {:<15} {}  ({})", format!("{:?}", address_type), describe_chain(chain), note);
     }
     if save {
         let mut entry = VersionEntry::from_details(&details);
