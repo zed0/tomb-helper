@@ -96,7 +96,6 @@ impl Report {
     }
 }
 
-
 pub fn check(version: Option<String>) -> Result<()> {
     let connection = chains::connect(version)?;
     run(connection.handle(), connection.base_address, connection.details)
@@ -104,16 +103,10 @@ pub fn check(version: Option<String>) -> Result<()> {
 
 /// Checks the offsets and layout in `details` against the game
 pub fn run(handle: Handle, base_address: usize, details: ProcessDetails) -> Result<()> {
-    let (_, result) = run_lines(handle, base_address, details);
-    result
+    run_with(handle, base_address, details, Options::default()).1
 }
 
-/// `run`, and what it printed
-pub fn run_lines(handle: Handle, base_address: usize, details: ProcessDetails) -> (Vec<String>, Result<()>) {
-    run_with(handle, base_address, details, Options::default())
-}
-
-/// `run_lines`, choosing what it does
+/// `run`, choosing what it does, with what it printed
 pub fn run_with(handle: Handle, base_address: usize, details: ProcessDetails, options: Options) -> (Vec<String>, Result<()>) {
     let mut report = Report { options, ..Default::default() };
     let result = run_report(handle, base_address, details, &mut report);

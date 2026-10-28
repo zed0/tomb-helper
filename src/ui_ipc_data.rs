@@ -371,6 +371,50 @@ pub struct UiData {
     pub triangles: [Triangle; MAX_TRIANGLES],
 }
 
+// The first `count` items, or all of them if the count is more (it can be read mid write)
+fn used<T>(items: &[T], count: u32) -> &[T] {
+    &items[..(count as usize).min(items.len())]
+}
+
+// The lists in use
+impl UiData {
+    pub fn objects(&self) -> &[ObjectBox] {
+        used(&self.objects, self.object_count)
+    }
+
+    pub fn capsules(&self) -> &[Capsule] {
+        used(&self.capsules, self.capsule_count)
+    }
+
+    pub fn probes(&self) -> &[Probe] {
+        used(&self.probes, self.probe_count)
+    }
+
+    pub fn proxies(&self) -> &[Capsule] {
+        used(&self.proxies, self.proxy_count)
+    }
+
+    pub fn attached(&self) -> &[Capsule] {
+        used(&self.attached, self.attached_count)
+    }
+
+    pub fn trigger_labels(&self) -> &[TriggerLabel] {
+        used(&self.triggers, self.trigger_count)
+    }
+
+    pub fn trigger_lines(&self) -> &[Line] {
+        used(&self.trigger_lines, self.trigger_line_count)
+    }
+
+    pub fn trigger_faces(&self) -> &[TriggerFace] {
+        used(&self.trigger_faces, self.trigger_face_count)
+    }
+
+    pub fn triangles(&self) -> &[Triangle] {
+        used(&self.triangles, self.triangle_count)
+    }
+}
+
 impl UiData {
     // Bytes up to the end of the triangles in use, which is all that needs copying. The count is read
     // volatile and clamped as it may be mid write.
@@ -396,9 +440,9 @@ impl UiData {
     }
 }
 
-// The game's projection matrix is reused for another pass with a narrower fov part way through each
-// frame, so build the main camera's from its lens instead: near, far, near, far, fov, aspect, fov, aspect.
-// The second copies are the more stable ones.
+// The game's projection matrix is reused for another pass with a narrower fov part way through each frame, so build
+// the main camera's from its lens instead, whose near, far, fov and aspect are at `fields` (the layout's `camera.lens_*`;
+// ROTTR's lens is near, far, near, far, fov, aspect, fov, aspect, and the second copies are the more stable ones)
 pub fn projection_from_lens(lens: &[f32; 8], fields: [u32; 4]) -> [f32; 16] {
     let field = |i: usize| lens[(fields[i] as usize).min(lens.len() - 1)];
     let (near, far, fov, aspect) = (field(0), field(1), field(2), field(3));

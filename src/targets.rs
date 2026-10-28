@@ -1,5 +1,6 @@
-//! The values tomb-helper writes to the game: Lara's position (and ROTTR's look at), what flight mode holds or turns off
-//! (`Velocity`, `FallStart`, her proxy's, `CameraCollision`) and the cutscene's status. For each, where it is
+//! The values tomb-helper writes to the game: Lara's position (and ROTTR's look at), what flight mode holds (`Velocity`,
+//! `FallStart`) and the cutscene's status, and what flight mode could turn off (her proxy's collision and
+//! `CameraCollision`, which it leaves alone for now, but which are still found and checked). For each, where it is
 //! (`candidates`, `find`) and whether it looks right (`verify`), which the handlers check before writing anything, so a
 //! chain that's wrong for a build is never written through. `check` reports the same.
 //!
@@ -30,7 +31,7 @@ const MAX_COORDINATE: f32 = 1e7;
 const MAX_CUTSCENE_STATE: u8 = 16;
 const MAX_CUTSCENE_LENGTH: f32 = 36_000.0;
 
-/// Everything tomb-helper writes, in the order `check` reports them
+/// Everything tomb-helper writes, or may (see the module's doc), in the order `check` reports them
 pub const WRITTEN: [AddressType; 18] = [
     AddressType::XPosition,
     AddressType::YPosition,
@@ -249,14 +250,6 @@ pub fn verify(game: &Game, components: &mut Components, address_type: AddressTyp
         Some(address) => address,
         None => return Verdict::Unreadable("its chain doesn't resolve".to_string()),
     };
-    let floats = |count: usize| -> Option<Vec<f32>> {
-        let all: [f32; 4] = match count {
-            1 => read_floats::<1>(game.handle, address).map(|[a]| [a, 0.0, 0.0, 0.0])?,
-            3 => read_floats::<3>(game.handle, address).map(|[a, b, c]| [a, b, c, 0.0])?,
-            _ => read_floats::<4>(game.handle, address)?,
-        };
-        Some(all[..count].to_vec())
-    };
     let unreadable = || Verdict::Unreadable("it can't be read".to_string());
     let lara = game.lara_position().map(|p| p.vector());
     let verdict = |ok: bool, what: String| if ok { Verdict::Plausible(what) } else { Verdict::Implausible(what) };
@@ -276,34 +269,34 @@ pub fn verify(game: &Game, components: &mut Components, address_type: AddressTyp
         | AddressType::ZPosition
         | AddressType::XLookAt
         | AddressType::YLookAt
-        | AddressType::ZLookAt => match floats(1) {
-            Some(v) => verdict(v[0].is_finite() && v[0].abs() < MAX_COORDINATE, format!("{:.1}", v[0])),
+        | AddressType::ZLookAt => match read_floats(game.handle, address) {
+            Some([v]) => verdict(v.is_finite() && v.abs() < MAX_COORDINATE, format!("{:.1}", v)),
             None => unreadable(),
         },
-        AddressType::Velocity => match floats(3) {
+        AddressType::Velocity => match read_floats::<3>(game.handle, address) {
             Some(v) => {
-                let speed = Vector3::new(v[0], v[1], v[2]).norm();
+                let speed = Vector3::from(v).norm();
                 verdict(speed.is_finite() && speed < MAX_SPEED, format!("speed {:.1}", speed))
             }
             None => unreadable(),
         },
-        AddressType::FallStart | AddressType::FallStartCopy => match (floats(1), &lara) {
-            (Some(v), Ok(lara)) => {
-                let below = lara.z - v[0];
+        AddressType::FallStart | AddressType::FallStartCopy => match (read_floats(game.handle, address), &lara) {
+            (Some([v]), Ok(lara)) => {
+                let below = lara.z - v;
                 verdict(below.is_finite() && below.abs() < MAX_FALL, format!("{:.0} from Lara's height", below))
             }
             (None, _) => unreadable(),
             (_, Err(_)) => Verdict::Unreadable("Lara's position can't be read".to_string()),
         },
-        AddressType::ProxyCentre | AddressType::ProxyResolvedCentre => match floats(3) {
+        AddressType::ProxyCentre | AddressType::ProxyResolvedCentre => match read_floats::<3>(game.handle, address) {
             Some(v) => near(&v, NEAR_LARA),
             None => unreadable(),
         },
-        AddressType::ProxyShapeCentre | AddressType::ProxyShapePreviousCentre => match floats(3) {
+        AddressType::ProxyShapeCentre | AddressType::ProxyShapePreviousCentre => match read_floats::<3>(game.handle, address) {
             Some(v) => near(&v, NEAR_BODY),
             None => unreadable(),
         },
-        AddressType::ProxyShapeGap | AddressType::ProxyBodyGap => match floats(4) {
+        AddressType::ProxyShapeGap | AddressType::ProxyBodyGap => match read_floats::<4>(game.handle, address) {
             Some(v) => {
                 let size = Vector3::new(v[0], v[1], v[2]).norm();
                 verdict(v.iter().all(|f| f.is_finite()) && size < NEAR_BODY, format!("{:.1} to go", size))

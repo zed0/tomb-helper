@@ -105,14 +105,14 @@ impl PositionHandler {
             return held;
         }
         let mut notes = Notes::default();
-        let (game, components) = (&self.game, &mut self.components);
         let (arch, base) = (self.arch, self.game.base_address);
-        let mut find = |address_type| notes.find(game, components, address_type);
-        let mut find_all = |types: [AddressType; 2]| -> Vec<Vec<usize>> { types.iter().filter_map(|t| find(*t)).collect() };
-        let fall_start = find_all([AddressType::FallStart, AddressType::FallStartCopy]);
-        held.fall_start = fall_start.into_iter().map(|c| tracked_at(c, arch, base)).collect();
-        let mut find = |address_type| notes.find(game, components, address_type);
-        held.velocity = find(AddressType::Velocity).map(|c| tracked_at(c, arch, base));
+        let mut find = |address_type| notes.find(&self.game, &mut self.components, address_type);
+        held.fall_start = [AddressType::FallStart, AddressType::FallStartCopy]
+            .into_iter()
+            .filter_map(&mut find)
+            .map(|chain| tracked_at(chain, arch, base))
+            .collect();
+        held.velocity = find(AddressType::Velocity).map(|chain| tracked_at(chain, arch, base));
         notes.print();
         held
     }
@@ -162,16 +162,14 @@ impl Handler for PositionHandler {
 
     fn handle_tick(&mut self) -> Result<(), Box<dyn Error>> {
         if self.flight.is_some() {
-            match &mut self.camera_rotation {
-                Some((sin, cos)) => {
-                    sin.fetch_from_game(self.handle)?;
-                    cos.fetch_from_game(self.handle)?;
-                }
-                _ => {}
+            if let Some((sin, cos)) = &mut self.camera_rotation {
+                sin.fetch_from_game(self.handle)?;
+                cos.fetch_from_game(self.handle)?;
             }
         }
         Ok(())
     }
+
     fn handle_action(&mut self, action: Action) -> Result<(), Box<dyn Error>> {
         let active = self.flight.is_some();
         match action {

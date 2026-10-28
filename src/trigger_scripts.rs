@@ -60,7 +60,8 @@ pub enum SetOffBy {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TriggerScript {
     pub set_off_by: SetOffBy,
-    /// What its scripts do (`ACTIONS`' words, most important first), then the names of the instances they act on
+    /// What its scripts do (`TRIGGER_ACTIONS`, from `words.script_actions`, most important first), then the names of
+    /// the instances they act on
     pub does: Vec<String>,
     /// Which of `TRIGGER_ACTIONS` it counts as
     pub actions: u32,
@@ -85,7 +86,8 @@ struct Node {
 }
 
 #[derive(Debug, Default)]
-struct Classes {
+// Which vtables are which kinds of script node
+struct NodeClasses {
     triggers: HashMap<usize, NodeKind>,
     effects: HashMap<usize, Effect>,
 }
@@ -99,8 +101,8 @@ struct Graph {
 pub struct TriggerScripts {
     handle: Handle,
     base_address: usize,
-    classes: Option<Arc<Classes>>,
-    running: Option<JoinHandle<Result<(Arc<Classes>, Vec<Node>)>>>,
+    classes: Option<Arc<NodeClasses>>,
+    running: Option<JoinHandle<Result<(Arc<NodeClasses>, Vec<Node>)>>>,
     last_scan: Option<Instant>,
     known: HashMap<u64, TriggerScript>,
 }
@@ -221,9 +223,9 @@ fn short_name(name: &str) -> String {
 fn scan(
     handle: Handle,
     base_address: usize,
-    classes: Option<Arc<Classes>>,
+    classes: Option<Arc<NodeClasses>>,
     layout: &ScriptLayout,
-) -> Result<(Arc<Classes>, Vec<Node>)> {
+) -> Result<(Arc<NodeClasses>, Vec<Node>)> {
     let classes = match classes {
         Some(c) => c,
         None => {
@@ -339,7 +341,7 @@ fn leads_to(graph: &Graph, start: usize) -> Vec<usize> {
 }
 
 // Trigger nodes' vtables, and those of nodes that say what a script does
-fn find_classes(data: &[u8], base_address: usize, pointer_size: usize, layout: &ScriptLayout) -> Classes {
+fn find_classes(data: &[u8], base_address: usize, pointer_size: usize, layout: &ScriptLayout) -> NodeClasses {
     let vtables = crate::rtti::all_vtables(data, base_address, pointer_size);
     let words = crate::words::current();
     let trigger_kind = |name: &str| match name {
@@ -349,7 +351,7 @@ fn find_classes(data: &[u8], base_address: usize, pointer_size: usize, layout: &
         _ => None,
     };
     let by_reference = !vtables.iter().any(|(_, name)| trigger_kind(name).is_some());
-    let mut classes = Classes::default();
+    let mut classes = NodeClasses::default();
     for (vtable, name) in vtables {
         let kind = match name.as_str() {
             INSTANCE_REFERENCE_NODE | OBJECT_NODE if by_reference => Some(NodeKind::Other),

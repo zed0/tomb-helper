@@ -8,6 +8,7 @@
 //! the snapshot's regions are scanned instead when it's replayed, so they find the same things.
 
 use anyhow::{bail, Context, Result};
+use crate::check::Options;
 use crate::game_memory::{Handle, Memory};
 use crate::offsets_file::known_process_details;
 use crate::pe_image::PeImage;
@@ -202,7 +203,7 @@ pub fn take(out: Option<&str>, version: Option<String>) -> Result<()> {
     // What it reports from the snapshot is what it should go on reporting
     println!();
     println!("Checking the snapshot");
-    let (lines, _) = crate::check::run_lines(Handle::new(Memory::Snapshot(snapshot), &details), base_address, details);
+    let (lines, _) = crate::check::run_with(Handle::new(Memory::Snapshot(snapshot), &details), base_address, details, Options::default());
     let header = Header { report: lines, ..snapshot.header.clone() };
     let path = match out {
         Some(path) => PathBuf::from(path),
@@ -235,7 +236,8 @@ pub fn replay(path: &Path, accept: bool) -> Result<Vec<String>> {
     // It stays in memory (handles are `Copy`, so they borrow it for good); there are only a few
     let snapshot: &'static Snapshot = Box::leak(Box::new(snapshot));
     let details = snapshot.details()?;
-    let (lines, _) = crate::check::run_lines(Handle::new(Memory::Snapshot(snapshot), &details), snapshot.header.base_address, details);
+    let handle = Handle::new(Memory::Snapshot(snapshot), &details);
+    let (lines, _) = crate::check::run_with(handle, snapshot.header.base_address, details, Options::default());
     let report = &snapshot.header.report;
     let gone = report.iter().filter(|line| !lines.contains(line)).map(|line| format!("- {}", line));
     let new = lines.iter().filter(|line| !report.contains(line)).map(|line| format!("+ {}", line));

@@ -194,8 +194,8 @@ pub struct OverlayHandler {
     object_settings: ObjectSettings,
     proxy_last_touching: Option<time::Instant>,
     attached_last_touching: [Option<time::Instant>; MAX_ATTACHED],
-    // Lara's instance and her capsules in bone space
-    lara: Option<(usize, Vec<CapsuleShape>)>,
+    // Lara's hit capsules in bone space, if they're drawn (empty if not, or she has none)
+    lara_capsules: Vec<CapsuleShape>,
     last_object_refresh: Option<time::Instant>,
     ui_memory_manager: SharedMemoryManager,
     // The keys bound to the window's controls, for it to show
@@ -246,7 +246,7 @@ impl OverlayHandler {
             components: Components::new(connection.base_address),
             lara_address: None,
             object_settings: ObjectSettings::default(),
-            lara: None,
+            lara_capsules: vec![],
             last_object_refresh: None,
             proxy_last_touching: None,
             attached_last_touching: [None; MAX_ATTACHED],
@@ -304,10 +304,10 @@ impl OverlayHandler {
             } else {
                 trigger::Kinds::default()
             };
-            let category = trigger::categorise(&instance.name, &instance.full_name);
-            let wanted = settings.triggers_by_action || settings.trigger_categories & category.bit() != 0;
+            let trigger_category = trigger::categorise(&instance.name, &instance.full_name);
+            let wanted = settings.triggers_by_action || settings.trigger_categories & trigger_category.bit() != 0;
             if settings.triggers && kinds.trigger && wanted {
-                triggers.push((instance.clone(), category));
+                triggers.push((instance.clone(), trigger_category));
             }
             // She has her own collision drawn, and counts as interactable herself (she has an InteractableComponent)
             let is_lara = Some(instance.address) == self.lara_address;
@@ -353,7 +353,7 @@ impl OverlayHandler {
     // The objects to box, and Lara if her hit capsules are to be drawn but she has none, with their models' bounds
     fn shown_objects(&mut self, objects: Vec<ShownObject>) -> Result<Vec<ShownObject>, Box<dyn Error>> {
         let mut boxes = vec![];
-        self.lara = None;
+        self.lara_capsules = vec![];
         if let (true, Some(address)) = (self.config.lara_capsules, self.lara_address) {
             let shapes = collision::read_capsule_shapes(self.game.handle, &mut self.components, address)?;
             if shapes.is_empty() {
@@ -371,7 +371,7 @@ impl OverlayHandler {
                     category: ObjectCategory::Named,
                 });
             } else {
-                self.lara = Some((address, shapes));
+                self.lara_capsules = shapes;
             }
         }
         boxes.extend(objects);
@@ -593,6 +593,39 @@ impl OverlayHandler {
             lens_address: address(AddressType::CameraLens)?,
         })
     }
+
+    fn overlay_dll(&self) -> &'static str {
+        if matches!(self.arch, Architecture::Arch32Bit) { OVERLAY_DLL_32 } else { OVERLAY_DLL }
+    }
+
+    // Whether the overlay's DLL is in the game
+    fn overlay_loaded(&self) -> io::Result<bool> {
+        inject32::is_loaded(self.pid, self.overlay_dll())
+    }
+
+    fn inject(&mut self) -> Result<(), Box<dyn Error>> {
+        self.ui_memory_manager.get_mut().update(|val| val.should_exit = false);
+
+        println!("Injecting overlay dll");
+        let dll_path = env::current_exe()?.with_file_name(self.overlay_dll());
+        // A 32-bit game (TR2013) needs the 32-bit build of the overlay, injected its own way
+        let injected = if matches!(self.arch, Architecture::Arch32Bit) {
+            inject32::inject(self.pid, &dll_path).map_err(|e| e.to_string())
+        } else {
+            Process::by_pid(&self.pid).and_then(|process| process.inject(dll_path)).map_err(|e| e.to_string())
+        };
+        if let Err(e) = injected {
+            self.active = false;
+            return Err(format!("Could not inject the overlay: {}", e).into());
+        }
+        Ok(())
+    }
+
+    // Has the overlay eject itself (it watches `should_exit`)
+    fn eject(&mut self) {
+        println!("Ejecting injected overlay dll");
+        self.ui_memory_manager.get_mut().update(|val| val.should_exit = true);
+    }
 }
 
 // A trigger's name and what sets it off, and on a second line what it does, once that's known
@@ -736,8 +769,8 @@ impl Handler for OverlayHandler {
         let (proxies, aiming) = self.lara_proxies(settings.lara_collision && self.config.lara_proxy, settings.follow_aim);
         let objects = self.object_boxes();
         let triggers = self.trigger_geometry();
-        let capsules = match (settings.lara_collision, &self.lara) {
-            (true, Some((address, shapes))) => collision::place_capsules(self.game.handle, *address, shapes)?,
+        let capsules = match (settings.lara_collision, self.lara_address) {
+            (true, Some(lara)) => collision::place_capsules(self.game.handle, lara, &self.lara_capsules)?,
             _ => vec![],
         };
         let (aim_point, triangles, triangle_milliseconds) = self.meshes(&settings, aiming);
@@ -799,21 +832,25 @@ impl Handler for OverlayHandler {
                     }
                 } else {
                     self.waiting_to_inject = None;
-                    println!("Ejecting injected overlay dll");
-                    self.ui_memory_manager.get_mut().update(|val| val.should_exit = true);
-                    println!("done");
+                    self.eject();
                 }
-            },
-            Action::ToggleLaraCollision {} => self.ui_memory_manager.get().settings.lara_collision.toggle(),
-            Action::ToggleCoarseCollision {} => self.ui_memory_manager.get().settings.coarse_meshes.toggle(),
-            Action::ToggleDetailedCollision {} => self.ui_memory_manager.get().settings.detailed_meshes.toggle(),
-            Action::ToggleInteractables {} => self.ui_memory_manager.get().settings.interactables.toggle(),
-            Action::ToggleTriggers {} => self.ui_memory_manager.get().settings.triggers.toggle(),
-            Action::ToggleNpcs {} => self.ui_memory_manager.get().settings.npcs.toggle(),
-            Action::ToggleCollision {} => self.ui_memory_manager.get().settings.collision.toggle(),
-            Action::ToggleOverlay {} => self.ui_memory_manager.get().settings.overlay.toggle(),
-            Action::ToggleSettingsWindow {} => self.ui_memory_manager.get().settings.show_window.toggle(),
-            _ => (),
+            }
+            toggle => {
+                let settings = &self.ui_memory_manager.get().settings;
+                let setting = match toggle {
+                    Action::ToggleLaraCollision {} => &settings.lara_collision,
+                    Action::ToggleCoarseCollision {} => &settings.coarse_meshes,
+                    Action::ToggleDetailedCollision {} => &settings.detailed_meshes,
+                    Action::ToggleInteractables {} => &settings.interactables,
+                    Action::ToggleTriggers {} => &settings.triggers,
+                    Action::ToggleNpcs {} => &settings.npcs,
+                    Action::ToggleCollision {} => &settings.collision,
+                    Action::ToggleOverlay {} => &settings.overlay,
+                    Action::ToggleSettingsWindow {} => &settings.show_window,
+                    _ => return Ok(()),
+                };
+                setting.toggle();
+            }
         }
         Ok(())
     }
@@ -843,15 +880,15 @@ pub fn print_overlay_data(version: Option<String>, delay: u64) -> Result<()> {
         data.trigger_count, data.trigger_line_count, data.trigger_face_count, data.triangle_count, data.probe_count,
         data.capsule_count
     );
-    for label in data.triggers.iter().take((data.trigger_count as usize).min(5)) {
+    for label in data.trigger_labels().iter().take(5) {
         println!("    {}", label.name().replace('\n', ": "));
     }
     println!("Lara's proxy shapes (pushing her: {}):", data.proxy_touching);
-    for c in &data.proxies[..(data.proxy_count as usize).min(data.proxies.len())] {
+    for c in data.proxies() {
         println!("    {}", capsule(c));
     }
     println!("Attached proxies (drawn: {}):", data.attached_active);
-    for (c, touching) in data.attached[..(data.attached_count as usize).min(data.attached.len())].iter().zip(data.attached_touching) {
+    for (c, touching) in data.attached().iter().zip(data.attached_touching) {
         println!("    {}{}", capsule(c), if touching { ", pushing her" } else { "" });
     }
     // Where her proxy's touching things, relative to her
@@ -865,42 +902,9 @@ pub fn print_overlay_data(version: Option<String>, delay: u64) -> Result<()> {
     Ok(())
 }
 
-impl OverlayHandler {
-    fn overlay_dll(&self) -> &'static str {
-        if matches!(self.arch, Architecture::Arch32Bit) { OVERLAY_DLL_32 } else { OVERLAY_DLL }
-    }
-
-    // Whether the overlay's DLL is in the game
-    fn overlay_loaded(&self) -> io::Result<bool> {
-        inject32::is_loaded(self.pid, self.overlay_dll())
-    }
-
-    fn inject(&mut self) -> Result<(), Box<dyn Error>> {
-        self.ui_memory_manager.get_mut().update(|val| val.should_exit = false);
-
-        println!("Injecting overlay dll");
-        let dll_path = env::current_exe()?.with_file_name(self.overlay_dll());
-        // A 32-bit game (TR2013) needs the 32-bit build of the overlay, injected its own way
-        let injected = if matches!(self.arch, Architecture::Arch32Bit) {
-            inject32::inject(self.pid, &dll_path)
-        } else {
-            Process::by_pid(&self.pid)
-                .and_then(|process| process.inject(dll_path))
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))
-        };
-        if let Err(e) = injected {
-            self.active = false;
-            return Err(format!("Could not inject the overlay: {}", e).into());
-        }
-        Ok(())
-    }
-}
-
 impl Drop for OverlayHandler {
     fn drop(&mut self) {
-        println!("Ejecting injected overlay dll");
-        self.ui_memory_manager.get_mut().update(|val| val.should_exit = true);
-        println!("done");
+        self.eject();
     }
 }
 

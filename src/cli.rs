@@ -1,6 +1,6 @@
 //! The command line tools (`tomb-helper <command>`); with no command tomb-helper runs normally (`main`). Porting a new
-//! build or game takes `update-offsets`, `check` and `watch`; the tools for digging into the game (or into tomb-helper)
-//! are under the hidden `debug`.
+//! build or game is `port`, which runs `update-offsets`, `check` and the `debug` tools it needs; the tools for digging
+//! into the game (or into tomb-helper) are under the hidden `debug`.
 
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};

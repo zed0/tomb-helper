@@ -36,11 +36,6 @@ use winapi::um::processthreadsapi::GetCurrentProcess;
 // How long without an update from the exe before the overlay decides it's gone and ejects itself
 const EXE_GONE: std::time::Duration = std::time::Duration::from_secs(5);
 
-// How many of a list are in use, given the count the exe sent, which may be mid write
-fn count(count: u32, len: usize) -> usize {
-    (count as usize).min(len)
-}
-
 // Points closer to the camera plane than this (in clip space w) are clipped off
 const NEAR_CLIP_W: f32 = 1.0;
 // Lines per circle when drawing capsules
@@ -170,11 +165,15 @@ fn clip_polygon(corners: &[Vector4<f32>]) -> Vec<Vector4<f32>> {
             clipped.push(a);
         }
         if (a.w >= NEAR_CLIP_W) != (b.w >= NEAR_CLIP_W) {
-            let t = (a.w - NEAR_CLIP_W) / (a.w - b.w);
-            clipped.push(a + (b - a) * t);
+            clipped.push(near_plane_crossing(a, b));
         }
     }
     clipped
+}
+
+// Where the line from `a` to `b` (in clip space) crosses the near plane
+fn near_plane_crossing(a: Vector4<f32>, b: Vector4<f32>) -> Vector4<f32> {
+    a + (b - a) * ((a.w - NEAR_CLIP_W) / (a.w - b.w))
 }
 
 // Keeps which triangle is nearest the camera at each pixel, at a lower resolution than the screen
@@ -297,12 +296,8 @@ impl Projector {
         if a.w < NEAR_CLIP_W && b.w < NEAR_CLIP_W {
             return None;
         }
-        let clip = |inside: Vector4<f32>, outside: Vector4<f32>| {
-            let t = (inside.w - NEAR_CLIP_W) / (inside.w - outside.w);
-            inside + (outside - inside) * t
-        };
-        let a2 = if a.w < NEAR_CLIP_W { clip(b, a) } else { a };
-        let b2 = if b.w < NEAR_CLIP_W { clip(a, b) } else { b };
+        let a2 = if a.w < NEAR_CLIP_W { near_plane_crossing(b, a) } else { a };
+        let b2 = if b.w < NEAR_CLIP_W { near_plane_crossing(a, b) } else { b };
         Some((self.to_screen(a2), self.to_screen(b2)))
     }
 }
@@ -350,8 +345,20 @@ fn draw_box(ui: &Ui, draw_list: &DrawListMut, projector: &Projector, ui_data: &U
     let (low, high) = world.iter().fold((world[0], world[0]), |(low, high), p| (low.inf(p), high.sup(p)));
     let top = Vector3::new((low.x + high.x) / 2.0, (low.y + high.y) / 2.0, high.z);
     if let Some(point) = projector.project(top) {
-        let size = ui.calc_text_size(object.name());
-        draw_list.add_text([point[0] - size[0] / 2.0, point[1] - size[1]], colour, object.name());
+        draw_label(ui, draw_list, point, colour, object.name());
+    }
+}
+
+// Text centred above a point on screen
+fn draw_label(ui: &Ui, draw_list: &DrawListMut, point: [f32; 2], colour: [f32; 4], text: &str) {
+    let size = ui.calc_text_size(text);
+    draw_list.add_text([point[0] - size[0] / 2.0, point[1] - size[1]], colour, text);
+}
+
+// A convex polygon, on screen
+fn fill_polygon(draw_list: &DrawListMut, polygon: &[[f32; 2]], colour: [f32; 4]) {
+    for i in 2..polygon.len() {
+        draw_list.add_triangle(polygon[0], polygon[i - 1], polygon[i], colour).filled(true).build();
     }
 }
 
@@ -472,10 +479,7 @@ fn draw_triangle(
     colour[3] *= opacity;
 
     let fill = [colour[0], colour[1], colour[2], SURFACE_FILL_ALPHA * opacity];
-    let polygon = projector.project_polygon(corners);
-    for i in 2..polygon.len() {
-        draw_list.add_triangle(polygon[0], polygon[i - 1], polygon[i], fill).filled(true).build();
-    }
+    fill_polygon(draw_list, &projector.project_polygon(corners), fill);
     for i in 0..3 {
         if let Some((from, to)) = projector.project_line(corners[i], corners[(i + 1) % 3]) {
             draw_list.add_line(from, to, colour).build();
@@ -543,7 +547,7 @@ impl TombHelperHud {
         ui_memory_manager.get().read(&mut ui_data);
 
         if ui_data.debug {
-            if let Ok(_) = hudhook::alloc_console() {
+            if hudhook::alloc_console().is_ok() {
                 hudhook::enable_console_colors();
             }
             else {
@@ -596,9 +600,7 @@ impl ImguiRenderLoop for TombHelperHud {
         // Read again so changes show straight away, rather than once the exe has caught up
         let settings = &self.ui_memory_manager.get().settings;
         if settings.show_window.get() {
-            let object_count = count(ui_data.object_count, ui_data.objects.len());
-            let triangle_count = count(ui_data.triangle_count, ui_data.triangles.len());
-            self.settings_window(ui, ui_data, settings, screen[0], object_count, triangle_count);
+            settings_window(ui, ui_data, settings, screen[0], self.draw_milliseconds);
         }
         if ui_data.camera_view_address != 0 && settings.overlay.get() {
             let projector = projector(ui_data, screen);
@@ -673,9 +675,8 @@ fn draw_meshes(
         | imgui::sys::ImDrawListFlags_AntiAliasedLinesUseTex
         | imgui::sys::ImDrawListFlags_AntiAliasedFill) as i32);
     let centre = ui_data.mesh_centre.vector();
-    let triangle_count = count(ui_data.triangle_count, ui_data.triangles.len());
     let mut shown = vec![];
-    for triangle in ui_data.triangles[..triangle_count].iter().rev() {
+    for triangle in ui_data.triangles().iter().rev() {
         if !((triangle.detailed && detailed_meshes) || (!triangle.detailed && coarse_meshes)) {
             continue;
         }
@@ -707,7 +708,7 @@ fn draw_meshes(
 
 fn draw_objects(ui: &Ui, draw_list: &DrawListMut, projector: &Projector, ui_data: &UiData, settings: &UiSettings) {
     let (interactables, npcs) = (settings.interactables.get(), settings.npcs.get());
-    for object in &ui_data.objects[..count(ui_data.object_count, ui_data.objects.len())] {
+    for object in ui_data.objects() {
         let shown = match object.category {
             ObjectCategory::Interactable => interactables,
             ObjectCategory::Npc => npcs,
@@ -727,8 +728,7 @@ fn draw_triggers(ui: &Ui, draw_list: &DrawListMut, projector: &Projector, ui_dat
     let lara = ui_data.position.vector();
     let faded = |points: &[Vector3<f32>]| fade(settings, box_distance(&lara, points), ui_data.object_radius);
     if trigger_opacity > 0.0 {
-        let face_count = count(ui_data.trigger_face_count, ui_data.trigger_faces.len());
-        for face in &ui_data.trigger_faces[..face_count] {
+        for face in ui_data.trigger_faces() {
             let world = face.corners.map(|c| c.vector());
             let opacity = trigger_opacity * faded(&world);
             if opacity < MIN_OPACITY {
@@ -736,15 +736,11 @@ fn draw_triggers(ui: &Ui, draw_list: &DrawListMut, projector: &Projector, ui_dat
             }
             if let Some(corners) = face_on_screen(projector, world) {
                 let fill = with_opacity(trigger_colour(by_action, face.category, face.action), opacity);
-                let polygon = projector.project_polygon(&corners);
-                for i in 2..polygon.len() {
-                    draw_list.add_triangle(polygon[0], polygon[i - 1], polygon[i], fill).filled(true).build();
-                }
+                fill_polygon(draw_list, &projector.project_polygon(&corners), fill);
             }
         }
     }
-    let line_count = count(ui_data.trigger_line_count, ui_data.trigger_lines.len());
-    for line in &ui_data.trigger_lines[..line_count] {
+    for line in ui_data.trigger_lines() {
         let (a, b) = (line.a.vector(), line.b.vector());
         let opacity = faded(&[a, b]);
         if opacity < MIN_OPACITY {
@@ -753,18 +749,16 @@ fn draw_triggers(ui: &Ui, draw_list: &DrawListMut, projector: &Projector, ui_dat
         let colour = if line.inside { INSIDE_TRIGGER_COLOUR } else { trigger_colour(by_action, line.category, line.action) };
         draw_world_line(draw_list, projector, a, b, with_opacity(colour, opacity));
     }
-    for label in &ui_data.triggers[..count(ui_data.trigger_count, ui_data.triggers.len())] {
+    for label in ui_data.trigger_labels() {
         let position = label.position.vector();
         let opacity = faded(&[position]);
         if opacity < MIN_OPACITY {
             continue;
         }
+        // Above the top of the volume
         if let Some(point) = projector.project(position) {
-            // Above the top of the volume, centred
-            let size = ui.calc_text_size(label.name());
-            let point = [point[0] - size[0] / 2.0, point[1] - size[1]];
             let colour = with_opacity(trigger_colour(by_action, label.category, label.action), opacity);
-            draw_list.add_text(point, colour, label.name());
+            draw_label(ui, draw_list, point, colour, label.name());
         }
     }
 }
@@ -781,21 +775,19 @@ fn draw_lara(draw_list: &DrawListMut, projector: &Projector, ui_data: &UiData, s
     }
     if settings.collision.get() && settings.lara_collision.get() {
         let opacity = |colour| with_opacity(colour, settings.mesh_opacity.get());
-        for capsule in &ui_data.capsules[..count(ui_data.capsule_count, ui_data.capsules.len())] {
+        for capsule in ui_data.capsules() {
             draw_capsule(draw_list, projector, capsule, opacity(LARA_COLOUR));
         }
-        for probe in &ui_data.probes[..count(ui_data.probe_count, ui_data.probes.len())] {
+        for probe in ui_data.probes() {
             draw_probe(draw_list, projector, probe, opacity(PROBE_COLOUR));
         }
-        let proxy_count = count(ui_data.proxy_count, ui_data.proxies.len());
-        for (i, (proxy, colour)) in ui_data.proxies[..proxy_count].iter().zip(PROXY_COLOURS).enumerate() {
+        for (i, (proxy, colour)) in ui_data.proxies().iter().zip(PROXY_COLOURS).enumerate() {
             let colour = if i == 0 && ui_data.proxy_touching { PUSHING_COLOUR } else { colour };
             draw_capsule(draw_list, projector, proxy, opacity(colour));
         }
         // The camera and weapon only collide while she aims
         if ui_data.attached_active {
-            let attached_count = count(ui_data.attached_count, ui_data.attached.len());
-            for (capsule, touching) in ui_data.attached[..attached_count].iter().zip(ui_data.attached_touching) {
+            for (capsule, touching) in ui_data.attached().iter().zip(ui_data.attached_touching) {
                 let colour = if touching { PUSHING_COLOUR } else { COLLISION_COLOUR };
                 draw_capsule(draw_list, projector, capsule, opacity(colour));
             }
@@ -836,79 +828,53 @@ pub unsafe extern "system" fn DllMain(
     1
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn nearer_triangles_hide_ones_behind_them() {
-        let mut buffer = OcclusionBuffer::default();
-        buffer.reset(40.0 * OCCLUSION_SCALE, 40.0 * OCCLUSION_SCALE);
-        // Depth is 1 / w, so 0.5 is nearer than 0.1. The far one is entirely behind the near one, the other only partly.
-        buffer.rasterise(0, [[5., 5., 0.1], [15., 5., 0.1], [5., 15., 0.1]]);
-        buffer.rasterise(1, [[0., 0., 0.5], [30., 0., 0.5], [0., 30., 0.5]]);
-        buffer.rasterise(2, [[20., 20., 0.1], [39., 20., 0.1], [20., 39., 0.1]]);
-        assert_eq!(buffer.visible(3), [false, true, true]);
-    }
-}
-
-impl TombHelperHud {
-    // F11 (`ToggleSettingsWindow`) hides it, leaving what's drawn in the world
-    fn settings_window(
-        &self,
-        ui: &Ui,
-        ui_data: &UiData,
-        settings: &UiSettings,
-        screen_width: f32,
-        object_count: usize,
-        triangle_count: usize,
-    ) {
-        ui.window(format!("{}###tomb-helper", keyed("tomb-helper", hotkey(ui_data, HotkeyLabel::Window))))
-            .position_pivot([1., 0.])
-            .position([screen_width, 0.], Condition::Once)
-            .size([400., 650.], Condition::Once)
-            .build(|| {
-                if ui.collapsing_header("Lara", TreeNodeFlags::DEFAULT_OPEN) {
-                    position_text(ui, &ui_data.position);
+// F11 (`ToggleSettingsWindow`) hides it, leaving what's drawn in the world
+fn settings_window(ui: &Ui, ui_data: &UiData, settings: &UiSettings, screen_width: f32, draw_milliseconds: f32) {
+    ui.window(format!("{}###tomb-helper", keyed("tomb-helper", hotkey(ui_data, HotkeyLabel::Window))))
+        .position_pivot([1., 0.])
+        .position([screen_width, 0.], Condition::Once)
+        .size([400., 650.], Condition::Once)
+        .build(|| {
+            if ui.collapsing_header("Lara", TreeNodeFlags::DEFAULT_OPEN) {
+                position_text(ui, &ui_data.position);
+            }
+            if ui_data.position_tools && ui.collapsing_header("Position tools", TreeNodeFlags::DEFAULT_OPEN) {
+                position_tools(ui, ui_data, settings);
+            }
+            if ui.collapsing_header("Overlay", TreeNodeFlags::DEFAULT_OPEN) {
+                checkbox(ui, &keyed("On", hotkey(ui_data, HotkeyLabel::Overlay)), &settings.overlay);
+                ui.text(format!("{} objects", ui_data.objects().len()));
+                // Collision meshes fade out by the edge of their radius, objects and triggers by `object_radius`'s
+                checkbox(ui, "Fade with distance from Lara", &settings.fade_with_distance);
+                if settings.fade_with_distance.get() {
+                    ui.indent();
+                    slider(ui, "Fade strength", 1.0, MAX_FADE_STRENGTH, "%.1f", &settings.fade_strength);
+                    ui.unindent();
                 }
-                if ui_data.position_tools && ui.collapsing_header("Position tools", TreeNodeFlags::DEFAULT_OPEN) {
-                    position_tools(ui, ui_data, settings);
+                for (label, control, setting) in [
+                    ("Interactable objects", HotkeyLabel::Interactables, &settings.interactables),
+                    ("Characters and animals", HotkeyLabel::Npcs, &settings.npcs),
+                    ("Trigger volumes", HotkeyLabel::Triggers, &settings.triggers),
+                ] {
+                    checkbox(ui, &keyed(label, hotkey(ui_data, control)), setting);
                 }
-                if ui.collapsing_header("Overlay", TreeNodeFlags::DEFAULT_OPEN) {
-                    checkbox(ui, &keyed("On", hotkey(ui_data, HotkeyLabel::Overlay)), &settings.overlay);
-                    ui.text(format!("{} objects", object_count));
-                    // Collision meshes fade out by the edge of their radius, objects and triggers by `object_radius`'s
-                    checkbox(ui, "Fade with distance from Lara", &settings.fade_with_distance);
-                    if settings.fade_with_distance.get() {
-                        ui.indent();
-                        slider(ui, "Fade strength", 1.0, MAX_FADE_STRENGTH, "%.1f", &settings.fade_strength);
-                        ui.unindent();
-                    }
-                    for (label, control, setting) in [
-                        ("Interactable objects", HotkeyLabel::Interactables, &settings.interactables),
-                        ("Characters and animals", HotkeyLabel::Npcs, &settings.npcs),
-                        ("Trigger volumes", HotkeyLabel::Triggers, &settings.triggers),
-                    ] {
-                        checkbox(ui, &keyed(label, hotkey(ui_data, control)), setting);
-                    }
-                    if settings.triggers.get() {
-                        ui.indent();
-                        trigger_settings(ui, settings);
-                        ui.unindent();
-                    }
-                    checkbox(ui, &keyed("Collision meshes", hotkey(ui_data, HotkeyLabel::Collision)), &settings.collision);
-                    if settings.collision.get() {
-                        ui.indent();
-                        ui.text(format!(
-                            "{} triangles ({:.1}ms to find, {:.1}ms to draw)",
-                            triangle_count, ui_data.triangle_milliseconds, self.draw_milliseconds
-                        ));
-                        collision_settings(ui, ui_data, settings);
-                        ui.unindent();
-                    }
+                if settings.triggers.get() {
+                    ui.indent();
+                    trigger_settings(ui, settings);
+                    ui.unindent();
                 }
-            });
-    }
+                checkbox(ui, &keyed("Collision meshes", hotkey(ui_data, HotkeyLabel::Collision)), &settings.collision);
+                if settings.collision.get() {
+                    ui.indent();
+                    ui.text(format!(
+                        "{} triangles ({:.1}ms to find, {:.1}ms to draw)",
+                        ui_data.triangles().len(), ui_data.triangle_milliseconds, draw_milliseconds
+                    ));
+                    collision_settings(ui, ui_data, settings);
+                    ui.unindent();
+                }
+            }
+        });
 }
 
 // A control's label with the keys bound to it, e.g. "Flight mode (F5)"
@@ -1014,4 +980,20 @@ fn collision_settings(ui: &Ui, ui_data: &UiData, settings: &UiSettings) {
     slider(ui, "Opacity", 0.0, 1.0, "%.2f", &settings.mesh_opacity);
     checkbox(ui, "Hide triangles behind others", &settings.cull_hidden);
     checkbox(ui, "Round where Lara's aiming, while she aims", &settings.follow_aim);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nearer_triangles_hide_ones_behind_them() {
+        let mut buffer = OcclusionBuffer::default();
+        buffer.reset(40.0 * OCCLUSION_SCALE, 40.0 * OCCLUSION_SCALE);
+        // Depth is 1 / w, so 0.5 is nearer than 0.1. The far one is entirely behind the near one, the other only partly.
+        buffer.rasterise(0, [[5., 5., 0.1], [15., 5., 0.1], [5., 15., 0.1]]);
+        buffer.rasterise(1, [[0., 0., 0.5], [30., 0., 0.5], [0., 30., 0.5]]);
+        buffer.rasterise(2, [[20., 20., 0.1], [39., 20., 0.1], [20., 39., 0.1]]);
+        assert_eq!(buffer.visible(3), [false, true, true]);
+    }
 }
