@@ -586,7 +586,7 @@ checksum = "df3b46402a9d5adb4c86a0cf463f42e19994e3ee891101b1841f30a545cb49a9"
 [[package]]
 name = "hudhook"
 version = "0.9.3"
-source = "git+https://github.com/zed0/hudhook?branch=vtable-hooks#f83a742b569601ae245b999bcddc74eb18f81935"
+source = "git+https://github.com/zed0/hudhook?branch=vtable-hooks#4089e52d26d965053b6ba8b94cdbb1cbdf8b2858"
 dependencies = [
  "bitflags 2.9.1",
  "cc",
