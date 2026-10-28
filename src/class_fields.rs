@@ -312,36 +312,6 @@ pub fn print_class_layout(from: &str, to: &str, from_version: Option<&str>, to_v
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn fields_go_where_the_code_says_or_with_both_neighbours() {
-        let moved: BTreeMap<i64, (i64, f64)> = vec![(0x10, (0x20, 3.0)), (0x40, (0x50, 2.0)), (0x80, (0xA0, 4.0)), (0x90, (0x90, 1.0))]
-            .into_iter()
-            .collect();
-        assert_eq!(place(0x10, &moved).1, Confidence::Matched);
-        assert_eq!(place(0x10, &moved).0, Some(0x20));
-        // Between two that both moved +0x10
-        assert_eq!(place(0x30, &moved), (Some(0x40), Confidence::Placed, place(0x30, &moved).2));
-        // Between +0x10 and +0x20 moves
-        assert_eq!(place(0x60, &moved).1, Confidence::NotFound);
-        // One vote isn't enough
-        assert_eq!(place(0x90, &moved).1, Confidence::Guessed);
-    }
-
-    #[test]
-    fn fields_are_in_their_class_or_their_groups() {
-        assert_eq!(class_of("proxy.centre"), Some(components::PROXY));
-        assert_eq!(class_of("drawable.model_instance"), Some(INSTANCE_DRAWABLE));
-        // Drawable's other fields are in objects with other classes, or none
-        assert_eq!(class_of("drawable.mesh_min"), None);
-        assert_eq!(class_of("collision_scene.in_client"), Some(rtti::MULTIBODY_CLIENT));
-        assert_eq!(class_of("instance.position"), None);
-    }
-}
-
 /// `debug class-fields <image> <class> [--field <offset>]`
 pub fn print_class_fields(image: &str, class: &str, field: Option<usize>) -> Result<()> {
     let image = crate::derive::load(image)?;
@@ -386,4 +356,34 @@ pub fn print_class_fields(image: &str, class: &str, field: Option<usize>) -> Res
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fields_go_where_the_code_says_or_with_both_neighbours() {
+        let moved: BTreeMap<i64, (i64, f64)> = vec![(0x10, (0x20, 3.0)), (0x40, (0x50, 2.0)), (0x80, (0xA0, 4.0)), (0x90, (0x90, 1.0))]
+            .into_iter()
+            .collect();
+        assert_eq!(place(0x10, &moved).1, Confidence::Matched);
+        assert_eq!(place(0x10, &moved).0, Some(0x20));
+        // Between two that both moved +0x10
+        assert_eq!(place(0x30, &moved), (Some(0x40), Confidence::Placed, place(0x30, &moved).2));
+        // Between +0x10 and +0x20 moves
+        assert_eq!(place(0x60, &moved).1, Confidence::NotFound);
+        // One vote isn't enough
+        assert_eq!(place(0x90, &moved).1, Confidence::Guessed);
+    }
+
+    #[test]
+    fn fields_are_in_their_class_or_their_groups() {
+        assert_eq!(class_of("proxy.centre"), Some(components::PROXY));
+        assert_eq!(class_of("drawable.model_instance"), Some(INSTANCE_DRAWABLE));
+        // Drawable's other fields are in objects with other classes, or none
+        assert_eq!(class_of("drawable.mesh_min"), None);
+        assert_eq!(class_of("collision_scene.in_client"), Some(rtti::MULTIBODY_CLIENT));
+        assert_eq!(class_of("instance.position"), None);
+    }
 }
