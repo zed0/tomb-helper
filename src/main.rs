@@ -15,7 +15,7 @@ use crate::overlay_handler::OverlayHandler;
 use crate::offsets_file::OffsetsSource;
 use crate::position_handler::PositionHandler;
 use crate::process_details::ProcessDetails;
-use process_memory::Pid;
+use crate::find_process::Connection;
 use itertools::Itertools;
 use crate::hotkeys::{Callback, Hotkeys, KeyCode};
 use std::sync::{Arc, mpsc};
@@ -120,10 +120,8 @@ fn main() {
             known = load_offsets(&mut offsets, known);
         }
 
-        if let Some((pid, handle, base_addr, details)) =
-            find_process::find_process(known.clone(), config.force_version.clone())
-        {
-            connect(&config, pid, handle, base_addr, details, &mut offsets, &mut known, &term);
+        if let Some(connection) = find_process::find_process(known.clone(), config.force_version.clone()) {
+            connect(&config, connection, &mut offsets, &mut known, &term);
             println!("Searching for Tomb Raider processes...");
         }
 
@@ -146,56 +144,43 @@ fn load_offsets(offsets: &mut OffsetsSource, current: Vec<ProcessDetails>) -> Ve
     }
 }
 
-fn create_handlers(
-    config: &Config,
-    pid: Pid,
-    handle: process_memory::ProcessHandle,
-    base_addr: usize,
-    details: &ProcessDetails,
-) -> Vec<Box<dyn Handler>> {
-    layout::set_for(&details);
-    let (offsets, arch) = (&details.address_offsets, &details.arch);
+fn create_handlers(config: &Config, connection: &Connection) -> Vec<Box<dyn Handler>> {
+    layout::set_for(&connection.details);
+    fn boxed<H: Handler + 'static>(handler: H) -> Box<dyn Handler> {
+        Box::new(handler)
+    }
 
     // Each is None if the version doesn't have the offsets it needs
-    let cutscenes: Option<Box<dyn Handler>> = match &config.record_cutscene_timing {
+    let cutscenes = match &config.record_cutscene_timing {
         CutsceneTiming::On { timing_file, livesplit_port } => {
-            CutsceneTimingGeneratorHandler::new(offsets, arch, &base_addr, &handle, timing_file, livesplit_port)
-                .map(|h| Box::new(h) as Box<dyn Handler>)
+            CutsceneTimingGeneratorHandler::new(connection, timing_file, *livesplit_port).map(boxed)
         }
-        CutsceneTiming::Off {} => CutsceneHandler::new(
-            offsets,
-            arch,
-            &base_addr,
-            &handle,
-            &pid,
-            &config.cutscene_blacklist_file,
-            &config.cutscene_timing_file,
-        )
-        .map(|h| Box::new(h) as Box<dyn Handler>),
+        CutsceneTiming::Off {} => {
+            CutsceneHandler::new(connection, &config.cutscene_blacklist_file, &config.cutscene_timing_file).map(boxed)
+        }
     };
-    let overlay = OverlayHandler::new_overlay_handler(offsets, arch, &base_addr, &handle, &pid, &config.overlay, &config.hotkeys);
-    let position = PositionHandler::new_position_handler(offsets, arch, &base_addr, &handle, &pid);
-    let look_at = PositionHandler::new_look_at_handler(offsets, arch, &base_addr, &handle, &pid);
-
-    let mut handlers: Vec<Box<dyn Handler>> = cutscenes.into_iter().collect();
-    handlers.extend(overlay.map(|h| Box::new(h) as Box<dyn Handler>));
-    handlers.extend(position.into_iter().chain(look_at).map(|h| Box::new(h) as Box<dyn Handler>));
-    handlers
+    [
+        cutscenes,
+        OverlayHandler::new_overlay_handler(connection, &config.overlay, &config.hotkeys).map(boxed),
+        PositionHandler::new_position_handler(connection).map(boxed),
+        PositionHandler::new_look_at_handler(connection).map(boxed),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
 }
 
 fn connect(
     config: &Config,
-    pid: Pid,
-    handle: process_memory::ProcessHandle,
-    base_addr: usize,
-    mut details: ProcessDetails,
+    mut connection: Connection,
     offsets: &mut OffsetsSource,
     known: &mut Vec<ProcessDetails>,
     term: &Arc<AtomicBool>,
 ) {
-    println!("Connecting to {} {} with PID {}", details.name, details.version.version, pid);
+    let pid = connection.pid;
+    println!("Connecting to {} with PID {}", connection.details, pid);
 
-    let mut handlers = create_handlers(config, pid, handle, base_addr, &details);
+    let mut handlers = create_handlers(config, &connection);
 
     let (tx, rx) = mpsc::channel();
 
@@ -227,7 +212,7 @@ fn connect(
         }
 
         if !find_process::is_process_running(pid) {
-            println!("Disconnected from {} {} with PID {}", details.name, details.version.version, pid);
+            println!("Disconnected from {} with PID {}", connection.details, pid);
             return;
         }
 
@@ -236,25 +221,23 @@ fn connect(
             if offsets.changed() {
                 *known = load_offsets(offsets, known.clone());
                 match find_process::find_process(known.clone(), config.force_version.clone()) {
-                    Some((new_pid, new_handle, _, new_details)) if new_pid == pid => {
-                        find_process::close_handle(new_handle);
+                    Some(found) if found.pid == pid => {
+                        find_process::close_handle(found.process);
                         // Recreating handlers loses their state (and re-downloads cutscene info), so
                         // only do it when something they use has changed
-                        if new_details.version.version != details.version.version
-                            || new_details.address_offsets != details.address_offsets
+                        let details = &connection.details;
+                        if found.details.version.version != details.version.version
+                            || found.details.address_offsets != details.address_offsets
                         {
                             // Drop the old handlers first, so e.g. the overlay is ejected before it's re-injected
                             handlers.clear();
-                            details = new_details;
-                            handlers = create_handlers(config, pid, handle, base_addr, &details);
-                            println!("Reloaded offsets for {} {}", details.name, details.version.version);
+                            connection.details = found.details;
+                            handlers = create_handlers(config, &connection);
+                            println!("Reloaded offsets for {}", connection.details);
                         }
                     }
                     _ => {
-                        println!(
-                            "{} {} no longer matches any offsets, disconnecting",
-                            details.name, details.version.version
-                        );
+                        println!("{} no longer matches any offsets, disconnecting", connection.details);
                         return;
                     }
                 }

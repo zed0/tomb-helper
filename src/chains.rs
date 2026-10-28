@@ -7,12 +7,12 @@
 use anyhow::{bail, Context, Result};
 use crate::code_trace::{Access, CallResolver, Tracer};
 use crate::derive::{print_entry, References};
-use crate::find_process;
+use crate::find_process::{self, Connection};
 use crate::game_memory::{read_bytes, read_pointer_or_null, Handle};
 use crate::pe_image::PeImage;
 use crate::offsets_file::{describe_chain, known_process_details};
-use crate::process_details::{AddressType, ProcessDetails};
-use process_memory::{CopyAddress, Pid, ProcessHandle};
+use crate::process_details::AddressType;
+use process_memory::{CopyAddress, ProcessHandle};
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::{thread, time};
@@ -21,11 +21,21 @@ const CANDIDATES_SHOWN: usize = 5;
 // Windows never maps the lowest 64KB, so anything below this isn't a pointer
 const MIN_POINTER: usize = 0x10000;
 
-pub fn connect(version: Option<String>) -> Result<(Pid, ProcessHandle, usize, ProcessDetails)> {
-    let connected = find_process::find_process(known_process_details(), version)
+/// The running game, for the live tools, with its version's layout in use
+pub fn connect(version: Option<String>) -> Result<Connection> {
+    let connection = find_process::find_process(known_process_details(), version)
         .context("No known game version is running (pass --version to force one from the offsets file)")?;
-    crate::layout::set_for(&connected.3);
-    Ok(connected)
+    crate::layout::set_for(&connection.details);
+    println!("Found {}", connection.details);
+    Ok(connection)
+}
+
+/// Waits this many seconds first, if any, so the game can be switched to (it pauses while it's in the background)
+pub fn delay_start(seconds: u64) {
+    if seconds > 0 {
+        println!("Starting in {} seconds...", seconds);
+        thread::sleep(time::Duration::from_secs(seconds));
+    }
 }
 
 // The game's pointers, cached
@@ -216,9 +226,8 @@ pub fn best_code_chains(
 }
 
 pub fn find_code_chains(version: Option<String>) -> Result<()> {
-    let (pid, handle, base_addr, details) = connect(version)?;
-    println!("Found {} {}", details.name, details.version.version);
-    let game = Handle::Live(pid, handle);
+    let connection = connect(version)?;
+    let (game, base_addr, details) = (connection.handle(), connection.base_address, &connection.details);
     let mut memory = Memory::new(game, base_addr);
 
     let mut entries: Vec<(AddressType, Vec<usize>)> = details
@@ -242,7 +251,7 @@ pub fn find_code_chains(version: Option<String>) -> Result<()> {
     }
 
     println!("Dumping the game...");
-    let image = PeImage::dump(pid).context("Could not dump the game")?;
+    let image = PeImage::dump(connection.pid).context("Could not dump the game")?;
     let known: Vec<(AddressType, usize)> = targets.iter().filter_map(|(t, a)| a.map(|a| (*t, a))).collect();
     let mut candidates = candidate_chains(&image, game, base_addr, &known);
 
@@ -276,11 +285,11 @@ pub fn find_code_chains(version: Option<String>) -> Result<()> {
     }
 
     println!(
-        "\n// Code chains for {} {}, to replace its entry in the offsets file. Check them with\n\
+        "\n// Code chains for {}, to replace its entry in the offsets file. Check them with\n\
          // `tomb-helper debug probe` after restarting the game.",
-        details.name, details.version.version
+        details
     );
-    print_entry(&details, &image, &details.version.version, &lines);
+    print_entry(details, &image, &details.version.version, &lines);
     Ok(())
 }
 
@@ -307,13 +316,14 @@ fn describe_value(handle: ProcessHandle, address: usize, address_type: AddressTy
 }
 
 /// Prints the current value of each of the offsets in `details`
-pub fn print_values(pid: Pid, handle: ProcessHandle, base_addr: usize, details: &ProcessDetails) {
+pub fn print_values(connection: &Connection) {
+    let details = &connection.details;
     let mut entries: Vec<(&AddressType, &Vec<usize>)> = details.address_offsets.iter().collect();
     entries.sort_by_key(|(t, _)| **t);
-    let mut memory = Memory::new(Handle::Live(pid, handle), base_addr);
+    let mut memory = Memory::new(connection.handle(), connection.base_address);
     for (t, offsets) in &entries {
         let value = match memory.resolve(&to_chain(offsets)) {
-            Some(address) => describe_value(handle, address, **t, &details.version.version),
+            Some(address) => describe_value(connection.process, address, **t, &details.version.version),
             None => "chain doesn't resolve".to_string(),
         };
         println!("  {:<17} {:<45} {}", format!("{:?}", t), describe_chain(offsets), value);
@@ -321,11 +331,10 @@ pub fn print_values(pid: Pid, handle: ProcessHandle, base_addr: usize, details: 
 }
 
 pub fn probe(version: Option<String>, watch: bool) -> Result<()> {
-    let (pid, handle, base_addr, details) = connect(version)?;
-    println!("Found {} {}", details.name, details.version.version);
+    let connection = connect(version)?;
     loop {
-        print_values(pid, handle, base_addr, &details);
-        if !watch || !find_process::is_process_running(pid) {
+        print_values(&connection);
+        if !watch || !find_process::is_process_running(connection.pid) {
             return Ok(());
         }
         println!();

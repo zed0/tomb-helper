@@ -747,7 +747,7 @@ pub fn derive_lines(
         by_base.entry(offsets[0]).or_default().push(*address_type);
     }
 
-    println!("\nStatic addresses derived from {} {}:", details.name, details.version.version);
+    println!("\nStatic addresses derived from {}:", details);
     let mut derived: HashMap<usize, (Derivation, ChainVotes)> = HashMap::new();
     let deriver = Deriver::new(&old_refs, &new_refs);
     for (base, types) in &by_base {
@@ -795,7 +795,7 @@ pub fn derive(from: &str, to: &str, from_version: Option<&str>) -> Result<()> {
     let old = load(from)?;
     // A running game can be identified the same way the main tool does, including by version string
     let running = match (from, from_version) {
-        ("running", None) => find_process::find_process(known_process_details(), None).map(|(_, _, _, d)| d),
+        ("running", None) => find_process::find_process(known_process_details(), None).map(|c| c.details),
         _ => None,
     };
     let details = match running {
@@ -809,11 +809,11 @@ pub fn derive(from: &str, to: &str, from_version: Option<&str>) -> Result<()> {
 
     let lines = derive_lines(&old, &details, &new);
     println!(
-        "\n// Derived from {} {}. Levels marked `code` were matched in the game's code, `shifted`\n\
+        "\n// Derived from {}. Levels marked `code` were matched in the game's code, `shifted`\n\
          // levels moved like a neighbouring field, and `copied` levels had no evidence.\n\
          // Add this to the offsets file, fill in the version string, and check the values in game\n\
          // with `tomb-helper debug probe`.",
-        details.name, details.version.version
+        details
     );
     let mut details = details;
     // What the derived chains say of the layout

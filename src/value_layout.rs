@@ -315,11 +315,11 @@ pub fn print_value_layout(snapshot: &str, group: &str, version: Option<String>, 
     let (target, target_details) = match to {
         Some(to) => snapshot_game(to)?,
         None => {
-            let (pid, handle, base_address, details) = crate::chains::connect(version)?;
-            (Game::new(Handle::Live(pid, handle), base_address, &details.address_offsets), details)
+            let connection = crate::chains::connect(version)?;
+            (connection.game(), connection.details)
         }
     };
-    println!("From {} {} to {} {}", source_details.name, source_details.version.version, target_details.name, target_details.version.version);
+    println!("From {} to {}", source_details, target_details);
     let placed = derive(&source, &source_details, &target, &target_details, group)?;
     let (mut right, mut wrong, mut unplaced) = (0, 0, 0);
     for p in &placed {

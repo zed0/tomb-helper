@@ -32,11 +32,11 @@ const MIN_INSTANCES: usize = 1000;
 const INSTANCES_CHECKED: usize = 64;
 
 pub fn discover(version: Option<String>, save: bool) -> Result<()> {
-    let (pid, handle, base_address, details) = chains::connect(version)?;
-    println!("Found {} {}", details.name, details.version.version);
+    let connection = chains::connect(version)?;
+    let details = &connection.details;
     println!("Dumping the game...");
-    let image = PeImage::dump(pid).context("Could not dump the game")?;
-    let found = find_statics(Handle::Live(pid, handle), base_address, &image);
+    let image = PeImage::dump(connection.pid).context("Could not dump the game")?;
+    let found = find_statics(connection.handle(), connection.base_address, &image);
 
     println!();
     for (address_type, chain) in &found {
@@ -48,7 +48,7 @@ pub fn discover(version: Option<String>, save: bool) -> Result<()> {
         println!("  {:<15} {}  ({})", format!("{:?}", address_type), describe_chain(chain), note);
     }
     if save {
-        let mut entry = VersionEntry::from_details(&details);
+        let mut entry = VersionEntry::from_details(details);
         for (address_type, chain) in &found {
             entry.offsets.insert(*address_type, chain.iter().map(|o| Hex(*o)).collect());
         }

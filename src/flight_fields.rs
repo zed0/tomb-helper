@@ -11,7 +11,7 @@
 
 use anyhow::{Context, Result};
 use crate::game::Game;
-use crate::game_memory::{pointer_size, read_floats, read_pointer, read_u8, Handle};
+use crate::game_memory::{pointer_size, read_floats, read_pointer, read_u8};
 use crate::layout::Layout;
 use crate::pe_image::PeImage;
 use crate::process_details::AddressType;
@@ -281,11 +281,11 @@ fn scan_code(image: &PeImage, flags: Option<usize>, switches: &[usize]) -> Scan 
 
 /// `debug flight-fields [--save]` (and `port`)
 pub fn find_flight_fields(version: Option<String>, save: bool) -> Result<()> {
-    let (pid, handle, base_address, mut details) = crate::chains::connect(version)?;
-    println!("Found {} {}", details.name, details.version.version);
+    let connection = crate::chains::connect(version)?;
+    let mut details = connection.details.clone();
     println!("Reading the game's code...");
-    let image = PeImage::dump(pid).context("the game's image couldn't be read")?;
-    let game = Game::new(Handle::Live(pid, handle), base_address, &details.address_offsets);
+    let image = PeImage::dump(connection.pid).context("the game's image couldn't be read")?;
+    let game = connection.game();
     let found = find(&game, &image);
     for note in &found.notes {
         println!("  {}", note);

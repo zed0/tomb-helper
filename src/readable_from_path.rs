@@ -7,10 +7,7 @@ use std::default::Default;
 use serde::de::DeserializeOwned;
 
 pub trait ReadableFromPath {
-    fn from_path(
-        path: &String,
-        typename: &String
-    ) -> Self
+    fn from_path(path: &str, typename: &str) -> Self
         where
             Self: std::marker::Sized + DeserializeOwned + Default
     {

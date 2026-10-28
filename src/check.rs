@@ -98,9 +98,8 @@ impl Report {
 
 
 pub fn check(version: Option<String>) -> Result<()> {
-    let (pid, handle, base_address, details) = chains::connect(version)?;
-    println!("Found {} {}", details.name, details.version.version);
-    run(Handle::Live(pid, handle), base_address, details)
+    let connection = chains::connect(version)?;
+    run(connection.handle(), connection.base_address, connection.details)
 }
 
 /// Checks the offsets and layout in `details` against the game

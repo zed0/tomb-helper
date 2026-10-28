@@ -53,7 +53,7 @@ pub fn run(
     let (pid, handle, base_address, existing, template) = attach(&known, new_game)?;
     layout::set_for(&template);
     match &existing {
-        Some(details) => println!("Found {} {}, updating its offsets", details.name, details.version.version),
+        Some(details) => println!("Found {}, updating its offsets", details),
         None => println!(
             "Found a new build of {} ({}), starting from {}",
             template.name, template.executable_name, template.version.version
@@ -169,7 +169,7 @@ pub fn run(
     // Layout fields already worked out, which later steps don't overrule
     let mut settled: HashSet<String> = HashSet::new();
     if let Some((old, old_details)) = &previous {
-        println!("Deriving the rest from {} {}...", old_details.name, old_details.version.version);
+        println!("Deriving the rest from {}...", old_details);
         for (address_type, chain, sure, note) in derive::derive_lines(&old, &old_details, &image) {
             match chain {
                 Some(chain) if sure && !found.contains_key(&address_type) => {
@@ -193,7 +193,7 @@ pub fn run(
             None => others.iter().map(|(image, details)| (image, details)).collect(),
         };
         if !references.is_empty() {
-            let names: Vec<String> = references.iter().map(|(_, d)| format!("{} {}", d.name, d.version.version)).collect();
+            let names: Vec<String> = references.iter().map(|(_, d)| d.to_string()).collect();
             println!("Working out the layout from how its classes' code uses it in {}...", names.join(", "));
             // Fields placed between moved ones are only right within a game (`--from` can be another game's dump)
             let same_game = references.iter().all(|(_, d)| d.name == template.name);
@@ -204,7 +204,7 @@ pub fn run(
         // the games share their gameplay data, so the same values are in the same fields, wherever those are
         let sources = crate::value_layout::sources(&template, previous.as_ref().map(|(_, d)| d), &known);
         if !sources.is_empty() {
-            let names: Vec<String> = sources.iter().map(|(_, d)| format!("{} {}", d.name, d.version.version)).collect();
+            let names: Vec<String> = sources.iter().map(|(_, d)| d.to_string()).collect();
             println!("Working out Lara's proxy from the values in it, as in {}...", names.join(", "));
             let offsets: crate::process_details::AddressOffsets = found.iter().map(|(t, (chain, _))| (*t, chain.clone())).collect();
             let target = crate::game::Game::new(memory, base_address, &offsets);
@@ -453,7 +453,7 @@ fn attach(
         let base_address = find_process::get_base_address(pid) as usize;
         let same_executable: Vec<ProcessDetails> =
             known.iter().filter(|d| d.executable_name == executable).cloned().collect();
-        let existing = find_process::find_process(same_executable.clone(), None).map(|(_, _, _, d)| d);
+        let existing = find_process::find_process(same_executable.clone(), None).map(|c| c.details);
         let mut template = existing.clone().or_else(|| same_executable.last().cloned()).unwrap();
         // An entry from before the overlay has no layout, and the default is another game's, so borrow one from the
         // last build of the same game that has one

@@ -3,11 +3,12 @@
 
 use crate::action::Action;
 use crate::handler::Handler;
-use crate::process_details::{AddressOffsets, AddressType};
+use crate::find_process::Connection;
+use crate::process_details::AddressType;
 use crate::tracked_memory::TrackedMemory;
 use crate::cutscene_timing_info::{TimingInfo, TimingEntry};
 use crate::readable_from_path::ReadableFromPath;
-use process_memory::{Architecture, ProcessHandle};
+use process_memory::ProcessHandle;
 use std::error::Error;
 use std::time::{Duration, Instant};
 use std::net::TcpStream;
@@ -38,20 +39,13 @@ pub struct CutsceneTimingGeneratorHandler {
 }
 
 impl CutsceneTimingGeneratorHandler {
-    pub fn new(
-        address_offsets: &AddressOffsets,
-        arch: &Architecture,
-        base_addr: &usize,
-        handle: &ProcessHandle,
-        timing_info_path: &String,
-        livesplit_port: &u32,
-    ) -> Option<CutsceneTimingGeneratorHandler> {
+    pub fn new(connection: &Connection, timing_info_path: &str, livesplit_port: u32) -> Option<CutsceneTimingGeneratorHandler> {
         println!("Loading cutscene timing generation handler...");
 
         Some(CutsceneTimingGeneratorHandler {
-            timeline: TrackedMemory::find(address_offsets, AddressType::CutsceneTimeline, *arch, *base_addr)?,
-            id: TrackedMemory::find(address_offsets, AddressType::CutsceneId, *arch, *base_addr)?,
-            handle: *handle,
+            timeline: TrackedMemory::find(connection, AddressType::CutsceneTimeline)?,
+            id: TrackedMemory::find(connection, AddressType::CutsceneId)?,
+            handle: connection.process,
             current_start_game_time: None,
             current_start_real_time: None,
             current_timeline: None,
@@ -59,11 +53,11 @@ impl CutsceneTimingGeneratorHandler {
             skip_game_time: None,
             skip_real_time: None,
             livesplit_connection: TcpStream::connect(
-                format!("127.0.0.1:{}", *livesplit_port)
+                format!("127.0.0.1:{}", livesplit_port)
             ).unwrap(),
             timing_info_path: PathBuf::from(timing_info_path),
-            timing_info: TimingInfo::from_path(timing_info_path, &String::from("cutscene timing info")),
-            prompt: TrackedMemory::find(address_offsets, AddressType::CutscenePrompt, *arch, *base_addr)?,
+            timing_info: TimingInfo::from_path(timing_info_path, "cutscene timing info"),
+            prompt: TrackedMemory::find(connection, AddressType::CutscenePrompt)?,
         })
     }
 

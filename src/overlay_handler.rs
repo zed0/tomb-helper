@@ -8,8 +8,8 @@
 //! loaded, and from then on injecting does nothing. `debug overlay-data` prints what it would send without injecting.
 
 use anyhow::{anyhow, Context, Result};
+use crate::find_process::Connection;
 use crate::game::Game;
-use crate::game_memory::Handle;
 use crate::collision::{self, AttachedProxy, CapsuleShape, ProxyCapsules};
 use crate::collision_mesh::CollisionMeshes;
 use crate::components::Components;
@@ -19,13 +19,13 @@ use crate::position::Position;
 use crate::action::Action;
 use crate::handler::Handler;
 use crate::inject32;
-use crate::process_details::{AddressOffsets, AddressType};
+use crate::process_details::AddressType;
 use nalgebra::{Matrix3, Vector3};
 use std::collections::HashMap;
 use std::{env, io, time};
 use std::error::Error;
 use hudhook::inject::Process;
-use process_memory::{Architecture, Pid, ProcessHandle};
+use process_memory::{Architecture, Pid};
 use crate::trigger::{self, Shape};
 use crate::trigger_scripts::{SetOffBy, TriggerScript, TriggerScripts};
 use crate::handler::HelperState;
@@ -194,17 +194,9 @@ pub struct OverlayHandler {
 }
 
 impl OverlayHandler {
-    pub fn new_overlay_handler(
-        address_offsets: &AddressOffsets,
-        arch: &Architecture,
-        base_addr: &usize,
-        handle: &ProcessHandle,
-        pid: &Pid,
-        config: &OverlayConfig,
-        hotkeys: &[Hotkey],
-    ) -> Option<OverlayHandler> {
+    pub fn new_overlay_handler(connection: &Connection, config: &OverlayConfig, hotkeys: &[Hotkey]) -> Option<OverlayHandler> {
         println!("Loading overlay handler...");
-        let game = Game::new(Handle::Live(*pid, *handle), *base_addr, address_offsets);
+        let game = connection.game();
         if ![AddressType::XPosition, AddressType::YPosition, AddressType::ZPosition].iter().all(|&a| game.has(a)) {
             return None;
         }
@@ -227,8 +219,8 @@ impl OverlayHandler {
             active: false,
             waiting_to_inject: None,
             game,
-            pid: *pid,
-            arch: *arch,
+            pid: connection.pid,
+            arch: connection.details.arch,
             config: config.clone(),
             position: Position::default(),
             camera_view: [0.0; 16],
@@ -241,8 +233,8 @@ impl OverlayHandler {
             objects: vec![],
             npc_capsules: HashMap::new(),
             triggers: vec![],
-            trigger_scripts: TriggerScripts::new(Handle::Live(*pid, *handle), *base_addr),
-            components: Components::new(*base_addr),
+            trigger_scripts: TriggerScripts::new(connection.handle(), connection.base_address),
+            components: Components::new(connection.base_address),
             lara_address: None,
             object_settings: ObjectSettings::default(),
             lara: None,
@@ -795,16 +787,11 @@ impl Handler for OverlayHandler {
 
 /// `debug overlay-data`: what the overlay would be sent now, from one update with collision on, without injecting it
 pub fn print_overlay_data(version: Option<String>, delay: u64) -> Result<()> {
-    if delay > 0 {
-        println!("Starting in {} seconds...", delay);
-        std::thread::sleep(time::Duration::from_secs(delay));
-    }
-    let (pid, handle, base_addr, details) = crate::chains::connect(version)?;
-    println!("Found {} {}", details.name, details.version.version);
+    crate::chains::delay_start(delay);
+    let connection = crate::chains::connect(version)?;
     let config = crate::config::get_config();
-    let mut handler =
-        OverlayHandler::new_overlay_handler(&details.address_offsets, &details.arch, &base_addr, &handle, &pid, &config.overlay, &config.hotkeys)
-            .context("This version has no overlay")?;
+    let mut handler = OverlayHandler::new_overlay_handler(&connection, &config.overlay, &config.hotkeys)
+        .context("This version has no overlay")?;
     handler.ui_memory_manager.get().settings.collision.set(true);
     handler.active = true;
     handler.handle_tick().map_err(|e| anyhow!("The update failed: {}", e))?;

@@ -8,7 +8,7 @@
 
 use anyhow::{bail, Context, Result};
 use crate::game::Game;
-use crate::game_memory::{f32_at, pointer_from, pointer_size, resolve, Handle};
+use crate::game_memory::{f32_at, pointer_from, pointer_size, resolve};
 use crate::process_details::AddressType;
 use crate::rtti::{Classes, PLAYER};
 use crate::tracked_memory::TrackedMemory;
@@ -171,14 +171,14 @@ pub fn find(game: &Game, handle: ProcessHandle, arch: Architecture) -> Result<Fo
 
 /// `debug find-fall-start [--delay N] [--save]` (and `port`)
 pub fn find_fall_start(version: Option<String>, delay: u64, save: bool) -> Result<()> {
-    let (pid, handle, base_address, mut details) = crate::chains::connect(version)?;
-    println!("Found {} {}", details.name, details.version.version);
+    let connection = crate::chains::connect(version)?;
+    let mut details = connection.details.clone();
     if delay > 0 {
         println!("Switch to the game: lifting Lara in {} seconds...", delay);
         std::thread::sleep(Duration::from_secs(delay));
     }
-    let game = Game::new(Handle::Live(pid, handle), base_address, &details.address_offsets);
-    let found = find(&game, handle, details.arch)?;
+    let game = connection.game();
+    let found = find(&game, connection.process, details.arch)?;
     let path: Vec<String> = found.path.iter().map(|o| format!("{:#X}", o)).collect();
     if path.is_empty() {
         println!("Her player object is the one her position chain goes through");

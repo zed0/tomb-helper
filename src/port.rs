@@ -95,7 +95,7 @@ pub fn port(exe: Option<String>) -> Result<()> {
     }
 
     println!("\n=== Done ===");
-    println!("{} {} is saved in {}.", details.name, details.version.version, OffsetsSource::new().path.display());
+    println!("{} is saved in {}.", details, OffsetsSource::new().path.display());
     if passing {
         println!("Every check passes, so the overlay should work: press F9 in game to try it.");
     } else {

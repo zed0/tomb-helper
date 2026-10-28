@@ -7,12 +7,11 @@ use anyhow::{anyhow, bail, Context, Result};
 use crate::components::Components;
 use crate::find_process;
 use crate::game::Game;
-use crate::game_memory::{read_pointer, Handle};
+use crate::game_memory::read_pointer;
 use crate::layout::field_offset;
 use crate::object_list::ObjectList;
 use crate::process_details::AddressType;
 use crate::watch::{self, Breakpoint, Hit};
-use std::time::Duration;
 
 // Where a group's structure is in the running game, for the ones there's a way to find
 fn group_address(game: &Game, components: &mut Components, group: &str) -> Result<usize> {
@@ -69,9 +68,9 @@ pub fn watch_fields(names: &[&str], version: Option<String>, seconds: u64, delay
     if names.is_empty() || names.len() > watch::MAX_WATCHES {
         bail!("Give between 1 and {} layout fields (group.field)", watch::MAX_WATCHES);
     }
-    let (pid, handle, base_address, details) = crate::chains::connect(version)?;
-    println!("Found {} {}", details.name, details.version.version);
-    let game = Game::new(Handle::Live(pid, handle), base_address, &details.address_offsets);
+    let connection = crate::chains::connect(version)?;
+    let (pid, handle, base_address, details) = (connection.pid, connection.process, connection.base_address, &connection.details);
+    let game = connection.game();
     let mut components = Components::new(base_address);
     let mut fields = vec![];
     for name in names {
@@ -81,10 +80,7 @@ pub fn watch_fields(names: &[&str], version: Option<String>, seconds: u64, delay
         println!("{} at {:#X} ({:#X} into the structure)", name, address, offset);
         fields.push((name.to_string(), offset, address));
     }
-    if delay > 0 {
-        println!("Starting in {} seconds...", delay);
-        std::thread::sleep(Duration::from_secs(delay));
-    }
+    crate::chains::delay_start(delay);
     let addresses: Vec<usize> = fields.iter().map(|(_, _, a)| *a).collect();
     let image_size = find_process::get_image_size(handle, base_address)?;
     let code = Some((base_address, base_address + image_size));

@@ -230,11 +230,11 @@ pub fn fit_layout(groups: &[&str], snapshot: Option<&str>, version: Option<Strin
             Target { handle: Handle::Snapshot(snapshot), base_address: snapshot.header.base_address, details: snapshot.details()? }
         }
         None => {
-            let (pid, handle, base_address, details) = crate::chains::connect(version)?;
-            Target { handle: Handle::Live(pid, handle), base_address, details }
+            let connection = crate::chains::connect(version)?;
+            Target { handle: connection.handle(), base_address: connection.base_address, details: connection.details }
         }
     };
-    println!("Fitting the layout of {} {}", target.details.name, target.details.version.version);
+    println!("Fitting the layout of {}", target.details);
     let mut layout = target.details.layout.clone();
     let started = std::time::Instant::now();
     let results = target.check(&layout);

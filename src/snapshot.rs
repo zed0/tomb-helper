@@ -183,10 +183,10 @@ fn read_bytes(input: &mut impl Read) -> io::Result<Vec<u8>> {
 /// `check --snapshot [<file>]`: checks the running game while recording what's read, and saves that as a snapshot (in
 /// `snapshot_dir()` by default)
 pub fn take(out: Option<&str>, version: Option<String>) -> Result<()> {
-    let (pid, process, base_address, details) = crate::chains::connect(version)?;
-    println!("Found {} {}", details.name, details.version.version);
+    let connection = crate::chains::connect(version)?;
+    let (base_address, details) = (connection.base_address, connection.details);
     let recording: &'static Recording = Box::leak(Box::default());
-    let handle = Handle::Recording(pid, process, recording);
+    let handle = Handle::Recording(connection.pid, connection.process, recording);
     // Failing checks are still worth a snapshot
     let _ = crate::check::run(handle, base_address, details.clone());
     let image = handle.image().context("couldn't dump the game")?;

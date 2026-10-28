@@ -4,15 +4,15 @@
 
 use crate::action::Action;
 use crate::components::Components;
+use crate::find_process::Connection;
 use crate::game::Game;
-use crate::game_memory::Handle as GameHandle;
 use crate::handler::Handler;
-use crate::process_details::{AddressOffsets, AddressType};
+use crate::process_details::AddressType;
 use crate::cutscene_timing_info::{TimingInfo, TimingEntry};
 use crate::targets;
 use crate::tracked_memory::TrackedMemory;
 use crate::readable_from_path::ReadableFromPath;
-use process_memory::{Architecture, Pid, ProcessHandle};
+use process_memory::ProcessHandle;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::error::Error;
@@ -52,33 +52,25 @@ pub struct CutsceneHandler {
 }
 
 impl CutsceneHandler {
-    pub fn new(
-        address_offsets: &AddressOffsets,
-        arch: &Architecture,
-        base_addr: &usize,
-        handle: &ProcessHandle,
-        pid: &Pid,
-        blacklist_location: &String,
-        timing_info_path: &String,
-    ) -> Option<CutsceneHandler> {
+    pub fn new(connection: &Connection, blacklist_location: &str, timing_info_path: &str) -> Option<CutsceneHandler> {
         println!("Loading cutscene skipper handler...");
 
         Some(CutsceneHandler {
-            prompt: TrackedMemory::find(address_offsets, AddressType::CutscenePrompt, *arch, *base_addr)?,
-            status: TrackedMemory::find(address_offsets, AddressType::CutsceneStatus, *arch, *base_addr)?,
-            timeline: TrackedMemory::find(address_offsets, AddressType::CutsceneTimeline, *arch, *base_addr)?,
-            length: TrackedMemory::find(address_offsets, AddressType::CutsceneLength, *arch, *base_addr)?,
-            id: TrackedMemory::find(address_offsets, AddressType::CutsceneId, *arch, *base_addr)?,
-            handle: *handle,
-            blacklist: Blacklist::from_path(blacklist_location, &String::from("cutscene blacklist")),
-            timing_info: TimingInfo::from_path(timing_info_path, &String::from("cutscene timing info")),
+            prompt: TrackedMemory::find(connection, AddressType::CutscenePrompt)?,
+            status: TrackedMemory::find(connection, AddressType::CutsceneStatus)?,
+            timeline: TrackedMemory::find(connection, AddressType::CutsceneTimeline)?,
+            length: TrackedMemory::find(connection, AddressType::CutsceneLength)?,
+            id: TrackedMemory::find(connection, AddressType::CutsceneId)?,
+            handle: connection.process,
+            blacklist: Blacklist::from_path(blacklist_location, "cutscene blacklist"),
+            timing_info: TimingInfo::from_path(timing_info_path, "cutscene timing info"),
             total_time_skipped_rta: 0.0,
             total_time_skipped_igt: 0.0,
             skipping_cutscene: None,
             skip_time: None,
             fadeout_start: None,
-            game: Game::new(GameHandle::Live(*pid, *handle), *base_addr, address_offsets),
-            components: Components::new(*base_addr),
+            game: connection.game(),
+            components: Components::new(connection.base_address),
         })
     }
 

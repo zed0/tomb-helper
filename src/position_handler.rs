@@ -15,15 +15,15 @@
 
 use crate::action::Action;
 use crate::components::Components;
+use crate::find_process::Connection;
 use crate::game::Game;
-use crate::game_memory::Handle as GameHandle;
 use crate::handler::{Handler, HelperState};
 use crate::position::Position;
-use crate::process_details::{AddressOffsets, AddressType};
+use crate::process_details::AddressType;
 use crate::targets::{self, Source};
 use crate::tracked_memory::TrackedMemory;
 use crate::tracked_position::TrackedPosition;
-use process_memory::{Architecture, Pid, ProcessHandle};
+use process_memory::{Architecture, ProcessHandle};
 use std::error::Error;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -57,48 +57,23 @@ const LARA: [AddressType; 3] = [AddressType::XPosition, AddressType::YPosition, 
 const LOOK_AT: [AddressType; 3] = [AddressType::XLookAt, AddressType::YLookAt, AddressType::ZLookAt];
 
 impl PositionHandler {
-    pub fn new_position_handler(
-        address_offsets: &AddressOffsets,
-        arch: &Architecture,
-        base_addr: &usize,
-        handle: &ProcessHandle,
-        pid: &Pid,
-    ) -> Option<PositionHandler> {
+    pub fn new_position_handler(connection: &Connection) -> Option<PositionHandler> {
         println!("Loading position handler...");
-        let camera_rotation = match (address_offsets.get(&AddressType::CameraSin), address_offsets.get(&AddressType::CameraCos)) {
-            (Some(sin), Some(cos)) => Some((
-                TrackedMemory::new(0.0, sin.clone(), *arch, *base_addr),
-                TrackedMemory::new(0.0, cos.clone(), *arch, *base_addr),
-            )),
-            _ => None,
-        };
-        let handler = PositionHandler::new(address_offsets, arch, base_addr, handle, pid, LARA, "position")?;
+        let camera_rotation = TrackedMemory::find(connection, AddressType::CameraSin)
+            .zip(TrackedMemory::find(connection, AddressType::CameraCos));
+        let handler = PositionHandler::new(connection, LARA, "position")?;
         Some(PositionHandler { camera_rotation, is_lara: true, ..handler })
     }
 
-    pub fn new_look_at_handler(
-        address_offsets: &AddressOffsets,
-        arch: &Architecture,
-        base_addr: &usize,
-        handle: &ProcessHandle,
-        pid: &Pid,
-    ) -> Option<PositionHandler> {
+    pub fn new_look_at_handler(connection: &Connection) -> Option<PositionHandler> {
         println!("Loading look at position handler...");
-        PositionHandler::new(address_offsets, arch, base_addr, handle, pid, LOOK_AT, "look at position")
+        PositionHandler::new(connection, LOOK_AT, "look at position")
     }
 
     // For the position at these offsets, if the version has them
-    fn new(
-        address_offsets: &AddressOffsets,
-        arch: &Architecture,
-        base_addr: &usize,
-        handle: &ProcessHandle,
-        pid: &Pid,
-        position_types: [AddressType; 3],
-        name: &str,
-    ) -> Option<PositionHandler> {
-        let [x, y, z] = position_types.map(|t| address_offsets.get(&t).cloned());
-        let position = TrackedPosition::new(x?, y?, z?, *arch, *base_addr);
+    fn new(connection: &Connection, position_types: [AddressType; 3], name: &str) -> Option<PositionHandler> {
+        let [x, y, z] = position_types.map(|t| connection.details.address_offsets.get(&t).cloned());
+        let position = TrackedPosition::new(x?, y?, z?, connection.details.arch, connection.base_address);
         Some(PositionHandler {
             saved_position: position.clone(),
             position,
@@ -107,10 +82,10 @@ impl PositionHandler {
             is_lara: false,
             camera_rotation: None,
             flight: None,
-            game: Game::new(GameHandle::Live(*pid, *handle), *base_addr, address_offsets),
-            components: Components::new(*base_addr),
-            arch: *arch,
-            handle: *handle,
+            game: connection.game(),
+            components: Components::new(connection.base_address),
+            arch: connection.details.arch,
+            handle: connection.process,
             name: name.to_string(),
         })
     }

@@ -12,10 +12,10 @@
 
 use anyhow::{bail, Context as _, Result};
 use crate::find_process;
-use crate::offsets_file::{describe_chain, known_process_details, parse_hex};
+use crate::offsets_file::{describe_chain, parse_hex};
 use crate::process_details::AddressType;
 use iced_x86::{CodeSize, Decoder, DecoderOptions, Formatter, Instruction, IntelFormatter, Mnemonic, OpKind, Register};
-use process_memory::{CopyAddress, DataMember, Memory, Pid, ProcessHandle, TryIntoProcessHandle};
+use process_memory::{CopyAddress, Pid, ProcessHandle, TryIntoProcessHandle};
 use std::collections::{BTreeMap, HashMap};
 use std::time::{Duration, Instant};
 use winapi::shared::minwindef::FALSE;
@@ -642,10 +642,7 @@ pub fn watch_raw(pid: Pid, address: &str, seconds: u64, delay: u64, kind: Breakp
     if addresses.is_empty() || addresses.len() > MAX_WATCHES {
         bail!("Give between 1 and {} addresses", MAX_WATCHES);
     }
-    if delay > 0 {
-        println!("Starting in {} seconds...", delay);
-        std::thread::sleep(Duration::from_secs(delay));
-    }
+    crate::chains::delay_start(delay);
     let hits = record(pid, handle, base_addr, &addresses, seconds, kind, Some((base_addr, base_addr + image_size)), dump)?;
     let mut by_count: Vec<(&usize, &Hit)> = hits.iter().flatten().collect();
     by_count.sort_by_key(|(rva, hit)| (std::cmp::Reverse(hit.count), **rva));
@@ -706,13 +703,10 @@ pub fn disasm(pid: Pid, address: &str, count: usize) -> Result<()> {
 /// `debug watch <value>... [--seconds <n>] [--delay <n>] [--write]`
 pub fn watch(names: &[&str], version: Option<String>, seconds: u64, delay: u64, write_only: bool) -> Result<()> {
     let kind = if write_only { Breakpoint::Write } else { Breakpoint::Access };
-    if delay > 0 {
-        println!("Starting in {} seconds...", delay);
-        std::thread::sleep(Duration::from_secs(delay));
-    }
-    let (pid, handle, base_addr, details) = find_process::find_process(known_process_details(), version)
-        .context("No known game version is running (pass --version to force one from the offsets file)")?;
-    println!("Found {} {}", details.name, details.version.version);
+    crate::chains::delay_start(delay);
+    let connection = crate::chains::connect(version)?;
+    let (pid, handle, base_addr, details) = (connection.pid, connection.process, connection.base_address, &connection.details);
+    let game = connection.game();
 
     let all: BTreeMap<String, AddressType> = details
         .address_offsets
@@ -724,13 +718,9 @@ pub fn watch(names: &[&str], version: Option<String>, seconds: u64, delay: u64, 
         let address_type = *all
             .get(*name)
             .with_context(|| format!("Unknown address type {}. Known: {:?}", name, all.keys().collect::<Vec<_>>()))?;
-        let offsets = &details.address_offsets[&address_type];
-        let mut with_base = offsets.clone();
-        with_base[0] += base_addr;
-        let address = DataMember::<u8>::new_offset(handle, with_base)
-            .set_arch(details.arch)
-            .get_offset()
-            .with_context(|| format!("{:?} {} doesn't resolve", address_type, describe_chain(offsets)))?;
+        let address = game.resolve(address_type).with_context(|| {
+            format!("{:?} {} doesn't resolve", address_type, describe_chain(&details.address_offsets[&address_type]))
+        })?;
         watched.push((address_type, address));
     }
     if watched.is_empty() || watched.len() > MAX_WATCHES {

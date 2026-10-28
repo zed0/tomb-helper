@@ -95,3 +95,10 @@ pub struct ProcessDetails {
     // Where things are in the game's structures, see `layout`
     pub layout: Layout,
 }
+
+// The game and version, e.g. "Shadow of the Tomb Raider (Steam) v1.0 build 492.0_64"
+impl std::fmt::Display for ProcessDetails {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{} {}", self.name, self.version.version)
+    }
+}

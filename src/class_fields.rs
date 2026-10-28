@@ -252,8 +252,7 @@ pub fn print_class_layout(from: &str, to: &str, from_version: Option<&str>, to_v
     let (old, new) = (crate::derive::load(from)?, crate::derive::load(to)?);
     let old_details = crate::derive::reference_details(&old, from_version)?;
     let new_details = crate::derive::reference_details(&new, to_version).ok();
-    println!("From {} {} to {}", old_details.name, old_details.version.version,
-        new_details.as_ref().map_or("an unknown build".to_string(), |d| format!("{} {}", d.name, d.version.version)));
+    println!("From {} to {}", old_details, new_details.as_ref().map_or("an unknown build".to_string(), |d| d.to_string()));
     let mut derived = derive_layout(&old, &old_details.layout, &new);
     derived.sort_by(|a, b| b.confidence.cmp(&a.confidence).then(a.name.cmp(&b.name)));
     // Only what the offsets file says for `to` counts: a field it leaves at the default (ROTTR Steam's) isn't known,

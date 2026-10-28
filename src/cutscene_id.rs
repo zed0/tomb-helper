@@ -150,7 +150,7 @@ pub fn hint(details: &crate::process_details::ProcessDetails) -> Option<Vec<usiz
 pub fn find_and_save(game: &Game, details: &mut crate::process_details::ProcessDetails, save: bool) -> Result<Found> {
     let hint = hint(details).context("the version has no CutsceneId to start from, sure or not")?;
     let config = crate::config::get_config();
-    let timing = TimingInfo::from_path(&config.cutscene_timing_file, &String::from("cutscene timing info"));
+    let timing = TimingInfo::from_path(&config.cutscene_timing_file, "cutscene timing info");
     let found = find(game, &hint, &timing)?;
     let unchanged = details.address_offsets.get(&AddressType::CutsceneId) == Some(&found.chain);
     println!("CutsceneId {} = {:#X} ({}){}", describe_chain(&found.chain), found.id, found.how, if unchanged { ", as it was" } else { "" });
@@ -164,8 +164,7 @@ pub fn find_and_save(game: &Game, details: &mut crate::process_details::ProcessD
 
 /// `debug find-cutscene-id [--save]`
 pub fn find_cutscene_id(version: Option<String>, save: bool) -> Result<()> {
-    let (pid, handle, base_address, mut details) = crate::chains::connect(version)?;
-    println!("Found {} {}", details.name, details.version.version);
-    let game = Game::new(crate::game_memory::Handle::Live(pid, handle), base_address, &details.address_offsets);
-    find_and_save(&game, &mut details, save).map(|_| ())
+    let mut connection = crate::chains::connect(version)?;
+    let game = connection.game();
+    find_and_save(&game, &mut connection.details, save).map(|_| ())
 }

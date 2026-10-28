@@ -256,8 +256,8 @@ pub fn apply(
 /// `debug camera-fields [--layout-of <version>]`: the running game's camera fields, starting from its own layout or
 /// another version's
 pub fn print_camera_fields(version: Option<String>, layout_of: Option<&str>) -> Result<()> {
-    let (pid, handle, base_address, details) = crate::chains::connect(version)?;
-    println!("Found {} {}", details.name, details.version.version);
+    let connection = crate::chains::connect(version)?;
+    let details = &connection.details;
     let start = match layout_of {
         Some(other) => crate::offsets_file::known_process_details()
             .into_iter()
@@ -266,7 +266,7 @@ pub fn print_camera_fields(version: Option<String>, layout_of: Option<&str>) -> 
             .layout,
         None => details.layout.clone(),
     };
-    let game = Game::new(crate::game_memory::Handle::Live(pid, handle), base_address, &details.address_offsets);
+    let game = connection.game();
     let (camera, notes) = derive(&game, &Layout { camera: start.camera.clone(), ..details.layout.clone() })
         .context("GameRender or Lara's position couldn't be read")?;
     for note in &notes {

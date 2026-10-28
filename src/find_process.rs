@@ -1,37 +1,56 @@
 //! Finding the game: process and module lookup (`get_pid`, `get_base_address`, `is_process_running`), and which known
 //! version it is, by image size first, else by the version string in its memory (or `force_version`).
 
+use crate::game::Game;
+use crate::game_memory::Handle;
 use crate::process_details::{AddressType, ProcessDetails};
-use process_memory::{CopyAddress, DataMember, Memory, Pid, TryIntoProcessHandle};
+use process_memory::{CopyAddress, DataMember, Memory, Pid, ProcessHandle, TryIntoProcessHandle};
 use std::ptr::{null, null_mut};
 use winapi::shared::winerror::WAIT_TIMEOUT;
 use winapi::um::winnt::SYNCHRONIZE;
 
-pub fn find_process(
-    possible_processes: Vec<ProcessDetails>,
-    force_version: Option<String>,
-) -> Option<(Pid, process_memory::ProcessHandle, usize, ProcessDetails)> {
+/// A running game, of a version in the offsets file
+pub struct Connection {
+    pub pid: Pid,
+    pub process: ProcessHandle,
+    pub base_address: usize,
+    pub details: ProcessDetails,
+}
+
+impl Connection {
+    /// For reading its memory
+    pub fn handle(&self) -> Handle {
+        Handle::Live(self.pid, self.process)
+    }
+
+    /// For finding things in it, through its version's offsets
+    pub fn game(&self) -> Game {
+        Game::new(self.handle(), self.base_address, &self.details.address_offsets)
+    }
+}
+
+/// The running game, if it's one of these versions (or `force_version`)
+pub fn find_process(possible_processes: Vec<ProcessDetails>, force_version: Option<String>) -> Option<Connection> {
     possible_processes.iter().find_map(|details| {
         let pid = get_pid(&details.executable_name)?;
         let handle = pid.try_into_process_handle().ok()?;
         let base_addr = get_base_address(pid) as *const _ as usize;
+        let connection = || Some(Connection { pid, process: handle, base_address: base_addr, details: details.clone() });
 
         if force_version == Some(details.version.version.clone()) {
             println!(
                 "Warning: Forcing version to {}, some functions may not work as expected!",
                 details.version.version
             );
-            return Some((pid, handle, base_addr, details.clone()));
+            return connection();
         }
 
         // Try using the image size first, then the version string
         if let Some(image_size) = details.version.image_size {
-            let a = get_image_size(handle, base_addr).ok()?;
-            if image_size != a {
+            if get_image_size(handle, base_addr).ok()? != image_size {
                 return None;
             }
-
-            return Some((pid, handle, base_addr, details.clone()));
+            return connection();
         }
 
         let version_in_memory = try_read_std_string_utf8(
@@ -46,7 +65,7 @@ pub fn find_process(
         if version_in_memory != details.version.version {
             None
         } else {
-            Some((pid, handle, base_addr, details.clone()))
+            connection()
         }
     })
 }
