@@ -86,7 +86,7 @@ impl<'a> Describer<'a> {
     }
 
     fn is_code(&self, rva: usize) -> bool {
-        self.section(rva).map_or(false, |s| s.executable)
+        self.section(rva).is_some_and(|s| s.executable)
     }
 
     fn decode(&self, rva: usize) -> Option<Instruction> {
@@ -94,7 +94,7 @@ impl<'a> Describer<'a> {
         let mut decoder =
             Decoder::with_ip(self.bitness, &data[..data.len().min(16)], self.image.image_base + rva as u64, DecoderOptions::NONE);
         let instruction = decoder.decode();
-        (!instruction.is_invalid()).then(|| instruction)
+        (!instruction.is_invalid()).then_some(instruction)
     }
 
     /// The instructions before the one at `start`, nearest last, stopping at the start of the function
@@ -368,7 +368,7 @@ impl<'a> Matcher<'a> {
             .filter(|(_, q)| q.abs_diff(best.1) > NEARBY && self.targets.get(q) != self.targets.get(&best.1))
             .map(|(score, _)| *score)
             .fold(0.0, f64::max);
-        (best.0 >= MIN_SCORE && best.0 - second >= MIN_MARGIN).then(|| (best.1, best.0))
+        (best.0 >= MIN_SCORE && best.0 - second >= MIN_MARGIN).then_some((best.1, best.0))
     }
 
     /// The new reference most like the old one at `old_position`, and how alike they are (from 0 to 1)

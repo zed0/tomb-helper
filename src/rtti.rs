@@ -116,7 +116,7 @@ fn find_vtables(data: &[u8], base_address: usize, format: &Format) -> Vec<(usize
         let checked = if format.descriptor_is_rva {
             u32_at(rva + 0x14) == Some(rva)
         } else {
-            u32_at(rva + 0x10).map_or(false, in_image)
+            u32_at(rva + 0x10).is_some_and(in_image)
         };
         let descriptor = match u32_at(rva + format.descriptor) {
             Some(field) if checked => format.descriptor_address(field, base_address).wrapping_sub(base_address),

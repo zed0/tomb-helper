@@ -31,6 +31,6 @@ pub trait ReadableFromPath {
 
         let result = serde_json::from_str(&content)
             .expect(format!("Could not parse {} to expected format", typename).as_str());
-        return result;
+        result
     }
 }

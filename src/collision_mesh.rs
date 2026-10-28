@@ -145,7 +145,7 @@ impl CollisionMeshes {
                 placements.push(Placement {
                     address,
                     mesh,
-                    flipped: instance.flags.map_or(false, |offset| u16_at(&bytes, offset) & 1 != 0),
+                    flipped: instance.flags.is_some_and(|offset| u16_at(&bytes, offset) & 1 != 0),
                     detailed: is_detailed,
                     min: vector_at(&bytes, instance.min) + origin(instance, &bytes),
                     max: vector_at(&bytes, instance.max) + origin(instance, &bytes),
@@ -166,7 +166,7 @@ impl CollisionMeshes {
     fn mesh_header(&mut self, handle: Handle, address: usize) -> io::Result<Vec<u8>> {
         let mut header = vec![0u8; handle.layout().collision_mesh.header_size];
         handle.copy_address(address, &mut header)?;
-        if self.meshes.get(&address).map_or(false, |m| m.header != header) {
+        if self.meshes.get(&address).is_some_and(|m| m.header != header) {
             self.meshes.remove(&address);
         }
         Ok(header)
@@ -258,7 +258,7 @@ fn place(handle: Handle, placement: &mut Placement, meshes: &mut HashMap<usize, 
     }
     // Compared by bits, so a NaN in it doesn't make it look changed every time
     let bits = matrix.map(f32::to_bits);
-    if placement.placed.as_ref().map_or(true, |(placed_with, _)| *placed_with != bits) {
+    if placement.placed.as_ref().is_none_or(|(placed_with, _)| *placed_with != bits) {
         let triangles = place_triangles(&meshes[&placement.mesh], &matrix, placement.flipped, placement.detailed);
         placement.placed = Some((bits, triangles));
     }

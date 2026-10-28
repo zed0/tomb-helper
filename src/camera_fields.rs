@@ -68,7 +68,7 @@ fn transform(bytes: &[u8], offset: usize) -> Option<[f32; 16]> {
     let rows = [0, 4, 8].map(|i| Vector3::new(m[i], m[i + 1], m[i + 2]));
     let unit = rows.iter().all(|r| (r.norm_squared() - 1.0).abs() <= TOLERANCE);
     let square = (0..3).all(|i| (i + 1..3).all(|j| rows[i].dot(&rows[j]).abs() <= TOLERANCE));
-    (unit && square).then(|| m)
+    (unit && square).then_some(m)
 }
 
 // Where it puts the camera, read as camera-to-world: how far from Lara
@@ -125,7 +125,7 @@ impl Camera {
 
     /// Whether `offset` starts a camera-to-world matrix (`sin` is its first row's first float)
     pub fn is_to_world(&self, offset: usize) -> bool {
-        transform(&self.bytes, offset).map_or(false, |m| self.near_lara(&m))
+        transform(&self.bytes, offset).is_some_and(|m| self.near_lara(&m))
     }
 
     /// Whether the lens fields read a near plane, a far one, a fov and an aspect ratio

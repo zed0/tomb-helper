@@ -84,7 +84,7 @@ impl ObjectList {
                 };
                 instances.push(Instance {
                     address,
-                    id: u64_at(&slot, instance.id),
+                    id: u64_at(slot, instance.id),
                     position: read_position_from(slot, instance.position),
                     name,
                     full_name,

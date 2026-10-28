@@ -147,7 +147,7 @@ pub fn find_player_proxy(handle: Handle, image: &PeImage, base_address: usize, i
         .collect();
     let size = handle.pointer_size();
     let is_lara = |instance: usize| {
-        crate::object_list::object_name(handle, instance).map_or(false, |name| name.to_lowercase().contains(LARA_NAME))
+        crate::object_list::object_name(handle, instance).is_some_and(|name| name.to_lowercase().contains(LARA_NAME))
     };
     let proxies: Vec<usize> = (0..image.data.len().saturating_sub(PROXY_SEARCHED))
         .step_by(size)
@@ -243,7 +243,7 @@ fn instances_check_out(
                 .iter()
                 .filter(|&&slot| {
                     let name = crate::object_list::object_name(handle, base_address + rva + slot * layout.size);
-                    name.map_or(false, |n| !n.is_empty() && n.chars().all(|c| c.is_ascii_graphic()))
+                    name.is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_graphic()))
                 })
                 .count();
             !used.is_empty() && named * 10 >= used.len() * 9

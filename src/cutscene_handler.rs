@@ -162,7 +162,7 @@ impl CutsceneHandler {
 
         let cutscene_info = self.skipping_cutscene.as_ref().unwrap();
 
-        return valid_cutscene.is_err() || !cutscene_info.ids.contains(&self.id.data);
+        valid_cutscene.is_err() || !cutscene_info.ids.contains(&self.id.data)
     }
 
     fn finish_fadeout(&mut self) {
@@ -197,13 +197,9 @@ impl CutsceneHandler {
 
 impl Handler for CutsceneHandler {
     fn handle_tick(&mut self) -> Result<(), Box<dyn Error>> {
-        if self.skipping_cutscene.is_some() {
-            if self.is_fadeout_finished() {
-                self.finish_fadeout();
-            }
-
+        if self.skipping_cutscene.is_some() && self.is_fadeout_finished() {
+            self.finish_fadeout();
         }
-
         Ok(())
     }
     fn handle_action(&mut self, action: Action) -> Result<(), Box<dyn Error>> {

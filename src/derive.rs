@@ -240,7 +240,7 @@ impl Derivation {
 
     fn confident(&self) -> bool {
         let total: f64 = self.votes.iter().map(|(_, v)| v).sum();
-        self.confirmed && self.matched >= 2 && self.votes.first().map_or(false, |(_, v)| *v >= 0.8 * total)
+        self.confirmed && self.matched >= 2 && self.votes.first().is_some_and(|(_, v)| *v >= 0.8 * total)
     }
 }
 
@@ -377,7 +377,7 @@ fn derive_address(old: &References, new: &References, matching: Matching, target
                     .map(|(q, score)| Pair {
                         old_position: p as usize,
                         old_target: target,
-                        new_position: q as usize,
+                        new_position: q,
                         new_target: new_base,
                         score,
                     })
@@ -420,7 +420,7 @@ impl<'a, 'r> Deriver<'a, 'r> {
         if let Some(found) = by_code.best() {
             let back = self.back.get_or_init(|| normalised::Matcher::new(self.new, self.old));
             back_to = derive_address(self.new, self.old, Matching::Normalised(back), found).best();
-            by_code.confirmed = back_to.map_or(false, |b| b.abs_diff(base) <= NORMALISED_SPANS[2]);
+            by_code.confirmed = back_to.is_some_and(|b| b.abs_diff(base) <= NORMALISED_SPANS[2]);
         }
         by_code.normalised = true;
         let weight = |d: &Derivation| d.votes.first().map_or(0.0, |(_, v)| *v);

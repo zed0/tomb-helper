@@ -207,7 +207,7 @@ impl AttachedBodies {
             let family: Vec<usize> = std::iter::once(body).chain(self.bodies.iter().copied()).collect();
             self.bodies.iter().all(|&b| read_pointer(handle, b + parent).is_some_and(|p| family.contains(&p)))
         };
-        let fresh = self.walked.map_or(false, |at| at.elapsed() < BODIES_REWALK);
+        let fresh = self.walked.is_some_and(|at| at.elapsed() < BODIES_REWALK);
         if self.of != body || !fresh || !still_attached() {
             self.bodies = walk_attached(handle, body);
             self.of = body;
@@ -317,13 +317,13 @@ pub fn read_proxy(handle: Handle, proxy: usize, attached_bodies: Option<&mut Att
     let attached_active = attached.iter().any(|a| a.touching)
         || attached_bodies.iter().any(|&b| owner_collides(handle, b) == Some(true));
     for proxy in &mut attached {
-        let touching_lara = shapes.first().map_or(false, |lara| capsules_overlap(&proxy.capsule, lara));
+        let touching_lara = shapes.first().is_some_and(|lara| capsules_overlap(&proxy.capsule, lara));
         proxy.touching = on_contact(&proxy.capsule) || (proxy.touching && !touching_lara);
     }
 
     Ok(ProxyCapsules {
         // Its touching flag is always set, so only go by contacts
-        touching: shapes.first().map_or(false, |capsule| on_contact(capsule)),
+        touching: shapes.first().is_some_and(on_contact),
         shapes,
         attached,
         attached_active,

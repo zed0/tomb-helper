@@ -99,12 +99,12 @@ impl Context {
             let mut context: WOW64_CONTEXT = unsafe { std::mem::zeroed() };
             context.ContextFlags =
                 if full { WOW64_CONTEXT_FULL | WOW64_CONTEXT_DEBUG_REGISTERS } else { WOW64_CONTEXT_DEBUG_REGISTERS };
-            (unsafe { Wow64GetThreadContext(thread, &mut context) } != FALSE).then(|| Context::Wow64(context))
+            (unsafe { Wow64GetThreadContext(thread, &mut context) } != FALSE).then_some(Context::Wow64(context))
         } else {
             let mut context: AlignedContext = unsafe { std::mem::zeroed() };
             context.0.ContextFlags =
                 if full { CONTEXT_FULL | CONTEXT_DEBUG_REGISTERS } else { CONTEXT_DEBUG_REGISTERS };
-            (unsafe { GetThreadContext(thread, &mut context.0) } != FALSE).then(|| Context::Native(context))
+            (unsafe { GetThreadContext(thread, &mut context.0) } != FALSE).then_some(Context::Native(context))
         }
     }
 
@@ -286,7 +286,7 @@ fn instruction_at(handle: ProcessHandle, c: &Context, ip: usize) -> Option<Instr
     let mut bytes = [0_u8; MAX_INSTRUCTION_LENGTH];
     handle.copy_address(ip, &mut bytes).ok()?;
     let instruction = Decoder::with_ip(c.bitness(), &bytes, ip as u64, DecoderOptions::NONE).decode();
-    (!instruction.is_invalid()).then(|| instruction)
+    (!instruction.is_invalid()).then_some(instruction)
 }
 
 fn instruction_ending_at(handle: ProcessHandle, c: &Context, ip: usize, watched: usize) -> Option<Instruction> {
@@ -522,7 +522,7 @@ pub fn record(pid: Pid, watch: &Watch, seconds: u64) -> Result<Vec<BTreeMap<usiz
                 unsafe { ResumeThread(*thread) };
             }
         }
-        if detaching && quiet_since.map_or(false, |t| t.elapsed() > Duration::from_millis(500)) {
+        if detaching && quiet_since.is_some_and(|t| t.elapsed() > Duration::from_millis(500)) {
             break;
         }
 
@@ -541,12 +541,12 @@ pub fn record(pid: Pid, watch: &Watch, seconds: u64) -> Result<Vec<BTreeMap<usiz
                 let info = unsafe { event.u.CreateProcessInfo() };
                 unsafe { CloseHandle(info.hFile) };
                 threads.insert(event.dwThreadId, info.hThread);
-                armed += set_watches(info.hThread, if detaching { &[] } else { &addresses }, kind) as usize;
+                armed += set_watches(info.hThread, if detaching { &[] } else { addresses }, kind) as usize;
             }
             CREATE_THREAD_DEBUG_EVENT => {
                 let thread = unsafe { event.u.CreateThread() }.hThread;
                 threads.insert(event.dwThreadId, thread);
-                armed += set_watches(thread, if detaching { &[] } else { &addresses }, kind) as usize;
+                armed += set_watches(thread, if detaching { &[] } else { addresses }, kind) as usize;
             }
             EXIT_THREAD_DEBUG_EVENT => {
                 threads.remove(&event.dwThreadId);
@@ -567,7 +567,7 @@ pub fn record(pid: Pid, watch: &Watch, seconds: u64) -> Result<Vec<BTreeMap<usiz
                     // The breakpoint Windows raises once attached; every thread is known by now
                     attached = true;
                     for thread in threads.values() {
-                        armed += set_watches(*thread, &addresses, kind) as usize;
+                        armed += set_watches(*thread, addresses, kind) as usize;
                     }
                 } else if !is_breakpoint {
                     // The game's own exceptions are its business
@@ -616,7 +616,7 @@ struct Samples {
 
 impl Samples {
     fn sample(&mut self, pid: Pid) {
-        if self.last.map_or(false, |t| t.elapsed() < SAMPLE_INTERVAL) {
+        if self.last.is_some_and(|t| t.elapsed() < SAMPLE_INTERVAL) {
             return;
         }
         self.last = Some(Instant::now());

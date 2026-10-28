@@ -411,7 +411,7 @@ impl OverlayHandler {
 
     // The objects every so often, and the objects and meshes straight away when their settings change
     fn refresh(&mut self, settings: &TickSettings) -> Result<(), Box<dyn Error>> {
-        let refresh_due = self.last_object_refresh.map_or(true, |t| t.elapsed() > OBJECT_REFRESH_INTERVAL);
+        let refresh_due = self.last_object_refresh.is_none_or(|t| t.elapsed() > OBJECT_REFRESH_INTERVAL);
         if refresh_due || settings.objects != self.object_settings {
             self.last_object_refresh = Some(time::Instant::now());
             self.object_settings = settings.objects;
@@ -437,7 +437,7 @@ impl OverlayHandler {
             None
         };
         let proxies = proxy.and_then(|proxy| self.game.lara_proxies(proxy).ok());
-        let aiming = proxies.as_ref().map_or(false, |p| p.attached_active);
+        let aiming = proxies.as_ref().is_some_and(|p| p.attached_active);
         let ProxyCapsules { shapes, touching, attached, attached_active } = match proxies {
             Some(proxies) if show => proxies,
             _ => ProxyCapsules::default(),
@@ -449,7 +449,7 @@ impl OverlayHandler {
 
     // Whether Lara's proxy and each attached one were touching something in the last `TOUCHING_HOLD`
     fn hold_touching(&mut self, touching: bool, attached: &[AttachedProxy]) -> (bool, [bool; MAX_ATTACHED]) {
-        let held = |last: Option<time::Instant>| last.map_or(false, |t| t.elapsed() < TOUCHING_HOLD);
+        let held = |last: Option<time::Instant>| last.is_some_and(|t| t.elapsed() < TOUCHING_HOLD);
         if touching {
             self.proxy_last_touching = Some(time::Instant::now());
         }

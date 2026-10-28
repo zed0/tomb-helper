@@ -43,7 +43,7 @@ fn pool_record(handle: Handle, pool: usize, (index, id): (usize, usize), record_
     }
     let inner = read_index(handle, entry)?;
     let record = pool + layout.records + inner * record_size;
-    (read_handle(handle, record + record_index)? == (inner, id)).then(|| record)
+    (read_handle(handle, record + record_index)? == (inner, id)).then_some(record)
 }
 
 /// The instance a handle refers to, if it's still that one
@@ -53,7 +53,7 @@ fn instance(handle: Handle, instances: usize, (index, id): (usize, usize)) -> Op
         return None;
     }
     let instance = instances + layout.instance_base + index * handle.layout().instance.size;
-    (read_handle(handle, instance + layout.instance_index)? == (index, id)).then(|| instance)
+    (read_handle(handle, instance + layout.instance_index)? == (index, id)).then_some(instance)
 }
 
 /// The tuning block of the weapon Lara has out, if she has one out
@@ -98,7 +98,7 @@ fn read_sweep(handle: Handle, block: usize) -> Option<([f32; 3], [f32; 3], f32)>
         && radius < MAX_RADIUS
         && length > MIN_SWEEP
         && length < MAX_SWEEP;
-    sane.then(|| (start, end, radius))
+    sane.then_some((start, end, radius))
 }
 
 /// The aim sweep in world space, as a capsule, if Lara has a weapon out, and whether it's pushing her. `lara` is her
@@ -113,6 +113,6 @@ pub fn read(handle: Handle, instances: usize, inventories: usize, types: usize, 
     let pushing = read_pointer(handle, lara + layout.instance_player)
         .and_then(|p| read_pointer(handle, p + layout.player))
         .and_then(|player| read_floats::<2>(handle, player + layout.push))
-        .map_or(false, |[x, y]| (x * x + y * y).sqrt() > MIN_PUSH);
+        .is_some_and(|[x, y]| (x * x + y * y).sqrt() > MIN_PUSH);
     Some(AttachedProxy { capsule: Capsule { a: to_world(start), b: to_world(end), radius }, touching: pushing })
 }

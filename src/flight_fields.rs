@@ -186,7 +186,7 @@ fn find_sphere(game: &Game, classes: &mut Classes, controller: usize) -> Option<
     (size..CONTROLLER_SPAN).step_by(size).find(|&o| {
         classes.name(game.handle, controller + o).as_deref() == Some(SPHERE)
             || read_pointer(game.handle, controller + o)
-                .map_or(false, |p| p != 0 && classes.name(game.handle, p).as_deref() == Some(SPHERE))
+                .is_some_and(|p| p != 0 && classes.name(game.handle, p).as_deref() == Some(SPHERE))
     })
 }
 
@@ -206,7 +206,7 @@ fn find_previous(game: &Game, body: usize, next: usize) -> Option<usize> {
                 checked += 1;
                 current = after;
             }
-            (checked > 0).then(|| previous)
+            (checked > 0).then_some(previous)
         })
         .next()
 }

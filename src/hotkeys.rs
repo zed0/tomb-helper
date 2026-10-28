@@ -252,7 +252,7 @@ impl Repeat {
         let setting = |action| {
             let mut value: u32 = 0;
             let read = unsafe { SystemParametersInfoW(action, 0, &mut value as *mut u32 as *mut _, 0) } != 0;
-            read.then(|| value)
+            read.then_some(value)
         };
         let delay = setting(SPI_GETKEYBOARDDELAY).unwrap_or(1).min(3);
         let speed = setting(SPI_GETKEYBOARDSPEED).unwrap_or(31).min(31);

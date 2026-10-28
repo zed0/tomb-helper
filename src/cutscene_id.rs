@@ -122,9 +122,9 @@ fn ids_in(game: &Game, object: usize, expected: &HashSet<u32>, known: &HashSet<u
         .filter_map(|offset| {
             let id = at(offset)?;
             let in_run = (4..=RUN).step_by(4).any(|d| {
-                offset.checked_sub(d).and_then(at).map_or(false, |v| known.contains(&v)) || at(offset + d).map_or(false, |v| known.contains(&v))
+                offset.checked_sub(d).and_then(at).is_some_and(|v| known.contains(&v)) || at(offset + d).is_some_and(|v| known.contains(&v))
             });
-            (expected.contains(&id) && !in_run).then(|| (offset, id))
+            (expected.contains(&id) && !in_run).then_some((offset, id))
         })
         .collect()
 }

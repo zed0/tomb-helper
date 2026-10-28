@@ -86,7 +86,7 @@ fn describe(bytes: &[u8], offset: usize, kind: Kind, lara: &Vector3<f32>) -> Opt
             vec![(rotation * Vector3::z()).z]
         }
     };
-    values.iter().all(|v| v.is_finite()).then(|| values)
+    values.iter().all(|v| v.is_finite()).then_some(values)
 }
 
 fn same(a: &[f32], b: &[f32]) -> bool {
@@ -205,7 +205,7 @@ pub fn derive(source: &Game, source_details: &ProcessDetails, target: &Game, tar
         };
         let candidates: Vec<usize> = (0..target_bytes.len().saturating_sub(kind.size()))
             .step_by(4)
-            .filter(|&o| describe(&target_bytes, o, kind, &target_lara).map_or(false, |v| same(&v, &value)))
+            .filter(|&o| describe(&target_bytes, o, kind, &target_lara).is_some_and(|v| same(&v, &value)))
             .collect();
         found.push((name, offset, kind, candidates));
     }
@@ -221,12 +221,12 @@ pub fn sources(template: &ProcessDetails, previous: Option<&ProcessDetails>, kno
         .flatten()
         .filter_map(|e| e.ok())
         .filter_map(|e| Some((e.metadata().ok()?.modified().ok()?, e.path())))
-        .filter(|(_, p)| p.extension().map_or(false, |e| e == "snap"))
+        .filter(|(_, p)| p.extension().is_some_and(|e| e == "snap"))
         .collect();
     snapshots.sort();
     snapshots.reverse();
     let named = |prefix: &str| -> Option<std::path::PathBuf> {
-        snapshots.iter().map(|(_, p)| p).find(|p| p.file_name().map_or(false, |n| n.to_string_lossy().starts_with(prefix))).cloned()
+        snapshots.iter().map(|(_, p)| p).find(|p| p.file_name().is_some_and(|n| n.to_string_lossy().starts_with(prefix))).cloned()
     };
     let this_build = crate::snapshot::file_name(&template.name, &template.version.version) + " ";
     let chosen: Vec<std::path::PathBuf> = match previous {

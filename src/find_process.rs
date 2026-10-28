@@ -157,7 +157,7 @@ pub fn is_process_running(pid: Pid) -> bool {
         let process = winapi::um::processthreadsapi::OpenProcess(SYNCHRONIZE, 0, pid);
         let result = winapi::um::synchapi::WaitForSingleObject(process, 0);
         winapi::um::handleapi::CloseHandle(process);
-        return result == WAIT_TIMEOUT;
+        result == WAIT_TIMEOUT
     }
 }
 

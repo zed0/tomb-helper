@@ -62,13 +62,10 @@ impl CutsceneTimingGeneratorHandler {
     }
 
     fn get_livesplit_time(&mut self) -> Result<Duration, Box<dyn Error>> {
-        self.livesplit_connection.write(b"getcurrenttime\r\n").unwrap();
+        self.livesplit_connection.write_all(b"getcurrenttime\r\n")?;
         let mut reader = BufReader::new(self.livesplit_connection.try_clone().unwrap());
         let mut buffer = String::new();
         reader.read_line(&mut buffer).unwrap();
-        let hours;
-        let minutes;
-        let seconds;
         let units = buffer
             .trim()
             .split(':')
@@ -78,20 +75,16 @@ impl CutsceneTimingGeneratorHandler {
             .take(3)
             .collect::<Vec<f32>>();
 
-        match units.as_slice() {
-            [s,m,h,..] => {
-                hours = *h;
-                minutes = *m;
-                seconds = *s;
-            },
+        let (hours, minutes, seconds) = match units.as_slice() {
+            [s, m, h, ..] => (*h, *m, *s),
             _ => return Err(CutsceneTimingError::new("invalid time from livesplit").into()),
-        }
+        };
 
-        return Ok(Duration::from_secs_f32(
+        Ok(Duration::from_secs_f32(
             seconds
             + (60.0 * minutes)
             + (60.0 * 60.0 * hours)
-        ));
+        ))
     }
 
     fn started_cutscene(&mut self) -> Result<(), Box<dyn Error>> {
@@ -127,8 +120,8 @@ impl CutsceneTimingGeneratorHandler {
             ids: self.current_id_list.clone(),
             real_time: length_real_time.as_secs_f32(),
             in_game_time: length_game_time.as_secs_f32(),
-            skippable_at_in_game_time: skippable_at_in_game_time,
-            skippable_at_real_time: skippable_at_real_time,
+            skippable_at_in_game_time,
+            skippable_at_real_time,
         };
 
         self.timing_info.cutscenes.retain(|e| e.ids != new_entry.ids);

@@ -101,7 +101,7 @@ fn player_in_chain(game: &Game) -> Option<usize> {
     }
     let player = resolve(game.handle, game.base_address, &[&chain[..n - 2], &[0]].concat())?;
     let mut classes = Classes::new(game.base_address);
-    (classes.name(game.handle, player).as_deref() == Some(PLAYER)).then(|| player)
+    (classes.name(game.handle, player).as_deref() == Some(PLAYER)).then_some(player)
 }
 
 /// Lifts Lara twice and finds the fields of her player object that followed

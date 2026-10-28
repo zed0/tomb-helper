@@ -112,8 +112,8 @@ const UNREADABLE_OS_ERRORS: [i32; 4] = [6, 299, 487, 998];
 pub fn is_unreadable(error: &(dyn std::error::Error + 'static)) -> bool {
     match error.downcast_ref::<io::Error>() {
         Some(e) => {
-            e.get_ref().map_or(false, |inner| inner.is::<Unreadable>())
-                || e.raw_os_error().map_or(false, |code| UNREADABLE_OS_ERRORS.contains(&code))
+            e.get_ref().is_some_and(|inner| inner.is::<Unreadable>())
+                || e.raw_os_error().is_some_and(|code| UNREADABLE_OS_ERRORS.contains(&code))
         }
         None => error.is::<Unreadable>(),
     }

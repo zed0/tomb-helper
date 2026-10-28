@@ -42,7 +42,7 @@ fn main() {
             TARGET_32, TARGET_32, SKIP
         );
     }
-    let release = env::var("PROFILE").map_or(false, |p| p == "release");
+    let release = env::var("PROFILE").is_ok_and(|p| p == "release");
     let target_dir = profile_dir.join("overlay-32-bit");
     let mut cargo = Command::new(env::var("CARGO").unwrap_or_else(|_| "cargo".to_string()));
     cargo

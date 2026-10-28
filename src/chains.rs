@@ -141,7 +141,7 @@ fn candidate_chains(
         let function = read_pointer_or_null(handle, slot).ok()?;
         function.checked_sub(base_addr).filter(|rva| *rva < image_size)
     };
-    let chains = code_chains(&image, &resolver);
+    let chains = code_chains(image, &resolver);
     println!("Evaluating {} code chains...", chains.len());
 
     let mut candidates: HashMap<AddressType, HashMap<Vec<i64>, Candidate>> = HashMap::new();
@@ -152,7 +152,7 @@ fn candidate_chains(
         let existing = candidates.entry(t).or_default();
         let keep = existing
             .get(&candidate.chain)
-            .map_or(true, |c| (c.exact, c.sites) < (candidate.exact, candidate.sites));
+            .is_none_or(|c| (c.exact, c.sites) < (candidate.exact, candidate.sites));
         if keep {
             existing.insert(candidate.chain.clone(), candidate);
         }

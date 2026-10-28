@@ -342,7 +342,7 @@ fn owner_check(game: &Game, components: &mut Components, address_type: AddressTy
         AddressType::XPosition | AddressType::YPosition | AddressType::ZPosition
             if game.has(AddressType::InstanceArray) && game.layout().instance.components.is_some() =>
         {
-            let is_lara = owner.map_or(false, |instance| components.get(game.handle, instance, components::PLAYER).is_some());
+            let is_lara = owner.is_some_and(|instance| components.get(game.handle, instance, components::PLAYER).is_some());
             return Some(if is_lara {
                 Ok("an instance with a PlayerComponent".to_string())
             } else {
@@ -361,7 +361,7 @@ fn owner_check(game: &Game, components: &mut Components, address_type: AddressTy
 
 // "a Player", "an ExplorationCameraController"
 fn a(noun: &str) -> String {
-    let vowel = noun.chars().next().map_or(false, |c| "AEIOUaeiou".contains(c));
+    let vowel = noun.chars().next().is_some_and(|c| "AEIOUaeiou".contains(c));
     format!("{} {}", if vowel { "an" } else { "a" }, noun)
 }
 

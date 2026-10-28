@@ -120,7 +120,7 @@ impl TriggerScripts {
     /// Takes the results of a finished scan, and starts another if some of these triggers need it. `names` are the
     /// names of the instances by id.
     pub fn update(&mut self, triggers: &[u64], names: &HashMap<u64, String>) {
-        if self.running.as_ref().map_or(false, |r| r.is_finished()) {
+        if self.running.as_ref().is_some_and(|r| r.is_finished()) {
             match self.running.take().unwrap().join() {
                 Ok(Ok((classes, nodes))) => {
                     self.classes = Some(classes);

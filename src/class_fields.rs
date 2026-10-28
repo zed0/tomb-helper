@@ -252,7 +252,7 @@ pub fn print_class_layout(from: &str, to: &str, from_version: Option<&str>, to_v
     let known = |name: &str| {
         let layout = &new_details.as_ref()?.layout;
         let offset = field_offset(layout, name)?;
-        (layout.is_default() || field_offset(&default, name) != Some(offset)).then(|| offset)
+        (layout.is_default() || field_offset(&default, name) != Some(offset)).then_some(offset)
     };
     // (right, wrong, unchecked) by confidence
     let mut tally: BTreeMap<Confidence, (usize, usize, usize)> = BTreeMap::new();
@@ -289,7 +289,7 @@ pub fn print_class_layout(from: &str, to: &str, from_version: Option<&str>, to_v
     }
 
     // What `update-offsets` would do with it, starting from `from`'s layout
-    let same_game = new_details.as_ref().map_or(false, |d| d.name == old_details.name);
+    let same_game = new_details.as_ref().is_some_and(|d| d.name == old_details.name);
     let mut notes = vec![];
     let applied = crate::update_offsets::class_layout(
         old_details.layout.clone(),

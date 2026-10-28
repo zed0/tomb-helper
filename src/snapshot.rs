@@ -257,7 +257,7 @@ pub fn check_all(dir: Option<&str>, accept: bool) -> Result<()> {
     let mut paths: Vec<PathBuf> = std::fs::read_dir(&dir)
         .with_context(|| format!("couldn't read {}", dir))?
         .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| p.extension().map_or(false, |e| e == "snap"))
+        .filter(|p| p.extension().is_some_and(|e| e == "snap"))
         .collect();
     paths.sort();
     if paths.is_empty() {

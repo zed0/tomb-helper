@@ -112,7 +112,7 @@ impl Log {
         };
         if stale {
             self.file = None;
-            if std::fs::metadata(path).map_or(false, |m| m.len() >= MAX_SIZE) {
+            if std::fs::metadata(path).is_ok_and(|m| m.len() >= MAX_SIZE) {
                 // Fails if another process just did it, which is fine
                 let _ = std::fs::rename(path, path.with_file_name(format!("{}.1", LOG_FILE)));
             }

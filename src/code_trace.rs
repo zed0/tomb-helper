@@ -222,13 +222,13 @@ impl<'a> Tracer<'a> {
     /// REX.W turns `mov rcx, [rip+x]` into `mov ecx, [rip+x]`).
     pub fn instruction_referencing(&self, position: usize, target: usize) -> Option<usize> {
         (position.saturating_sub(10)..position).find(|&start| {
-            self.decode_with_offsets(start).map_or(false, |(instruction, offsets)| {
+            self.decode_with_offsets(start).is_some_and(|(instruction, offsets)| {
                 let at = position - start;
                 (offsets.has_displacement()
-                    && offsets.displacement_offset() as usize == at
+                    && offsets.displacement_offset() == at
                     && self.static_operand(&instruction) == Some(target))
                     || (offsets.has_immediate()
-                        && offsets.immediate_offset() as usize == at
+                        && offsets.immediate_offset() == at
                         && self.static_immediate(&instruction) == Some(target))
             })
         })
@@ -422,7 +422,7 @@ impl<'a> Tracer<'a> {
             None
         };
         let destination_is_pointer =
-            destination.map_or(false, |r| r.size() == self.pointer_size && slot(r).is_some());
+            destination.is_some_and(|r| r.size() == self.pointer_size && slot(r).is_some());
 
         // Work out the new value of the destination before clobbering anything
         let mut new_value: Option<Tracked> = None;
@@ -482,16 +482,15 @@ impl<'a> Tracer<'a> {
 
         // Only record static accesses at the start of a trace; every static access starts its own trace
         if let Some(chain) = memory_chain {
-            if static_address.is_none() || is_start {
-                if instruction.mnemonic() != Mnemonic::Lea && instruction.mnemonic() != Mnemonic::Nop {
-                    walk.accesses.push(Access {
-                        chain,
-                        mnemonic: instruction.mnemonic(),
-                        size: instruction.memory_size().size(),
-                        loads_pointer,
-                        instruction: rva,
-                    });
-                }
+            let records = !matches!(instruction.mnemonic(), Mnemonic::Lea | Mnemonic::Nop);
+            if (static_address.is_none() || is_start) && records {
+                walk.accesses.push(Access {
+                    chain,
+                    mnemonic: instruction.mnemonic(),
+                    size: instruction.memory_size().size(),
+                    loads_pointer,
+                    instruction: rva,
+                });
             }
         }
 

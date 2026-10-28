@@ -388,7 +388,7 @@ fn previous_build(template: &ProcessDetails, image: &PeImage) -> Option<(PeImage
             name.ends_with(".bin") && prefixes.iter().any(|p| name.starts_with(p.as_str()))
         })
         // This build's own dump is the same size as its image
-        .filter(|e| e.metadata().map_or(false, |m| m.len() != image.data.len() as u64))
+        .filter(|e| e.metadata().is_ok_and(|m| m.len() != image.data.len() as u64))
         .filter_map(|e| Some((e.metadata().ok()?.modified().ok()?, e.path())))
         .collect();
     dumps.sort();
