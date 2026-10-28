@@ -4,8 +4,9 @@
 
 use crate::action::Action;
 use crate::hotkeys::KeyCode;
-use serde::Deserialize;
-use std::path::PathBuf;
+use serde::{Deserialize, Serialize};
+use std::error::Error;
+use std::path::{Path, PathBuf};
 use std::{env, fs};
 
 fn exe_dir() -> PathBuf {
@@ -31,8 +32,18 @@ fn read_config(announce: bool) -> Config {
     if announce {
         println!("Found config at {:?}", config_path.as_os_str());
     }
-    let config = fs::read_to_string(config_path).expect("Unable to read config file.");
-    serde_json::from_str(&config).unwrap()
+    match parse(&config_path) {
+        Ok(config) => config,
+        Err(e) => {
+            eprintln!("Error: {} isn't a valid config: {}", config_path.display(), e);
+            eprintln!("Fix it, or delete it to use the defaults");
+            std::process::exit(1);
+        }
+    }
+}
+
+fn parse(path: &Path) -> Result<Config, Box<dyn Error>> {
+    Ok(serde_json::from_str(&fs::read_to_string(path)?)?)
 }
 
 /// Where the tools keep dumps of game builds and snapshots: `data_dir` in the config, else `tomb-helper-data` next to
@@ -74,7 +85,7 @@ fn default_livesplit_port() -> u32 {
     16834
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Hotkey {
     pub key: KeyCode,
     pub action: Action,
@@ -86,7 +97,7 @@ impl Hotkey {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum CutsceneTiming {
     On {
         #[serde(default = "default_cutscene_timing_file_output")]
@@ -103,7 +114,7 @@ impl Default for CutsceneTiming {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct OverlayConfig {
     // Objects whose placement name contains any of these (case insensitive) get a box. "" matches everything.
@@ -164,7 +175,7 @@ pub struct OverlayConfig {
 }
 
 /// How the overlay hooks the game's DirectX functions (hudhook's `HookMethod`)
-#[derive(Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum OverlayHooks {
     /// Patching the start of each function: every call is hooked, but other overlays that patch the same functions can
@@ -215,14 +226,13 @@ impl Default for OverlayConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
     pub hotkeys: Vec<Hotkey>,
     pub cutscene_blacklist_file: String,
     pub cutscene_timing_file: String,
     pub record_cutscene_timing: CutsceneTiming,
-    pub force_version: Option<String>,
     pub overlay: OverlayConfig,
     // Where dumps and snapshots go (`data_dir()`)
     pub data_dir: Option<String>,
@@ -237,7 +247,6 @@ impl Default for Config {
             cutscene_blacklist_file: DEFAULT_CUTSCENE_BLACKLIST_FILE.to_string(),
             cutscene_timing_file: DEFAULT_CUTSCENE_TIMING_FILE.to_string(),
             record_cutscene_timing: CutsceneTiming::default(),
-            force_version: None,
             overlay: OverlayConfig::default(),
             data_dir: None,
             debug_logging: false,
@@ -259,6 +268,33 @@ mod tests {
         assert_eq!(config.overlay.trigger_categories.len(), 5);
         assert_eq!(config.hotkeys.len(), default_hotkeys().len());
         assert!(config.cutscene_timing_file.starts_with("https://"));
+    }
+
+    // The names of an object's settings, and of those in its objects (e.g. "overlay.fade")
+    fn setting_names(value: &serde_json::Value, prefix: &str) -> Vec<String> {
+        let Some(object) = value.as_object() else {
+            return vec![];
+        };
+        let mut names = vec![];
+        for (name, value) in object {
+            let name = format!("{}{}", prefix, name);
+            names.extend(setting_names(value, &format!("{}.", name)));
+            names.push(name);
+        }
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn the_readme_has_every_default() {
+        let readme = include_str!("../README.md").replace("\r\n", "\n");
+        let block = readme.split("The default configuration is:\n```json\n").nth(1).unwrap().split("```").next().unwrap();
+        let documented: serde_json::Value = serde_json::from_str(block).unwrap();
+        let defaults = serde_json::to_value(Config::default()).unwrap();
+        assert_eq!(setting_names(&documented, ""), setting_names(&defaults, ""), "the README's defaults have other settings");
+        // Through a Config, as the defaults' floats are f32s
+        let read = serde_json::to_value(serde_json::from_value::<Config>(documented).unwrap()).unwrap();
+        assert_eq!(read, defaults, "the README's defaults aren't the defaults");
     }
 
     #[test]

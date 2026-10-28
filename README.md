@@ -33,10 +33,10 @@ Current features:
 | Tomb Raider 2013 | v1.01.748.0 | ✓ | | ✓ |
 | Tomb Raider 2013 | v1.1 build 838.0_32 | ✓ | | |
 | Tomb Raider 2013 | (Steam) v1.01.0.0 | ✓ | | ✓ |
-| Tomb Raider 2013 | (Epic Games) v1.01.0.0 | ✓ | | |
+| Tomb Raider 2013 | (Epic Games) v1.01.0.0 | ✓ | | ✓ |
 | Rise of the Tomb Raider | v1.0 build 820.0_64, v1.0 build 1027.0_64 | ✓ | | |
 | Rise of the Tomb Raider | (Steam) v1.0 build 0.0_64 | ✓ | | ✓ |
-| Rise of the Tomb Raider | (Epic Games) v1.0 build 1027.0_64 | ✓ | | |
+| Rise of the Tomb Raider | (Epic Games) v1.0 build 1027.0_64 | ✓ | | ✓ |
 | Shadow of the Tomb Raider | v1.0 build 234.1_64 | ✓ | ✓ | ✓ |
 | Shadow of the Tomb Raider | v1.0 build 298.0_64, 458.0_64, 489.0_64 | ✓ | ✓ | |
 | Shadow of the Tomb Raider | (Epic Games) v1.0 build 492.0_64 | ✓ | ✓ | ✓ |
@@ -44,7 +44,11 @@ Current features:
 
 Cutscene skipping is only for Shadow of the Tomb Raider because the other two games let you skip cutscenes whenever you like, so they don't need it.
 
-The overlay can be added to the others with `tomb-helper port` (see [Adding a new patch or game](#adding-a-new-patch-or-game)).
+The overlay can be added to the others with `tomb-helper port` (see [Adding a new patch or game](#adding-a-new-patch-or-game)). It needs the game running with DirectX 12 (Rise and Shadow) or DirectX 11 (Tomb Raider 2013), see [Overlay](#overlay).
+
+## Unsupported versions
+
+tomb-helper only connects to the versions above, and any added to the [offsets file](#offsets-file). To use it with another version, such as a new patch, add it with `tomb-helper port`: see [Adding a new patch or game](#adding-a-new-patch-or-game).
 
 # Configuration
 
@@ -69,14 +73,44 @@ The default configuration is:
 		{"key": "Space", "action": {"Up": {"distance": 100.0}}},
 		{"key": "C", "action": {"Down": {"distance": 100.0}}}
 	],
-	"force_version": null,
 	"debug_logging": false,
+	"data_dir": null,
 	"cutscene_blacklist_file": "https://gist.githubusercontent.com/Atorizil/734a7649471f0fa0a2a9f92a167e294b/raw/Blacklist.json",
 	"cutscene_timing_file": "https://gist.githubusercontent.com/zed0/762a5790501af95189344834bc210616/raw/tomb-helper-timing-info.json",
 	"record_cutscene_timing": {"Off": {}},
-	"overlay": {"object_filters": [], "interactables": true, "npcs": true, "triggers": false, "collision": false, "object_radius": 5000.0, "object_box_size": 50.0, "lara_capsules": false, "lara_probes": true, "lara_proxy": true, "console": false}
+	"overlay": {
+		"settings_window": true,
+		"interactables": true,
+		"npcs": true,
+		"triggers": false,
+		"object_filters": [],
+		"object_radius": 5000.0,
+		"object_box_size": 50.0,
+		"fade": true,
+		"fade_strength": 2.0,
+		"trigger_categories": ["checkpoints", "death", "streaming", "combat", "unknown"],
+		"triggers_by_action": true,
+		"trigger_actions": ["checkpoint", "objective", "progress", "cutscene", "moveset", "camera", "streaming", "teleport", "combat", "spawn", "despawn", "damage", "dialogue", "tutorial", "look at", "NPC", "inventory", "campsite", "lighting", "weather", "audio", "UI", "rumble", "saves state", "instances", "something else", "no script", "unchecked"],
+		"trigger_opacity": 0.15,
+		"collision": false,
+		"lara_capsules": false,
+		"lara_probes": true,
+		"lara_proxy": true,
+		"collision_meshes": true,
+		"detailed_collision_meshes": false,
+		"collision_mesh_other_kinds": 65533,
+		"collision_mesh_radius": 1500.0,
+		"detailed_collision_mesh_radius": 1500.0,
+		"collision_opacity": 0.25,
+		"collision_mesh_cull_hidden": true,
+		"collision_mesh_follow_aim": false,
+		"console": false,
+		"hooks": "vtable"
+	}
 }
 ```
+
+Any left out of `tomb-helper.json` are these. If it isn't valid, tomb-helper says what's wrong with it and stops.
 
 `debug_logging` also prints the errors that are expected while the game loads a level or exits, such as pointer chains that don't resolve or Lara's position not being readable, which are hidden otherwise.
 
@@ -91,7 +125,7 @@ Currently the available actions are:
 - `RestorePosition`
 - `SkipCutscene`
 - `ResetSkipCutsceneTracker` (reset the total amount of time of cutscenes skipped, prints out the previous total, suggest binding this to the same key you use to reset livesplit)
-- `ToggleUI` (inject or remove the in-game overlay; experimental, DirectX 12 only)
+- `ToggleUI` (inject or remove the in-game overlay; experimental, and only with DirectX 12 in Rise and Shadow of the Tomb Raider, or DirectX 11 in Tomb Raider 2013, see [Overlay](#overlay))
 - `ToggleLaraCollision`, `ToggleCoarseCollision`, `ToggleDetailedCollision` (show or hide Lara's collision, the level's collision she collides with, and the rest of it, in the overlay), and `ToggleCollision` for all of them at once (none bound by default)
 - `ToggleOverlay` (show or hide everything the overlay draws in the world at once, leaving its window; F10 by default)
 - `ToggleSettingsWindow` (show or hide the overlay's window, leaving what it draws in the world; F11 by default, and `settings_window` in the overlay config says whether it starts shown)
@@ -141,6 +175,7 @@ Each version looks like:
 
 The overlay (`ToggleUI`) draws a box around game objects near Lara, labelled with the object's name. Its window (top right; `ToggleSettingsWindow`, F11 by default, hides and shows it) has Lara's X/Y/Z position, the position tools (flight mode, and saving and restoring her position, as with the `ToggleActive`/`StorePosition`/`RestorePosition` hotkeys, with the saved position) and the overlay's settings, each in a section that can be collapsed. Each control shows the key bound to it, e.g. "Flight mode (F5)", and "On" at the top of the overlay's settings (`ToggleOverlay`, F10 by default) shows and hides everything it draws in the world.
 Drawing in the world needs the `CameraView` and `CameraLens` offsets, objects `InstanceArray` (and `PlayerProbes` for Lara's ground probes, `CollisionScene` for the level's collision), which the versions with the overlay in [Supported versions](#supported-versions) have; see [Porting the overlay](#porting-the-overlay) to add it to others. Without them only the window is shown. Tomb Raider 2013 has the camera and objects: boxes round interactables (from the names of their components, e.g. `InteractComponent`), animals and characters (ones with a ragdoll), and anything matching `object_filters`, all the same size (no model bounds yet), and Lara's movement capsule, with while she aims the combat capsule behind her and the rod from her head forward that holds her off walls she faces (`lara_proxy`), the level's collision, Lara's ground probes, and triggers (sorted by what their scripts do, though not by who sets them off), but no model bounds or hit capsules yet.
+The overlay hooks DirectX 12 in Rise and Shadow of the Tomb Raider, and DirectX 11 in Tomb Raider 2013. Each game can also run with an older DirectX, which the overlay doesn't support yet, so it doesn't appear then: DirectX 11 in Rise and Shadow, and DirectX 9 in Tomb Raider 2013. Switch to the newer one in the game's graphics settings to use it.
 Tomb Raider 2013 is 32-bit and DirectX 11, so it uses a 32-bit build of the overlay, `tomb_helper_ui32.dll`, which is in the release zip. Building tomb-helper (`cargo build --release`) builds it too, next to `tomb-helper.exe`, which needs the 32-bit target: `rustup target add i686-pc-windows-msvc`. To build without it, set `TOMB_HELPER_SKIP_TR2013` in the environment.
 - `interactables`: draw a box (teal) round each thing Lara can interact with, labelled with its name: campfires, pickups, documents, relics, caches, crates, tether points, throwables, plants and other things to gather crafting resources from, ... On by default
 - `npcs`: draw a box (red) round each character and animal (enemies, friendly characters, hares, squirrels, birds, ...), labelled with what it is (e.g. `rem_smg` or `trx_mountain_hare`). The box is round the capsules the game uses for hitting them, so it follows their pose. On by default
@@ -167,29 +202,19 @@ These, and Lara's own collision (`lara_capsules`/`lara_probes`/`lara_proxy`), ca
 - `hooks`: how the overlay hooks the game's DirectX functions. `"vtable"` (the default) replaces the functions' pointers in DirectX's vtables, which other overlays leave alone, but only catches calls through those vtables, so it misses a game whose swap chain another tool has wrapped in its own object (e.g. ReShade or Special K). `"inline"` (what older versions did) patches the start of each function instead, which catches every call but can be overwritten by other overlays that patch the same functions: RivaTuner (RTSS) does in Tomb Raider 2013, so the overlay never appears while it runs. Try `"inline"` if the overlay doesn't appear
 - `lara_proxy`: also draw the capsule the game moves Lara with, i.e. what she collides with walls with (white, or yellow while it's pushing her off something). When it changes shape (e.g. when she starts aiming) the shape it's changing to is drawn in red. While she aims, the proxies attached to Lara's also collide, and are drawn the same way: in ROTTR the camera's, which moves behind her, and her weapon's (a thin rod), which is what holds her further from walls in front of her; in TR2013 the combat proxy, a capsule just behind her that overlaps hers, and the aim sweep, a thin rod from her head forward that holds her off walls she faces (it only seems to with some walls)
 
-## Forcing a version
-
-There is an experimental feature to force tomb-helper to use the memory offsets for a specific version of the game. This can be done by specifying the `force_version` key with the version you want. These are chosen from the [offsets file](#offsets-file) and must match the version in the config file **exactly**.
-
-For example
-```json
-{
-	"force_version": "v1.01.748.0"
-}
-```
-would force tomb-helper to use the offsets for v1.01.748.0 even if the detected version of the game was v1.01.743.0.
-
 ## Cutscene blacklist file
 
 The cutscene blacklist is the list of timings that are used to configure the time until cutscenes can be skipped.
 
 The default value is [the list](https://gist.github.com/Atorizil/734a7649471f0fa0a2a9f92a167e294b) that is used by both this tool and @Atorizil's [SOTTR Cutscene Skipper](https://github.com/Atorizil/SOTTR-Cutscene-Skipper).
-If you want to use a different file (e.g. to try out some new timings) you can use a pastebin or github gist. Local files may be supported at some point.
+If you want to use a different file (e.g. to try out some new timings) you can use a pastebin or github gist, or a local file (its path, e.g. `"cutscene_blacklist_file": "C:/runs/blacklist.json"`; a relative path is from the folder tomb-helper is run from).
+If it can't be loaded (e.g. offline) tomb-helper prints a warning and lets every cutscene be skipped after the usual 6 seconds, even those the blacklist says never to skip.
 
 ## Cutscene timing file
 
 Similar to the cutscene blacklist file the cutscene timing file is used to calculate how much time has been saved by skipping each cutscene.
 The default value is [the list](https://gist.github.com/zed0/762a5790501af95189344834bc210616) recorded by zed0, which should be sufficient for any% glitched or glitchless runs, but does not contain all the cutscenes in 100%.
+It can be a local file too, like the blacklist. Cutscenes that aren't in it aren't skipped, so if it can't be loaded (e.g. offline) tomb-helper prints a warning and doesn't skip any.
 
 ### Generating a new cutscene timing file
 
@@ -205,7 +230,7 @@ Generating a cutscene timing file can be done using tomb-helper:
 	- Optionally change the config depending on where you want the timing file output and your Livesplit Server port: `{"On": {"timing_file": "./new_cutscene_timing_file.json", "livesplit_port": 16834}}`
 - Launch the game
 - Launch tomb-helper
-	- Check it says "Loading cutscene timing generation handler..." during the start up
+	- Check it says "Loading cutscene timing generation handler..." during the start up, and no error about connecting to LiveSplit Server (if it does, start the server: it's connected to again at the next cutscene)
 - Play through the entire game, making sure to watch all the cutscenes and press E repeatedly to make sure skip prompts show up
 	- Skipping cutscenes via tomb-helper will be disabled while generating the timing file
 	- The recording file is saved after each cutscene, if your game crashes or you want to record in multiple sessions simply continue at a later date with the same recording file

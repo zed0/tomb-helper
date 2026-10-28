@@ -1,12 +1,12 @@
 //! Everything a hotkey can be bound to. Movement actions carry a `distance` (default 100).
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 fn default_distance() -> f32 {
     100.0
 }
 
-#[derive(Debug, Copy, Clone, Deserialize)]
+#[derive(Debug, Copy, Clone, Serialize, Deserialize)]
 pub enum Action {
     ToggleActive {},
     StorePosition {},

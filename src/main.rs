@@ -3,8 +3,8 @@
 //!
 //! It polls for a known game every 100ms; once one's running it creates the handlers (`create_handlers`; each is left
 //! out if the version lacks the offsets it needs), registers the hotkeys (one key can trigger several actions), then
-//! loops: actions to every handler, then a tick for each. Every 500ms it checks the offsets file, recreating the
-//! handlers if the running version's offsets changed. It disconnects when the game exits.
+//! loops every 5ms: actions to every handler, then a tick for each. Every 500ms it checks the offsets file, recreating
+//! the handlers if the running version's offsets changed. It disconnects when the game exits.
 
 use crate::action::Action;
 use crate::config::{Config, CutsceneTiming, Hotkey};
@@ -88,6 +88,8 @@ extern crate winapi;
 const SEARCH_INTERVAL: time::Duration = time::Duration::from_millis(100);
 // How often to check whether the offsets file has changed while connected
 const OFFSETS_CHECK_INTERVAL: time::Duration = time::Duration::from_millis(500);
+// How often the handlers tick while connected (the hotkeys are polled as often), rather than as fast as they can
+const TICK_INTERVAL: time::Duration = time::Duration::from_millis(5);
 
 fn main() {
     logging::log_panics();
@@ -120,8 +122,10 @@ fn main() {
             known = load_offsets(&mut offsets, known);
         }
 
-        if let Some(connection) = find_process::find_process(known.clone(), config.force_version.clone()) {
-            connect(&config, connection, &mut offsets, &mut known, &term);
+        if let Some(mut connection) = find_process::find_process(known.clone(), None) {
+            connect(&config, &mut connection, &mut offsets, &mut known, &term);
+            // The handlers, which had copies of it, are gone
+            find_process::close_handle(connection.process);
             println!("Searching for Tomb Raider processes...");
         }
 
@@ -171,7 +175,7 @@ fn create_handlers(config: &Config, connection: &Connection) -> Vec<Box<dyn Hand
 
 fn connect(
     config: &Config,
-    mut connection: Connection,
+    connection: &mut Connection,
     offsets: &mut OffsetsSource,
     known: &mut Vec<ProcessDetails>,
     term: &Arc<AtomicBool>,
@@ -179,7 +183,7 @@ fn connect(
     let pid = connection.pid;
     println!("Connecting to {} with PID {}", connection.details, pid);
 
-    let mut handlers = create_handlers(config, &connection);
+    let mut handlers = create_handlers(config, connection);
     let (tx, rx) = mpsc::channel();
     // Polls the keys until it's dropped, when this returns
     let _hotkeys = Hotkeys::start(hotkey_callbacks(&config.hotkeys, tx));
@@ -187,6 +191,7 @@ fn connect(
 
     let mut last_offsets_check = time::Instant::now();
     loop {
+        let tick_start = time::Instant::now();
         if term.load(Ordering::Relaxed) {
             return;
         }
@@ -198,13 +203,13 @@ fn connect(
 
         if last_offsets_check.elapsed() > OFFSETS_CHECK_INTERVAL {
             last_offsets_check = time::Instant::now();
-            match reload_offsets(config, &connection, offsets, known) {
+            match reload_offsets(connection, offsets, known) {
                 Reload::Same => {}
                 Reload::Changed(details) => {
                     // Drop the old handlers first, so e.g. the overlay is ejected before it's re-injected
                     handlers.clear();
                     connection.details = details;
-                    handlers = create_handlers(config, &connection);
+                    handlers = create_handlers(config, connection);
                     println!("Reloaded offsets for {}", connection.details);
                 }
                 Reload::Gone => {
@@ -214,10 +219,11 @@ fn connect(
             }
         }
 
-        if let Ok(action) = rx.try_recv() {
+        while let Ok(action) = rx.try_recv() {
             dispatch(&mut handlers, action, config.debug_logging);
         }
         tick(&mut handlers, config.debug_logging);
+        thread::sleep(TICK_INTERVAL.saturating_sub(tick_start.elapsed()));
     }
 }
 
@@ -231,22 +237,23 @@ enum Reload {
 }
 
 // Loads the offsets file again if it's changed, and says whether the connected game's entry has
-fn reload_offsets(config: &Config, connection: &Connection, offsets: &mut OffsetsSource, known: &mut Vec<ProcessDetails>) -> Reload {
+fn reload_offsets(connection: &Connection, offsets: &mut OffsetsSource, known: &mut Vec<ProcessDetails>) -> Reload {
     if !offsets.changed() {
         return Reload::Same;
     }
     *known = load_offsets(offsets, known.clone());
-    match find_process::find_process(known.clone(), config.force_version.clone()) {
-        Some(found) if found.pid == connection.pid => {
-            find_process::close_handle(found.process);
-            let details = &connection.details;
-            if found.details.version.version != details.version.version || found.details.address_offsets != details.address_offsets {
-                Reload::Changed(found.details)
-            } else {
-                Reload::Same
-            }
-        }
-        _ => Reload::Gone,
+    let Some(found) = find_process::find_process(known.clone(), None) else {
+        return Reload::Gone;
+    };
+    // Only its details are wanted
+    find_process::close_handle(found.process);
+    let details = &connection.details;
+    if found.pid != connection.pid {
+        Reload::Gone
+    } else if found.details.version.version != details.version.version || found.details.address_offsets != details.address_offsets {
+        Reload::Changed(found.details)
+    } else {
+        Reload::Same
     }
 }
 

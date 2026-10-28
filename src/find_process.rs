@@ -1,5 +1,6 @@
 //! Finding the game: process and module lookup (`get_pid`, `get_base_address`, `is_process_running`), and which known
-//! version it is, by image size first, else by the version string in its memory (or `force_version`).
+//! version it is, by image size first, else by the version string in its memory (or the version a live tool's
+//! `--version` names).
 
 use crate::game::Game;
 use crate::game_memory::{self, Handle};
@@ -29,45 +30,36 @@ impl Connection {
     }
 }
 
-/// The running game, if it's one of these versions (or `force_version`)
+/// The running game, if it's one of these versions (or `force_version`, the live tools' `--version`). The handle of
+/// what's returned is the caller's to close.
 pub fn find_process(possible_processes: Vec<ProcessDetails>, force_version: Option<String>) -> Option<Connection> {
     possible_processes.iter().find_map(|details| {
         let pid = get_pid(&details.executable_name)?;
         let handle = pid.try_into_process_handle().ok()?;
         let base_addr = get_base_address(pid) as *const _ as usize;
-        let connection = || Some(Connection { pid, process: handle, base_address: base_addr, details: details.clone() });
-
-        if force_version == Some(details.version.version.clone()) {
-            println!(
-                "Warning: Forcing version to {}, some functions may not work as expected!",
-                details.version.version
-            );
-            return connection();
-        }
-
-        // Try using the image size first, then the version string
-        if let Some(image_size) = details.version.image_size {
-            if get_image_size(handle, base_addr).ok()? != image_size {
-                return None;
-            }
-            return connection();
-        }
-
-        let version_in_memory = try_read_std_string_utf8(
-            handle,
-            details.address_offsets.get(&AddressType::Version)?.clone(),
-            base_addr,
-            details.version.version.len(),
-            details.arch,
-        )
-        .ok()?;
-
-        if version_in_memory != details.version.version {
-            None
+        if is_version(details, handle, base_addr, force_version.as_deref()) {
+            Some(Connection { pid, process: handle, base_address: base_addr, details: details.clone() })
         } else {
-            connection()
+            close_handle(handle);
+            None
         }
     })
+}
+
+// Whether the game is this version: by its image size if the version has one, else by the version string in its memory
+fn is_version(details: &ProcessDetails, handle: ProcessHandle, base_addr: usize, force_version: Option<&str>) -> bool {
+    if force_version == Some(details.version.version.as_str()) {
+        println!("Warning: Forcing version to {}, some functions may not work as expected!", details.version.version);
+        return true;
+    }
+    if let Some(image_size) = details.version.image_size {
+        return get_image_size(handle, base_addr).is_ok_and(|size| size == image_size);
+    }
+    let Some(chain) = details.address_offsets.get(&AddressType::Version) else {
+        return false;
+    };
+    try_read_std_string_utf8(handle, chain.clone(), base_addr, details.version.version.len(), details.arch)
+        .is_ok_and(|version| version == details.version.version)
 }
 
 #[cfg(windows)]
@@ -96,9 +88,9 @@ pub fn get_base_address(pid: Pid) -> *const u8 {
             return null();
         }
 
-        if winapi::um::tlhelp32::Module32First(snapshot, &mut module)
-            == winapi::shared::minwindef::TRUE
-        {
+        let found = winapi::um::tlhelp32::Module32First(snapshot, &mut module) == winapi::shared::minwindef::TRUE;
+        winapi::um::handleapi::CloseHandle(snapshot);
+        if found {
             return module.modBaseAddr;
         }
     }
