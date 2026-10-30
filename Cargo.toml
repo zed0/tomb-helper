@@ -1,6 +1,6 @@
 [package]
 name = "tomb-helper"
-version = "2.0.0-alpha.2"
+version = "2.0.0"
 authors = ["Ben Falconer <ben@falconers.me.uk>"]
 edition = "2021"
 publish = false
