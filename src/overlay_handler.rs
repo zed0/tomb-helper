@@ -779,6 +779,12 @@ impl OverlayHandler {
 
         println!("Injecting overlay dll");
         let dll_path = env::current_exe()?.with_file_name(self.overlay_dll());
+        // hudhook's inject panics on a missing file, and LoadLibrary in the game would fail without saying why
+        if !dll_path.is_file() {
+            self.active = false;
+            return Err(format!("Could not inject the overlay: {} isn't there. It comes in tomb-helper.zip with the \
+                exe; extract the whole zip and run tomb-helper.exe from that folder", dll_path.display()).into());
+        }
         // A 32-bit game (TR2013) needs the 32-bit build of the overlay, injected its own way
         let injected = if matches!(self.arch, Architecture::Arch32Bit) {
             inject32::inject(self.pid, &dll_path).map_err(|e| e.to_string())
