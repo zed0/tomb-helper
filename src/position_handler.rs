@@ -47,8 +47,6 @@ const RESTORE_HOLD: Duration = Duration::from_millis(20);
 pub struct PositionHandler {
     // While flying, where she's held
     position: TrackedPosition,
-    // What `position` is, which is checked before it's written (`targets::verify`)
-    position_types: [AddressType; 3],
     saved_position: TrackedPosition,
     // Something's been stored in `saved_position`
     saved: bool,
@@ -56,8 +54,6 @@ pub struct PositionHandler {
     saved_view: View,
     // While a restore holds her (in a flight of its own), until when
     restore_until: Option<Instant>,
-    // Lara's (rather than the look at position), which the overlay shows, and what flight mode holds besides
-    is_lara: bool,
     camera_rotation: Option<(TrackedMemory<f32>, TrackedMemory<f32>)>,
     // Set while flying
     flight: Option<Flight>,
@@ -69,67 +65,46 @@ pub struct PositionHandler {
     components: Components,
     arch: Architecture,
     handle: ProcessHandle,
-    name: String,
 }
 
 const LARA: [AddressType; 3] = [AddressType::XPosition, AddressType::YPosition, AddressType::ZPosition];
-const LOOK_AT: [AddressType; 3] = [AddressType::XLookAt, AddressType::YLookAt, AddressType::ZLookAt];
 
 impl PositionHandler {
+    // For Lara's position, if the version has it
     pub fn new_position_handler(connection: &Connection, use_skew: bool) -> Option<PositionHandler> {
         println!("Loading position handler...");
-        let mut handler = PositionHandler::new(connection, LARA, "position")?;
-        handler.camera_rotation = TrackedMemory::find(connection, AddressType::CameraSin)
-            .zip(TrackedMemory::find(connection, AddressType::CameraCos));
-        handler.is_lara = true;
-        handler.skew = if use_skew { Skew::find(connection) } else { None };
-        Some(handler)
-    }
-
-    pub fn new_look_at_handler(connection: &Connection) -> Option<PositionHandler> {
-        println!("Loading look at position handler...");
-        PositionHandler::new(connection, LOOK_AT, "look at position")
-    }
-
-    // For the position at these offsets, if the version has them
-    fn new(connection: &Connection, position_types: [AddressType; 3], name: &str) -> Option<PositionHandler> {
-        let [x, y, z] = position_types.map(|t| connection.details.address_offsets.get(&t).cloned());
+        let [x, y, z] = LARA.map(|t| connection.details.address_offsets.get(&t).cloned());
         let position = TrackedPosition::new(x?, y?, z?, connection.details.arch, connection.base_address);
         Some(PositionHandler {
             saved_position: position.clone(),
             position,
-            position_types,
             saved: false,
             saved_view: View::default(),
             restore_until: None,
-            is_lara: false,
-            camera_rotation: None,
+            camera_rotation: TrackedMemory::find(connection, AddressType::CameraSin)
+                .zip(TrackedMemory::find(connection, AddressType::CameraCos)),
             flight: None,
-            skew: None,
+            skew: if use_skew { Skew::find(connection) } else { None },
             skewing: false,
             game: connection.game(),
             components: Components::new(connection.base_address),
             arch: connection.details.arch,
             handle: connection.process,
-            name: name.to_string(),
         })
     }
 
     // Whether the position's chains lead to a position, rather than somewhere else in a build they're wrong for
     fn check_position(&mut self) -> Result<(), String> {
-        for address_type in self.position_types {
+        for address_type in LARA {
             targets::check(&self.game, &mut self.components, address_type).map_err(|why| format!("{:?}: {}", address_type, why))?;
         }
         Ok(())
     }
 
-    // What a flight writes besides her position: what's found and looks right (for Lara; nothing for the look at).
-    // What's held is said for flights, not restores
+    // What a flight writes besides her position: what's found and looks right. What's held is said for flights, not
+    // restores
     fn find_held(&mut self, announce: bool) -> Held {
         let mut held = Held::new(self.handle, &self.position);
-        if !self.is_lara {
-            return held;
-        }
         let mut notes = Notes::default();
         let (arch, base) = (self.arch, self.game.base_address);
         let mut find = |address_type| notes.find(&self.game, &mut self.components, address_type);
@@ -151,11 +126,8 @@ impl PositionHandler {
         self.flight.is_some() && self.restore_until.is_none()
     }
 
-    // Her facing and the camera's angles, those found that look right (for Lara; nothing for the look at)
+    // Her facing and the camera's angles, those found that look right
     fn read_view(&mut self) -> View {
-        if !self.is_lara {
-            return View::default();
-        }
         let mut notes = Notes::default();
         let view = View {
             facing: self.read_found(&mut notes, AddressType::Facing),
@@ -274,11 +246,9 @@ impl PositionHandler {
 
 impl Handler for PositionHandler {
     fn report(&self, state: &mut HelperState) {
-        if self.is_lara {
-            state.position_tools = true;
-            state.saved_position = if self.saved { Some(self.saved_position.to_position()) } else { None };
-            state.flying = self.flying();
-        }
+        state.position_tools = true;
+        state.saved_position = if self.saved { Some(self.saved_position.to_position()) } else { None };
+        state.flying = self.flying();
     }
 
     fn handle_tick(&mut self) -> Result<(), Box<dyn Error>> {
@@ -301,39 +271,39 @@ impl Handler for PositionHandler {
                 if self.restore_until.take().is_some() {
                     // A restore's hold carries on as a flight
                     self.write_view();
-                    println!("Activated {} handler", self.name);
+                    println!("Activated position handler");
                 } else if active {
                     self.flight = None;
                     self.stop_skew(true);
-                    println!("Deactivated {} handler", self.name);
+                    println!("Deactivated position handler");
                 } else {
                     // Nothing's held unless her position reads, and looks like hers
                     if let Err(e) = self.position.fetch_from_game(self.handle) {
-                        return Err(format!("Not activating the {} handler, its position couldn't be read: {}", self.name, e).into());
+                        return Err(format!("Not activating the position handler, its position couldn't be read: {}", e).into());
                     }
                     if let Err(why) = self.check_position() {
-                        return Err(format!("Not activating the {} handler, its position looks wrong ({})", self.name, why).into());
+                        return Err(format!("Not activating the position handler, its position looks wrong ({})", why).into());
                     }
                     let held = self.find_held(true);
                     self.start_skew(true);
                     self.flight = Some(Flight::start(held, self.position.to_position()));
-                    println!("Activated {} handler", self.name);
+                    println!("Activated position handler");
                 }
             }
             Action::StorePosition {} => {
                 self.saved_position = self.position.clone();
                 self.saved_position.fetch_from_game(self.handle)?;
                 self.saved = true;
-                println!("Stored {}! {:}", self.name, self.saved_position);
+                println!("Stored position! {:}", self.saved_position);
                 self.saved_view = self.read_view();
             }
             Action::RestorePosition {} => {
                 if !self.saved {
-                    println!("No {} stored to restore", self.name);
+                    println!("No position stored to restore");
                     return Ok(());
                 }
                 if let Err(why) = self.check_position() {
-                    return Err(format!("Not restoring the {}, it looks wrong ({})", self.name, why).into());
+                    return Err(format!("Not restoring the position, it looks wrong ({})", why).into());
                 }
                 self.position = self.saved_position.clone();
                 // A flight goes on, moved there below; otherwise she's held there for a moment
@@ -347,7 +317,7 @@ impl Handler for PositionHandler {
                 }
                 // With her position, so it all changes at once (and again when the hold ends, in case it's undone)
                 self.write_view();
-                println!("Restored {}! {:}", self.name, self.position);
+                println!("Restored position! {:}", self.position);
             }
             Action::Forward { distance } => self.move_by(distance, 0.0),
             Action::Backward { distance } => self.move_by(-distance, 0.0),

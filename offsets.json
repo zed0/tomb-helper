@@ -29,6 +29,7 @@
         "player": {"instance": null, "from_instance": ["0xA4", "0xC"], "fall_start": "0xF0C", "fall_start_copy": "0xF18", "skew": "0x60", "skew_mask": "0x8"},
         "ballistic": {"velocity": "0x10"},
         "camera": {"view": "0x4A0", "lens": "0x30", "lens_near": "0x0", "lens_far": "0x1", "lens_fov": "0x2", "lens_aspect": "0x3", "sin": "0x50", "cos": "0x54", "collision": ["0x5F0", "0xA2C", "0x914"]},
+        "camera_controller": {"yaw": "0xD34", "pitch": "0xD4C"},
         "collision_scene": {"first": "0x10", "count": "0x14", "in_client": "0x10"},
         "collision_instance": {"size": "0xB0", "matrix": "0x0", "min": "0x50", "max": "0x60", "placement_size": "0x70", "origin": "0x40", "filter": null, "mesh": "0x78", "next": "0x80", "flags": null},
         "script": {"node_graph": "0xC", "graph_nodes": "0x30", "graph_links": "0x40", "links": "0xC", "object_instance": "0x40", "message_instance": null, "node_size": "0x48"},
@@ -142,9 +143,6 @@
         "XPosition": ["0x1082AB8", "0x10"],
         "YPosition": ["0x1082AB8", "0x14"],
         "ZPosition": ["0x1082AB8", "0x18"],
-        "XLookAt": ["0x15A4F88", "0x140", "0x80"],
-        "YLookAt": ["0x15A4F88", "0x140", "0x84"],
-        "ZLookAt": ["0x15A4F88", "0x140", "0x88"],
         "CameraSin": ["0x2DA2220", "0x490"],
         "CameraCos": ["0x2DA2220", "0x494"]
       }
@@ -190,7 +188,8 @@
         "proxy": {"movement_collides": "0x1", "resolved_centre": "0x70"},
         "body": {"gap": "0x0"},
         "physics_shape": {"previous_centre": "0xA0", "gap": "0x10"},
-        "camera": {"collision": ["0x680", "0xAB0", "0xBB8"]}
+        "camera": {"collision": ["0x680", "0xAB0", "0xBB8"]},
+        "camera_controller": {"yaw": "0x101C", "pitch": "0x1034"}
       }
     },
     {
@@ -220,7 +219,8 @@
         "proxy": {"movement_collides": "0x1", "resolved_centre": "0x70"},
         "body": {"gap": "0x0"},
         "physics_shape": {"previous_centre": "0xA0", "gap": "0x10"},
-        "camera": {"collision": ["0x680", "0xAB0", "0xBB8"]}
+        "camera": {"collision": ["0x680", "0xAB0", "0xBB8"]},
+        "camera_controller": {"yaw": "0x101C", "pitch": "0x1034"}
       }
     },
     {
@@ -256,6 +256,7 @@
         "ballistic": {"velocity": "0x20"},
         "drawable": {"instance_drawable": "0xA8", "model_instance": "0x78", "mesh": "0x38"},
         "camera": {"view": "0x2F0", "collision": ["0x450", "0xD40", "0xDF8"]},
+        "camera_controller": {"path": ["0x450", "0xF08", "0x20"], "yaw": "0x12D4", "pitch": "0x12EC"},
         "trigger_shape": {"shape": "0xA0"},
         "collide": {"shapes": "0x78", "shape_count": "0x80"},
         "body": {"next": "0x38", "previous": "0x40", "parent": "0x50", "gap": "0x0"},
@@ -357,6 +358,7 @@
         "ballistic": {"velocity": "0x20"},
         "drawable": {"instance_drawable": "0xA8", "model_instance": "0x78", "mesh": "0x38"},
         "camera": {"view": "0x2F0", "collision": ["0x450", "0xD40", "0xDF8"]},
+        "camera_controller": {"path": ["0x450", "0xF08", "0x20"], "yaw": "0x12D4", "pitch": "0x12EC"},
         "trigger_shape": {"shape": "0xA0"},
         "collide": {"shapes": "0x78", "shape_count": "0x80"},
         "body": {"next": "0x38", "previous": "0x40", "parent": "0x50", "gap": "0x0"},
@@ -403,6 +405,7 @@
         "ballistic": {"velocity": "0x20"},
         "drawable": {"instance_drawable": "0xA8", "model_instance": "0x78", "mesh": "0x38"},
         "camera": {"view": "0x2F0", "collision": ["0x450", "0xD40", "0xDF8"]},
+        "camera_controller": {"path": ["0x450", "0xF08", "0x20"], "yaw": "0x12D4", "pitch": "0x12EC"},
         "trigger_shape": {"shape": "0xA0"},
         "collide": {"shapes": "0x78", "shape_count": "0x80"},
         "body": {"next": "0x38", "previous": "0x40", "parent": "0x50", "gap": "0x0"},

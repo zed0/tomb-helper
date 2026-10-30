@@ -1,4 +1,4 @@
-//! The values tomb-helper writes to the game: Lara's position (and ROTTR's look at), what flight mode holds (`Velocity`,
+//! The values tomb-helper writes to the game: Lara's position, what flight mode holds (`Velocity`,
 //! `FallStart`), her facing and the camera's angles (restored with her position), the cutscene's status and the menu
 //! requested (the level select), and what flight mode could turn off
 //! (her proxy's collision and `CameraCollision`, which it leaves alone for now, but which are still found and checked).
@@ -37,13 +37,10 @@ const MAX_CUTSCENE_LENGTH: f32 = 36_000.0;
 const MAX_ANGLE: f32 = 2.0 * std::f32::consts::PI + 0.01;
 
 /// Everything tomb-helper writes, or may (see the module's doc), in the order `check` reports them
-pub const WRITTEN: [AddressType; 22] = [
+pub const WRITTEN: [AddressType; 19] = [
     AddressType::XPosition,
     AddressType::YPosition,
     AddressType::ZPosition,
-    AddressType::XLookAt,
-    AddressType::YLookAt,
-    AddressType::ZLookAt,
     AddressType::Velocity,
     AddressType::FallStart,
     AddressType::FallStartCopy,
@@ -262,9 +259,13 @@ fn game_render(layout: &Layout, offsets: &AddressOffsets) -> Option<Vec<usize>> 
     }
 }
 
-// The chain to the pointer to the active camera controller: the camera's collision path less the byte's offset
+// The chain to the pointer to the active camera controller: its own path, else the camera's collision path less the
+// byte's offset
 fn camera_controller(layout: &Layout, offsets: &AddressOffsets) -> Option<Vec<usize>> {
-    let (_, path) = layout.camera.collision.split_last()?;
+    let path = match layout.camera_controller.path.as_slice() {
+        [] => layout.camera.collision.split_last()?.1,
+        path => path,
+    };
     Some([game_render(layout, offsets)?, path.to_vec()].concat())
 }
 
@@ -290,10 +291,7 @@ pub fn verify(game: &Game, components: &mut Components, address_type: AddressTyp
     let value = match address_type {
         AddressType::XPosition
         | AddressType::YPosition
-        | AddressType::ZPosition
-        | AddressType::XLookAt
-        | AddressType::YLookAt
-        | AddressType::ZLookAt => match read_floats(game.handle, address) {
+        | AddressType::ZPosition => match read_floats(game.handle, address) {
             Some([v]) => verdict(v.is_finite() && v.abs() < MAX_COORDINATE, format!("{:.1}", v)),
             None => unreadable(),
         },

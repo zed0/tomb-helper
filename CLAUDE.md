@@ -43,7 +43,7 @@ User docs (hotkeys, config, cutscene timing generation) live in `README.md`.
 2. On a match (a `find_process::Connection`), `connect()` builds a `Vec<Box<dyn Handler>>` (`create_handlers`):
    - `CutsceneTimingGeneratorHandler` **or** `CutsceneHandler` (chosen by `config.record_cutscene_timing`)
    - `OverlayHandler`
-   - `PositionHandler::new_position_handler` (Lara position) and `::new_look_at_handler` (ROTTR look-at)
+   - `PositionHandler::new_position_handler` (Lara's position)
    - `MenuHandler` (the level select hotkey, where the version has `MenuState`)
    - Each constructor returns `None` if the game version lacks a required `AddressType`, so features
      silently disappear per-version.
@@ -450,7 +450,7 @@ again (`derive` plus live checks).
   Denuvo jmp thunk) are 492 Steam's code with player+0x7C bit 0x2. TR2013 (Steam, Epic, 748) is 32-bit:
   the function is `__thiscall` (system in ecx; instance, hash, data pushed; `ret 0xC`), its instance the 0xD0 record
   her position chain reaches, and the bit is player+0x60 0x8 (`player.skew_mask`), clearing bit 0x1 as SOTTR's does.
-  Sent from a thread of its own in TR2013 Steam it set and cleared that bit; not yet flown with it in TR2013 or ROTTR.
+  Sent from a thread of its own in TR2013 Steam it set and cleared that bit; flown with it in every game since.
 - These are all fields of things found without offsets (her instance, components and player object through `XPosition`'s
   chain, GameRender through `CameraView`'s), so `targets::structural` builds them from 492's layout (`instance.ballistic`,
   `player`, `ballistic`, `proxy.flags`/`resolved_centre`, `body.gap`, `physics_shape`, `camera.collision`); a test checks
@@ -582,17 +582,22 @@ again (`derive` plus live checks).
   fields are 8 earlier in the layout. The player is [[instance+0xA4]+0xC] (Steam [[+0xA8]+0x14]); the push at +0x540
   isn't checked. Weapons in both builds: pistol (-10, 0, 120) to (-33, -70, 120) r8, shotgun (-7, 0, 110) to (-27,
   -70, 110) r7, rifle (-10, 0, 120) to (-30, -75, 120) r5, bow (-10, 0, 125) to (-20, -90, 125) r5.
-- The camera's angles (`camera_controller`, Steam and Epic): the `ExplorationCameraController` (the one `camera.collision`
-  goes through, [[GameRender]+0x5F0]+0xA2C) has the yaw at +0xD34 (the camera's yaw plus pi/2, 0 to 2pi, radians) and
+- The camera's angles (`camera_controller`, Steam, Epic and 748): the `ExplorationCameraController` (the one
+  `camera.collision` goes through, [[GameRender]+0x5F0]+0xA2C) has the yaw at +0xD34 (the camera's yaw plus pi/2, 0 to 2pi, radians) and
   minus its pitch at +0xD4C, each followed by a copy (+0xD38, +0xD50). Found live by sampling the controller, camera
   component and player while the user turned the camera through more than a turn (only these two pairs followed it;
   the rest are the matrices it makes), and written live: the camera turned there and stayed. Lara's facing is her
   record's Euler z (+0x28), and written once it held too (moving, she turns from it as normal). Restoring her position
   (`RestorePosition`) puts both back: outside a flight it's a 20ms one with skew (her velocity and fall start held, so
   restoring mid-fall doesn't kill her), the facing and camera written with her position and again as she's let go
-  (only once, after, looked like two steps; and skew's camera zooms out and back in, so the hold is short). ROTTR's and
-  SOTTR's controller angles aren't known yet (their facing is `instance.rotation`, which `check` passes in every
-  snapshot, but it hasn't been written there).
+  (only once, after, looked like two steps; and skew's camera zooms out and back in, so the hold is short). The same
+  pair, 0x18 apart, is in the other games' controllers (found the same way, written live, and restore tried in each):
+  ROTTR (Steam and Epic 1027) +0x101C/+0x1034 in the collision's controller; SOTTR (492 Steam and Epic, 234.1)
+  +0x12D4/+0x12EC, but in the camera stack's active controller ([[[GameRender]+0x450]+0xF08]+0x20,
+  `camera_controller.path`), as the CameraComponent's own +0xD40 was another `ExplorationCameraController` in all
+  three, one whose fields didn't follow the camera. Written, SOTTR's camera held and Lara's facing did too until the
+  game turned her to the camera's way, as it does whenever she stops. Her facing in ROTTR and SOTTR is instance +0x38
+  (`instance.rotation` z), and held.
 - Live tools all work on Steam TR2013: `probe`, `chains`, `update-offsets` (finds every static but the two pools, which `--from` derives), `watch`/`watch-raw` (debug
   registers set in the native context, registers read from the WOW64 one; 800 traps in 2s on the QueryPerformanceCounter
   import slot). Lara's position and the camera weren't read at all while the game was unfocused (paused).

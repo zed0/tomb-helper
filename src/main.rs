@@ -177,7 +177,6 @@ fn create_handlers(config: &Config, connection: &Connection) -> Vec<Box<dyn Hand
         cutscenes,
         OverlayHandler::new_overlay_handler(connection, &config.overlay, &config.hotkeys).map(boxed),
         PositionHandler::new_position_handler(connection, config.flight_skew).map(boxed),
-        PositionHandler::new_look_at_handler(connection).map(boxed),
         MenuHandler::new(connection).map(boxed),
     ]
     .into_iter()

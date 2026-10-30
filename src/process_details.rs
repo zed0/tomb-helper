@@ -14,9 +14,6 @@ pub enum AddressType {
     XPosition,
     YPosition,
     ZPosition,
-    XLookAt,
-    YLookAt,
-    ZLookAt,
     // TODO: Work out a more sensible way of representing the camera matrix
     // Note: The easiest way to find these values is to search for camera XYZ values which form the
     // last entries of the extrinsic camera matrix (https://ksimek.github.io/2012/08/22/extrinsic/)

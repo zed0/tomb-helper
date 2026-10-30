@@ -129,7 +129,7 @@ Each entry comprises of a `key` and an `action` field.
 
 Currently the available actions are:
 - `ToggleActive`
-- `StorePosition` (also stores which way Lara's facing, and in Tomb Raider 2013 (Steam and Epic) which way the camera's looking)
+- `StorePosition` (also stores which way Lara's facing and which way the camera's looking, in the versions with the overlay)
 - `RestorePosition` (puts her back where `StorePosition` stored, facing the same way, with the camera as it was. Outside flight mode she's held there for a moment (with `flight_skew`, in the game's noclip) before being let go, with her fall cleared, so restoring her mid-fall or far below where she was doesn't kill her)
 - `SkipCutscene`
 - `ResetSkipCutsceneTracker` (reset the total amount of time of cutscenes skipped, prints out the previous total, suggest binding this to the same key you use to reset livesplit)

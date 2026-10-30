@@ -532,8 +532,12 @@ group! {
 
 group! {
     /// The active camera controller (`ExplorationCameraController`), which `camera.collision` leads to (less its last
-    /// offset)
+    /// offset), or `path` does
     CameraControllerLayout {
+        /// Pointers from GameRender to the pointer to the controller, where it isn't the one `camera.collision` goes
+        /// through (SOTTR: -> CameraComponent, -> the camera stack's active entry, -> its controller; the component's
+        /// own +0xD40 can be another controller, one not driving the camera). Empty for the collision's
+        path: Vec<usize> = vec![],
         /// f32 radians, then a copy: the way the camera faces (TR2013: its yaw plus pi/2, 0 to 2pi), which the mouse
         /// turns. None if it isn't known
         yaw: Option<usize> = None,
