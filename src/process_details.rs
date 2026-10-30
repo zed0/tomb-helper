@@ -65,6 +65,11 @@ pub enum AddressType {
     // A byte, nonzero while the camera collides with the level (the active camera controller's); flight mode turns it
     // off, or the camera stays on this side of a wall she's flown through
     CameraCollision,
+    // Lara's facing (her instance's Euler angles, 3 floats), and the camera's yaw and pitch (2 floats each, the
+    // active camera controller's `camera_controller` fields), which are stored with her position and restored with it
+    Facing,
+    CameraYaw,
+    CameraPitch,
     // The menu showing (i32, `layout.menu.current`) in the menus' state machine (`UiMenuStateManager`), whose chain
     // less its last offset leads to the pointer to it (see `menu`)
     MenuState,

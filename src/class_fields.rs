@@ -97,6 +97,7 @@ pub const FIELD_CLASSES: &[(&str, &str)] = &[
     ("collide.shape_count", components::COLLIDE),
     ("trigger_shape.shape", components::SHAPE),
     ("camera", rtti::GAME_RENDER),
+    ("camera_controller", rtti::EXPLORATION_CAMERA),
     ("collision_scene", rtti::COLLISION_SCENE_CLIENT),
     ("collision_scene.in_client", rtti::MULTIBODY_CLIENT),
     ("ballistic", components::BALLISTIC),

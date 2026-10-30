@@ -1,5 +1,6 @@
 //! The values tomb-helper writes to the game: Lara's position (and ROTTR's look at), what flight mode holds (`Velocity`,
-//! `FallStart`), the cutscene's status and the menu requested (the level select), and what flight mode could turn off
+//! `FallStart`), her facing and the camera's angles (restored with her position), the cutscene's status and the menu
+//! requested (the level select), and what flight mode could turn off
 //! (her proxy's collision and `CameraCollision`, which it leaves alone for now, but which are still found and checked).
 //! For each, where it is (`candidates`, `find`) and whether it looks right (`verify`), which the handlers check before
 //! writing anything, so a chain that's wrong for a build is never written through. `check` reports the same.
@@ -9,7 +10,7 @@
 //! (`XPosition`) is [.., player, `player.instance`, `instance.position`], so the same chain less its last offset leads to
 //! her instance, and through it her components (by the slots learnt for their classes, see `components`), and one more
 //! offset less to her player object. The camera's collision is a path (`camera.collision`) from GameRender, which
-//! `CameraView`'s chain starts at, and the menu requested is in the menus' state machine, as `MenuState` is. Each is
+//! `CameraView`'s chain starts at, through the camera controller its angles are in, and the menu requested is in the menus' state machine, as `MenuState` is. Each is
 //! checked by the RTTI class of the object it's in, where that's known.
 
 use crate::components::{self, Components, Slot};
@@ -32,9 +33,11 @@ const MAX_COORDINATE: f32 = 1e7;
 // The cutscene's prompt and status are small numbers, and its length (in seconds) at most this
 const MAX_CUTSCENE_STATE: u8 = 16;
 const MAX_CUTSCENE_LENGTH: f32 = 36_000.0;
+// Angles (in radians) beyond this are garbage
+const MAX_ANGLE: f32 = 2.0 * std::f32::consts::PI + 0.01;
 
 /// Everything tomb-helper writes, or may (see the module's doc), in the order `check` reports them
-pub const WRITTEN: [AddressType; 19] = [
+pub const WRITTEN: [AddressType; 22] = [
     AddressType::XPosition,
     AddressType::YPosition,
     AddressType::ZPosition,
@@ -44,6 +47,9 @@ pub const WRITTEN: [AddressType; 19] = [
     AddressType::Velocity,
     AddressType::FallStart,
     AddressType::FallStartCopy,
+    AddressType::Facing,
+    AddressType::CameraYaw,
+    AddressType::CameraPitch,
     AddressType::ProxyCentre,
     AddressType::ProxyResolvedCentre,
     AddressType::ProxyFlags,
@@ -184,6 +190,9 @@ fn chain_for(
     match address_type {
         AddressType::FallStart => then(player(layout, offsets, found_player)?, &[layout.player.fall_start]),
         AddressType::FallStartCopy => then(player(layout, offsets, found_player)?, &[layout.player.fall_start_copy]),
+        AddressType::Facing => then(lara_instance(layout, offsets)?, &[Some(layout.instance.rotation)]),
+        AddressType::CameraYaw => then(camera_controller(layout, offsets)?, &[layout.camera_controller.yaw]),
+        AddressType::CameraPitch => then(camera_controller(layout, offsets)?, &[layout.camera_controller.pitch]),
         AddressType::ProxyCentre => in_proxy(&[Some(proxy_layout.centre)]),
         AddressType::ProxyResolvedCentre => in_proxy(&[proxy_layout.resolved_centre]),
         // Only where which bit is its collision is known, as that's what flight mode changes
@@ -253,6 +262,12 @@ fn game_render(layout: &Layout, offsets: &AddressOffsets) -> Option<Vec<usize>> 
     }
 }
 
+// The chain to the pointer to the active camera controller: the camera's collision path less the byte's offset
+fn camera_controller(layout: &Layout, offsets: &AddressOffsets) -> Option<Vec<usize>> {
+    let (_, path) = layout.camera.collision.split_last()?;
+    Some([game_render(layout, offsets)?, path.to_vec()].concat())
+}
+
 /// Whether the value at the end of `chain` looks like the value it's meant to be
 pub fn verify(game: &Game, components: &mut Components, address_type: AddressType, chain: &[usize]) -> Verdict {
     let address = match resolve(game.handle, game.base_address, chain) {
@@ -296,6 +311,14 @@ pub fn verify(game: &Game, components: &mut Components, address_type: AddressTyp
             }
             (None, _) => unreadable(),
             (_, Err(_)) => Verdict::Unreadable("Lara's position can't be read".to_string()),
+        },
+        AddressType::Facing => match read_floats::<3>(game.handle, address) {
+            Some(v) => verdict(angles(&v), format!("({:.2}, {:.2}, {:.2})", v[0], v[1], v[2])),
+            None => unreadable(),
+        },
+        AddressType::CameraYaw | AddressType::CameraPitch => match read_floats::<2>(game.handle, address) {
+            Some(v) => verdict(angles(&v), format!("{:.2}, copy {:.2}", v[0], v[1])),
+            None => unreadable(),
         },
         AddressType::ProxyCentre | AddressType::ProxyResolvedCentre => match read_floats::<3>(game.handle, address) {
             Some(v) => near(&v, NEAR_LARA),
@@ -347,10 +370,10 @@ fn owner_check(game: &Game, components: &mut Components, address_type: AddressTy
         AddressType::Velocity => components::BALLISTIC,
         AddressType::FallStart | AddressType::FallStartCopy => PLAYER,
         AddressType::ProxyCentre | AddressType::ProxyResolvedCentre | AddressType::ProxyFlags => components::PROXY,
-        AddressType::CameraCollision => EXPLORATION_CAMERA,
+        AddressType::CameraCollision | AddressType::CameraYaw | AddressType::CameraPitch => EXPLORATION_CAMERA,
         AddressType::RequestedMenu => MENU_STATE_MANAGER,
         // Only where the version's instances and their components are known
-        AddressType::XPosition | AddressType::YPosition | AddressType::ZPosition
+        AddressType::XPosition | AddressType::YPosition | AddressType::ZPosition | AddressType::Facing
             if game.has(AddressType::InstanceArray) && game.layout().instance.components.is_some() =>
         {
             let is_lara = owner.is_some_and(|instance| components.get(game.handle, instance, components::PLAYER).is_some());
@@ -368,6 +391,11 @@ fn owner_check(game: &Game, components: &mut Components, address_type: AddressTy
         Some(name) => Err(format!("it's in {}, not {}", a(&short_class(&name)), a(&short_class(class)))),
         None => Err(format!("it isn't in {}", a(&short_class(class)))),
     })
+}
+
+// Whether they're all angles, in radians
+fn angles(values: &[f32]) -> bool {
+    values.iter().all(|v| v.is_finite() && v.abs() <= MAX_ANGLE)
 }
 
 // "a Player", "an ExplorationCameraController"

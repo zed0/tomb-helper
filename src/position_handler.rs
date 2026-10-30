@@ -14,6 +14,12 @@
 //! that's left for later. With `flight_skew` in the config (the default), it has the game do it instead: the game's
 //! own noclip (`skew`, which turns her gravity and collision off, and back on afterwards) is on for the flight, and off
 //! again when it ends, or when the handler goes (tomb-helper stopping, or the offsets reloading).
+//!
+//! Storing her position also stores her facing and the camera's yaw and pitch, where the version has them. Restoring
+//! it outside a flight is a short one (`RESTORE_HOLD`): she's held at the stored position as in a flight (with skew,
+//! and her velocity and fall start, so she doesn't die from a fall she didn't take), then let go. Her facing and the
+//! camera are put back with her position, and again as she's let go. Written once in TR2013 Steam, both stayed where
+//! they were put.
 
 use crate::action::Action;
 use crate::components::Components;
@@ -31,9 +37,12 @@ use std::error::Error;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const HOLD_INTERVAL: Duration = Duration::from_millis(1);
+// How long restoring her position (outside a flight) holds her there before letting go: about a frame, as the camera
+// zooms out and back in while skew's on (200ms and 50ms showed it; 20ms looked best)
+const RESTORE_HOLD: Duration = Duration::from_millis(20);
 
 pub struct PositionHandler {
     // While flying, where she's held
@@ -43,6 +52,10 @@ pub struct PositionHandler {
     saved_position: TrackedPosition,
     // Something's been stored in `saved_position`
     saved: bool,
+    // Her facing and the camera's angles, stored with it
+    saved_view: View,
+    // While a restore holds her (in a flight of its own), until when
+    restore_until: Option<Instant>,
     // Lara's (rather than the look at position), which the overlay shows, and what flight mode holds besides
     is_lara: bool,
     camera_rotation: Option<(TrackedMemory<f32>, TrackedMemory<f32>)>,
@@ -87,6 +100,8 @@ impl PositionHandler {
             position,
             position_types,
             saved: false,
+            saved_view: View::default(),
+            restore_until: None,
             is_lara: false,
             camera_rotation: None,
             flight: None,
@@ -108,8 +123,9 @@ impl PositionHandler {
         Ok(())
     }
 
-    // What a flight writes besides her position: what's found and looks right (for Lara; nothing for the look at)
-    fn find_held(&mut self) -> Held {
+    // What a flight writes besides her position: what's found and looks right (for Lara; nothing for the look at).
+    // What's held is said for flights, not restores
+    fn find_held(&mut self, announce: bool) -> Held {
         let mut held = Held::new(self.handle, &self.position);
         if !self.is_lara {
             return held;
@@ -123,14 +139,77 @@ impl PositionHandler {
             .map(|chain| tracked_at(chain, arch, base))
             .collect();
         held.velocity = find(AddressType::Velocity).map(|chain| tracked_at(chain, arch, base));
-        notes.print();
+        if !announce {
+            notes.held.clear();
+        }
+        notes.print("Flight mode holds", "Flight mode leaves alone, as it looks wrong");
         held
+    }
+
+    // Flying, rather than held by a restore
+    fn flying(&self) -> bool {
+        self.flight.is_some() && self.restore_until.is_none()
+    }
+
+    // Her facing and the camera's angles, those found that look right (for Lara; nothing for the look at)
+    fn read_view(&mut self) -> View {
+        if !self.is_lara {
+            return View::default();
+        }
+        let mut notes = Notes::default();
+        let view = View {
+            facing: self.read_found(&mut notes, AddressType::Facing),
+            camera_yaw: self.read_found(&mut notes, AddressType::CameraYaw),
+            camera_pitch: self.read_found(&mut notes, AddressType::CameraPitch),
+        };
+        notes.print("Stored with it", "Not stored with it, as it looks wrong");
+        view
+    }
+
+    fn read_found<T: Copy + Default + std::fmt::Debug>(&mut self, notes: &mut Notes, address_type: AddressType) -> Option<T> {
+        let chain = notes.find(&self.game, &mut self.components, address_type)?;
+        let mut value = tracked_at::<T>(chain, self.arch, self.game.base_address);
+        value.fetch_from_game(self.handle).ok()?;
+        Some(value.data)
+    }
+
+    // Puts back the stored facing and camera angles, where they're found now
+    fn write_view(&mut self) {
+        let view = self.saved_view;
+        let mut notes = Notes::default();
+        if let Some(facing) = view.facing {
+            self.write_found(&mut notes, AddressType::Facing, facing);
+        }
+        if let Some(yaw) = view.camera_yaw {
+            self.write_found(&mut notes, AddressType::CameraYaw, yaw);
+        }
+        if let Some(pitch) = view.camera_pitch {
+            self.write_found(&mut notes, AddressType::CameraPitch, pitch);
+        }
+        notes.held.clear();
+        notes.print("", "Not restoring it, as it looks wrong");
+    }
+
+    fn write_found<T: Copy + std::fmt::Debug>(&mut self, notes: &mut Notes, address_type: AddressType, value: T) {
+        if let Some(chain) = notes.find(&self.game, &mut self.components, address_type) {
+            if let Err(e) = TrackedMemory::new(value, chain, self.arch, self.game.base_address).apply_to_game(self.handle) {
+                eprintln!("Error: couldn't restore {:?}: {}", address_type, e);
+            }
+        }
+    }
+
+    // Lets her go after a restore's hold, and puts back her facing and the camera
+    fn end_restore(&mut self) {
+        self.restore_until = None;
+        self.flight = None;
+        self.stop_skew(false);
+        self.write_view();
     }
 
     // Moves the cached position this far forward and right, relative to the camera if the version has it (else along x
     // and -y), while flying
     fn move_by(&mut self, forward: f32, right: f32) {
-        if self.flight.is_none() {
+        if !self.flying() {
             return;
         }
         let position = &mut self.position;
@@ -148,18 +227,20 @@ impl PositionHandler {
 
     // Moves the cached position up, while flying
     fn move_up(&mut self, up: f32) {
-        if self.flight.is_some() {
+        if self.flying() {
             self.position.z.data += up;
         }
     }
 
-    // The game's noclip for a flight, if it's to be used
-    fn start_skew(&mut self) {
+    // The game's noclip for a flight (or a restore's hold), if it's to be used; it's said for flights
+    fn start_skew(&mut self, announce: bool) {
         if let Some(skew) = &self.skew {
             match skew.set(&self.game, &mut self.components, true) {
                 Ok(()) => {
                     self.skewing = true;
-                    println!("Flight mode turned on the game's skew (no gravity or collision)");
+                    if announce {
+                        println!("Flight mode turned on the game's skew (no gravity or collision)");
+                    }
                 }
                 Err(why) => {
                     eprintln!("Error: flight mode couldn't turn on the game's skew, so isn't using it: {}", why)
@@ -169,14 +250,15 @@ impl PositionHandler {
     }
 
     // After a flight, if it was on
-    fn stop_skew(&mut self) {
+    fn stop_skew(&mut self, announce: bool) {
         if !self.skewing {
             return;
         }
         self.skewing = false;
         if let Some(skew) = &self.skew {
             match skew.set(&self.game, &mut self.components, false) {
-                Ok(()) => println!("Flight mode turned off the game's skew"),
+                Ok(()) if announce => println!("Flight mode turned off the game's skew"),
+                Ok(()) => (),
                 Err(why) => eprintln!("Error: flight mode couldn't turn off the game's skew: {}", why),
             }
         }
@@ -195,12 +277,15 @@ impl Handler for PositionHandler {
         if self.is_lara {
             state.position_tools = true;
             state.saved_position = if self.saved { Some(self.saved_position.to_position()) } else { None };
-            state.flying = self.flight.is_some();
+            state.flying = self.flying();
         }
     }
 
     fn handle_tick(&mut self) -> Result<(), Box<dyn Error>> {
-        if self.flight.is_some() {
+        if self.restore_until.is_some_and(|until| Instant::now() >= until) {
+            self.end_restore();
+        }
+        if self.flying() {
             if let Some((sin, cos)) = &mut self.camera_rotation {
                 sin.fetch_from_game(self.handle)?;
                 cos.fetch_from_game(self.handle)?;
@@ -210,12 +295,16 @@ impl Handler for PositionHandler {
     }
 
     fn handle_action(&mut self, action: Action) -> Result<(), Box<dyn Error>> {
-        let active = self.flight.is_some();
+        let active = self.flying();
         match action {
             Action::ToggleActive {} => {
-                if active {
+                if self.restore_until.take().is_some() {
+                    // A restore's hold carries on as a flight
+                    self.write_view();
+                    println!("Activated {} handler", self.name);
+                } else if active {
                     self.flight = None;
-                    self.stop_skew();
+                    self.stop_skew(true);
                     println!("Deactivated {} handler", self.name);
                 } else {
                     // Nothing's held unless her position reads, and looks like hers
@@ -225,8 +314,8 @@ impl Handler for PositionHandler {
                     if let Err(why) = self.check_position() {
                         return Err(format!("Not activating the {} handler, its position looks wrong ({})", self.name, why).into());
                     }
-                    let held = self.find_held();
-                    self.start_skew();
+                    let held = self.find_held(true);
+                    self.start_skew(true);
                     self.flight = Some(Flight::start(held, self.position.to_position()));
                     println!("Activated {} handler", self.name);
                 }
@@ -236,13 +325,28 @@ impl Handler for PositionHandler {
                 self.saved_position.fetch_from_game(self.handle)?;
                 self.saved = true;
                 println!("Stored {}! {:}", self.name, self.saved_position);
+                self.saved_view = self.read_view();
             }
             Action::RestorePosition {} => {
+                if !self.saved {
+                    println!("No {} stored to restore", self.name);
+                    return Ok(());
+                }
                 if let Err(why) = self.check_position() {
                     return Err(format!("Not restoring the {}, it looks wrong ({})", self.name, why).into());
                 }
                 self.position = self.saved_position.clone();
-                self.position.apply_to_game(self.handle)?;
+                // A flight goes on, moved there below; otherwise she's held there for a moment
+                if !self.flying() {
+                    if self.restore_until.is_none() {
+                        let held = self.find_held(false);
+                        self.start_skew(false);
+                        self.flight = Some(Flight::start(held, self.position.to_position()));
+                    }
+                    self.restore_until = Some(Instant::now() + RESTORE_HOLD);
+                }
+                // With her position, so it all changes at once (and again when the hold ends, in case it's undone)
+                self.write_view();
                 println!("Restored {}! {:}", self.name, self.position);
             }
             Action::Forward { distance } => self.move_by(distance, 0.0),
@@ -262,8 +366,18 @@ impl Handler for PositionHandler {
 impl Drop for PositionHandler {
     fn drop(&mut self) {
         self.flight = None;
-        self.stop_skew();
+        self.stop_skew(true);
     }
+}
+
+// What's stored with her position, where it's found
+#[derive(Debug, Clone, Copy, Default)]
+struct View {
+    // Her instance's Euler angles
+    facing: Option<[f32; 3]>,
+    // The camera controller's, each with its copy
+    camera_yaw: Option<[f32; 2]>,
+    camera_pitch: Option<[f32; 2]>,
 }
 
 // The value at the end of a chain, as the type it's held as
@@ -271,7 +385,7 @@ fn tracked_at<T: Copy + Default + std::fmt::Debug>(chain: Vec<usize>, arch: Arch
     TrackedMemory::new(T::default(), chain, arch, base)
 }
 
-// What a flight found to hold, and what it didn't, said once as it starts
+// What was found to write, and what wasn't, said once
 #[derive(Default)]
 struct Notes {
     held: Vec<String>,
@@ -298,12 +412,12 @@ impl Notes {
         }
     }
 
-    fn print(&self) {
+    fn print(&self, held: &str, skipped: &str) {
         if !self.held.is_empty() {
-            println!("Flight mode holds: {}", self.held.join(", "));
+            println!("{}: {}", held, self.held.join(", "));
         }
-        for skipped in &self.skipped {
-            println!("Flight mode leaves alone, as it looks wrong: {}", skipped);
+        for what in &self.skipped {
+            println!("{}: {}", skipped, what);
         }
     }
 }

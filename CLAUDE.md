@@ -92,7 +92,7 @@ Each module's `//!` doc says what's in it and how it works; this is where to loo
 | `src/lib.rs` | The injected overlay (DLL): its window and drawing |
 | `src/position.rs` | `Position`, with `Vector3` conversions (shared with the DLL) |
 | `src/projection.rs` | Projecting onto the screen (the camera's `Projector`), fading, and the occlusion buffer; `visible_triangles`, which collision triangles the overlay draws, worked out by the exe (shared with the DLL) |
-| `src/position_handler.rs` | Save/restore position, flight mode and movement |
+| `src/position_handler.rs` | Save/restore position (with her facing and the camera's angles, restored through a short flight), flight mode and movement |
 | `src/skew.rs`, `src/game_call.rs` | The game's own noclip (skew) for flight mode (`flight_skew`), and running a game function in a thread of the game's to send its message |
 | `src/class_fields.rs` | Which RTTI class each layout field is in (`FIELD_CLASSES`), the fields a class's virtual functions use, and another build's or game's layout from that (`debug class-fields`, `debug class-layout`) |
 | `src/targets.rs` | What tomb-helper writes: chains built from the structures (or the offsets file's), checked before writing |
@@ -582,6 +582,17 @@ again (`derive` plus live checks).
   fields are 8 earlier in the layout. The player is [[instance+0xA4]+0xC] (Steam [[+0xA8]+0x14]); the push at +0x540
   isn't checked. Weapons in both builds: pistol (-10, 0, 120) to (-33, -70, 120) r8, shotgun (-7, 0, 110) to (-27,
   -70, 110) r7, rifle (-10, 0, 120) to (-30, -75, 120) r5, bow (-10, 0, 125) to (-20, -90, 125) r5.
+- The camera's angles (`camera_controller`, Steam and Epic): the `ExplorationCameraController` (the one `camera.collision`
+  goes through, [[GameRender]+0x5F0]+0xA2C) has the yaw at +0xD34 (the camera's yaw plus pi/2, 0 to 2pi, radians) and
+  minus its pitch at +0xD4C, each followed by a copy (+0xD38, +0xD50). Found live by sampling the controller, camera
+  component and player while the user turned the camera through more than a turn (only these two pairs followed it;
+  the rest are the matrices it makes), and written live: the camera turned there and stayed. Lara's facing is her
+  record's Euler z (+0x28), and written once it held too (moving, she turns from it as normal). Restoring her position
+  (`RestorePosition`) puts both back: outside a flight it's a 20ms one with skew (her velocity and fall start held, so
+  restoring mid-fall doesn't kill her), the facing and camera written with her position and again as she's let go
+  (only once, after, looked like two steps; and skew's camera zooms out and back in, so the hold is short). ROTTR's and
+  SOTTR's controller angles aren't known yet (their facing is `instance.rotation`, which `check` passes in every
+  snapshot, but it hasn't been written there).
 - Live tools all work on Steam TR2013: `probe`, `chains`, `update-offsets` (finds every static but the two pools, which `--from` derives), `watch`/`watch-raw` (debug
   registers set in the native context, registers read from the WOW64 one; 800 traps in 2s on the QueryPerformanceCounter
   import slot). Lara's position and the camera weren't read at all while the game was unfocused (paused).

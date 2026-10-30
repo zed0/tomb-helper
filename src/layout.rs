@@ -531,6 +531,18 @@ group! {
 }
 
 group! {
+    /// The active camera controller (`ExplorationCameraController`), which `camera.collision` leads to (less its last
+    /// offset)
+    CameraControllerLayout {
+        /// f32 radians, then a copy: the way the camera faces (TR2013: its yaw plus pi/2, 0 to 2pi), which the mouse
+        /// turns. None if it isn't known
+        yaw: Option<usize> = None,
+        /// f32 radians, then a copy: how far the camera looks down (TR2013: minus its pitch). None if it isn't known
+        pitch: Option<usize> = None,
+    }
+}
+
+group! {
     /// cdc::CollisionSceneClient (`CollisionScene`), which lists the level's collision mesh instances
     CollisionSceneLayout {
         /// -> first instance
@@ -701,6 +713,7 @@ layout! {
     probes: ProbesLayout,
     aim_sweep: AimSweepLayout,
     camera: CameraLayout,
+    camera_controller: CameraControllerLayout,
     collision_scene: CollisionSceneLayout,
     collision_instance: CollisionInstanceLayout,
     collision_mesh: CollisionMeshLayout,

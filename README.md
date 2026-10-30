@@ -5,12 +5,14 @@
 A speedrun helper for the Tomb Raider reboot series
 
 Current features:
-- Save and restore positions
+- Save and restore positions (with Lara's facing and the camera, in some versions)
 - Move Lara directly
 - Skip cutscenes and record how much time was saved (in Shadow, the only one of the games that stops you skipping
   cutscenes straight away)
 - An overlay in the game showing Lara's collision, the level's collision, interactable objects, characters and trigger
   volumes (in some versions, see [Supported versions](#supported-versions))
+- Open the developers' level select, still in the games but hidden, from the main menu (Rise and Shadow of the Tomb
+  Raider, see [Level select](#level-select))
 - Supports Tomb Raider 2013, Rise of the Tomb Raider, and Shadow of the Tomb Raider, and new patches can be added with
   `tomb-helper port` (see [Adding a new patch or game](#adding-a-new-patch-or-game))
 - Connects and disconnects from games as they are started and stopped: useful in case of crashes!
@@ -28,21 +30,23 @@ Current features:
 
 ## Supported versions
 
-| Game | Version | Position tools | Cutscene skipping | Overlay |
-|---|---|---|---|---|
-| Tomb Raider 2013 | v1.01.748.0 | ✓ | | ✓ |
-| Tomb Raider 2013 | v1.1 build 838.0_32 | ✓ | | |
-| Tomb Raider 2013 | (Steam) v1.01.0.0 | ✓ | | ✓ |
-| Tomb Raider 2013 | (Epic Games) v1.01.0.0 | ✓ | | ✓ |
-| Rise of the Tomb Raider | v1.0 build 820.0_64, v1.0 build 1027.0_64 | ✓ | | |
-| Rise of the Tomb Raider | (Steam) v1.0 build 0.0_64 | ✓ | | ✓ |
-| Rise of the Tomb Raider | (Epic Games) v1.0 build 1027.0_64 | ✓ | | ✓ |
-| Shadow of the Tomb Raider | v1.0 build 234.1_64 | ✓ | ✓ | ✓ |
-| Shadow of the Tomb Raider | v1.0 build 298.0_64, 458.0_64, 489.0_64 | ✓ | ✓ | |
-| Shadow of the Tomb Raider | (Epic Games) v1.0 build 492.0_64 | ✓ | ✓ | ✓ |
-| Shadow of the Tomb Raider | (Steam) v1.0 build 492.0_64 | ✓ | ✓ | ✓ |
+| Game | Version | Position tools | Cutscene skipping | Overlay | Level select |
+|---|---|---|---|---|---|
+| Tomb Raider 2013 | v1.01.748.0 | ✓ | | ✓ | |
+| Tomb Raider 2013 | v1.1 build 838.0_32 | ✓ | | | |
+| Tomb Raider 2013 | (Steam) v1.01.0.0 | ✓ | | ✓ | |
+| Tomb Raider 2013 | (Epic Games) v1.01.0.0 | ✓ | | ✓ | |
+| Rise of the Tomb Raider | v1.0 build 820.0_64, v1.0 build 1027.0_64 | ✓ | | | |
+| Rise of the Tomb Raider | (Steam) v1.0 build 0.0_64 | ✓ | | ✓ | ✓ |
+| Rise of the Tomb Raider | (Epic Games) v1.0 build 1027.0_64 | ✓ | | ✓ | ✓ |
+| Shadow of the Tomb Raider | v1.0 build 234.1_64 | ✓ | ✓ | ✓ | ✓ |
+| Shadow of the Tomb Raider | v1.0 build 298.0_64, 458.0_64, 489.0_64 | ✓ | ✓ | | |
+| Shadow of the Tomb Raider | (Epic Games) v1.0 build 492.0_64 | ✓ | ✓ | ✓ | ✓ |
+| Shadow of the Tomb Raider | (Steam) v1.0 build 492.0_64 | ✓ | ✓ | ✓ | ✓ |
 
 Cutscene skipping is only for Shadow of the Tomb Raider because the other two games let you skip cutscenes whenever you like, so they don't need it.
+
+Tomb Raider 2013 has a level select menu too, but it shows nothing (see [Level select](#level-select)).
 
 The overlay can be added to the others with `tomb-helper port` (see [Adding a new patch or game](#adding-a-new-patch-or-game)). It needs the game running with DirectX 12 (Rise and Shadow) or DirectX 11 (Tomb Raider 2013), see [Overlay](#overlay).
 
@@ -125,8 +129,8 @@ Each entry comprises of a `key` and an `action` field.
 
 Currently the available actions are:
 - `ToggleActive`
-- `StorePosition`
-- `RestorePosition`
+- `StorePosition` (also stores which way Lara's facing, and in Tomb Raider 2013 (Steam and Epic) which way the camera's looking)
+- `RestorePosition` (puts her back where `StorePosition` stored, facing the same way, with the camera as it was. Outside flight mode she's held there for a moment (with `flight_skew`, in the game's noclip) before being let go, with her fall cleared, so restoring her mid-fall or far below where she was doesn't kill her)
 - `SkipCutscene`
 - `ResetSkipCutsceneTracker` (reset the total amount of time of cutscenes skipped, prints out the previous total, suggest binding this to the same key you use to reset livesplit)
 - `ToggleUI` (inject or remove the in-game overlay; experimental, and only with DirectX 12 in Rise and Shadow of the Tomb Raider, or DirectX 11 in Tomb Raider 2013, see [Overlay](#overlay))
