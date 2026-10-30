@@ -75,6 +75,7 @@ The default configuration is:
 		{"key": "C", "action": {"Down": {"distance": 100.0}}}
 	],
 	"debug_logging": false,
+	"flight_skew": true,
 	"data_dir": null,
 	"cutscene_blacklist_file": "https://gist.githubusercontent.com/Atorizil/734a7649471f0fa0a2a9f92a167e294b/raw/Blacklist.json",
 	"cutscene_timing_file": "https://gist.githubusercontent.com/zed0/762a5790501af95189344834bc210616/raw/tomb-helper-timing-info.json",
@@ -114,6 +115,8 @@ The default configuration is:
 Any left out of `tomb-helper.json` are these. If it isn't valid, tomb-helper says what's wrong with it and stops.
 
 `debug_logging` also prints the errors that are expected while the game loads a level or exits, such as pointer chains that don't resolve or Lara's position not being readable, which are hidden otherwise.
+
+`flight_skew` makes flight mode (`ToggleActive`) use the game's own noclip, the "skew cheat" its developers used: while flying, Lara has no gravity or collision, so she can be flown through walls and the ground, and when the flight ends the game turns both back on. Nothing in the released games turns it on, so tomb-helper does it by running a little code in the game (in a thread of its own, calling the game's function for sending messages), and it's on by default; set it to `false` to keep tomb-helper from running code in the game. Without it, flight mode holds her where she's put but she can't pass through anything. It's only in versions whose offsets have `SendMessage` and `MessageSystem`: Tomb Raider 2013 (Steam, Epic and v1.01.748), Rise of the Tomb Raider (Steam and Epic) and Shadow of the Tomb Raider (Steam and Epic 492, and 234.1).
 
 ## Hotkeys
 

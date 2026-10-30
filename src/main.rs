@@ -54,6 +54,7 @@ mod find_process;
 mod fit_layout;
 mod flight_fields;
 mod game;
+mod game_call;
 mod game_memory;
 mod handler;
 mod hotkeys;
@@ -72,6 +73,7 @@ mod position_handler;
 mod process_details;
 mod readable_from_path;
 mod rtti;
+mod skew;
 mod snapshot;
 mod targets;
 mod tracked_memory;
@@ -174,7 +176,7 @@ fn create_handlers(config: &Config, connection: &Connection) -> Vec<Box<dyn Hand
     [
         cutscenes,
         OverlayHandler::new_overlay_handler(connection, &config.overlay, &config.hotkeys).map(boxed),
-        PositionHandler::new_position_handler(connection).map(boxed),
+        PositionHandler::new_position_handler(connection, config.flight_skew).map(boxed),
         PositionHandler::new_look_at_handler(connection).map(boxed),
         MenuHandler::new(connection).map(boxed),
     ]

@@ -93,6 +93,7 @@ Each module's `//!` doc says what's in it and how it works; this is where to loo
 | `src/position.rs` | `Position`, with `Vector3` conversions (shared with the DLL) |
 | `src/projection.rs` | Projecting onto the screen (the camera's `Projector`), fading, and the occlusion buffer; `visible_triangles`, which collision triangles the overlay draws, worked out by the exe (shared with the DLL) |
 | `src/position_handler.rs` | Save/restore position, flight mode and movement |
+| `src/skew.rs`, `src/game_call.rs` | The game's own noclip (skew) for flight mode (`flight_skew`), and running a game function in a thread of the game's to send its message |
 | `src/class_fields.rs` | Which RTTI class each layout field is in (`FIELD_CLASSES`), the fields a class's virtual functions use, and another build's or game's layout from that (`debug class-fields`, `debug class-layout`) |
 | `src/targets.rs` | What tomb-helper writes: chains built from the structures (or the offsets file's), checked before writing |
 | `src/tracked_memory.rs`, `src/tracked_position.rs` | Cached values at pointer chains, for the position and cutscene handlers |
@@ -431,6 +432,25 @@ again (`derive` plus live checks).
 - Flight mode (`position_handler`) doesn't write any of the collision fields for now (2026-10-28): her collision was
   still broken after flights (she could jump through walls), so it holds only her position, velocity and fall start.
   `targets` still finds the proxy flags, resolved centre, body fix-up and camera switch for when it's tried again.
+- The game has its own noclip, the cdc "skew cheat" (tried in SOTTR Steam 492, 2026-10-28): Lara's player message
+  handler (492 mod+0x99F2C5, 234.1 mod+0xD9C1C05) turns it on for message 0xA09458BC with non-null data and off with
+  null, switching off her gravity and collision and putting her player state machine in a skew state (player+0x7C bit
+  0x2). Messages are sent with mod+0x8E6D70 (the message system [mod+0x36AAF30], instance, hash, data), which takes the
+  system's lock and calls the instance's handler there and then. Sent from a thread of tomb-helper's own
+  (CreateRemoteThread on a stub) it worked: the camera zoomed out a little, WASD only turned her, and a single write
+  of her position held her there, in the air or under the ground. Turned off, she fell, landed and walls blocked her
+  again. Its movement was message 0x39819B68 (a vector, scaled and added to player+0x6B0, then moved by +0x99E980),
+  sent by the debug controls, which are compiled out. Flight mode uses it with `flight_skew` in the config (on by
+  default since 2026-10-30; it runs code in the game): skew on as a flight starts, off as it ends (`SendMessage`, `MessageSystem`
+  and `player.skew` in 492 Steam's entry); flown through walls and the ground, she landed and collided as normal.
+  Every other build with a dump has them now (2026-10-30), found the same way: the handler's "Skew Cheat Enabled!"
+  string, or its compare with 0xA09458BC, leads to its on path, which sends 0x4720A8C2 with the send-message function
+  and its message system (`mov rcx, [static]` / `mov ecx, [static]` just before; ~75% of the function's callers load
+  that static) and tests or sets the skew bit on the player. ROTTR, SOTTR Epic 492 and 234.1 (whose function is a
+  Denuvo jmp thunk) are 492 Steam's code with player+0x7C bit 0x2. TR2013 (Steam, Epic, 748) is 32-bit:
+  the function is `__thiscall` (system in ecx; instance, hash, data pushed; `ret 0xC`), its instance the 0xD0 record
+  her position chain reaches, and the bit is player+0x60 0x8 (`player.skew_mask`), clearing bit 0x1 as SOTTR's does.
+  Sent from a thread of its own in TR2013 Steam it set and cleared that bit; not yet flown with it in TR2013 or ROTTR.
 - These are all fields of things found without offsets (her instance, components and player object through `XPosition`'s
   chain, GameRender through `CameraView`'s), so `targets::structural` builds them from 492's layout (`instance.ballistic`,
   `player`, `ballistic`, `proxy.flags`/`resolved_centre`, `body.gap`, `physics_shape`, `camera.collision`); a test checks
@@ -600,6 +620,51 @@ again (`derive` plus live checks).
   menu stayed current). `UiMenuStateStreamLayerDemo` (0x37) loads the unit `uiplus_streamlayerdemo` (spheres over
   the sea, no menu), and Back leaves it. `AGDebugMenuTriggerNode` is compiled out. TR2013's archives (`.tiger`, TAFS
   v3, `pc-w\`) hash names with the same CRC32 as ROTTR's.
+
+### Other developer leftovers (SOTTR Steam 492, looked at read-only)
+- God mode looks like a plain write: Lara's HealthComponent (component slot u32 at mod+0x16BB100) +0x2B0 ->
+  `Invincibility_DS`, whose +0x28 (i64) is when her invincibility ends and +0x30 its duration; `SetInvincible`
+  (mod+0x2840E0) stores -1 in both for good. The is-invincible test (mod+0x270CC0) and the damage code (mod+0x27D0F0)
+  treat a negative end, or one after now, as invincible (unless the hit has bit 0x2 at +0xBE, probably scripted
+  deaths). Lara's read 0/0 (not invincible). Not written yet.
+- Free camera: the camera controller factory (mod+0x17A050, by a description's type at +0x18) makes a
+  `FreeCameraController` for type 0 (1 Simple, 2 Iso, 3 MapView, 4 Modelview, 5 Anchored, 6 Spline, 7 Dummy, 13 Hmd);
+  skew's on path pushes a type 1 description with mod+0x166E50(camera, settings, description), so a free camera would
+  be the same call with type 0 (code run in the game). Its update integrates its own fields (+0x1A0..+0x1F4) and reads
+  no input, so something would have to drive it.
+- Scripts (ActionGraphs) are 540 node classes (`AG*`), each doing its work in vtable slot 1 by calling engine
+  functions directly (e.g. `AGPlayerGiveLootNode`: the source instance's LootComponent and the player into
+  mod+0x6ED590, then +0x6F1AA0; `AGInstanceTeleportNode`: a sequence of moves, then message 0x293EC205 to her).
+  Objects talk through messages: `AGMessageSendNode` holds the hash (+0x50), target instance id (+0x28) and a 0x20
+  byte payload (+0x30, mostly `04 00..`), and sends them with mod+0x8E75B0 through the same message system as skew.
+  A level's scripts sent 212 distinct messages from 1362 send nodes (116 to Lara, none of them ones her player
+  handler takes: her other components handle those). Their names aren't in the exe.
+- Names: the exe only names its PDB (`d:\tr11\tr11_dev\...\x64_gm_nixxes\game\SOTTR.pdb`, not shipped) and exports
+  library functions (Wwise, NVIDIA NGX, Square Enix's osdk). What can be named from the exe: 13,429 virtual
+  functions by their RTTI class (Class::vN, of 35,604 functions that are called), 76 network RPC handlers by their
+  registration strings (each `lea r9, handler; lea r8, "Class::RPC_Name"; mov edx, id; call mod+0x249430`; 6 of them,
+  e.g. `NetDebugger::RPC_SetOption`, have the empty mod+0xE80780 as their handler; each handler reads its arguments
+  from a bitstream with mod+0x663B0 and calls the function doing the work, e.g. `RPC_SetInvincible` ->
+  `SetInvincible`), and functions that use one of ~312 "Class::Method" assert/log strings. Message hashes aren't
+  CRC32, FNV-1/1a, MurmurHash2 or xxHash32 of any string in the exe. The most called functions are plumbing
+  (allocator mod+0x40B670, CRT stubs, string, refcounts, locks, ActionGraph helpers +0x802AD0/+0x7FE690, bitstream
+  reads +0x663B0). Feral's Linux and macOS ports don't name it either (their binary depots, checked 2026-10-29, are
+  in `H:\feral-linux` and `H:\feral-macos`): no debug info, symbol table or dSYM in any of the three games, and their
+  strings name only middleware source (RakNet, Quazal, Breakpad, osdk, Feral's own). The Linux builds export nothing of
+  the game's (TR2013's 18k exports are Feral's GL/D3D layers, libvpx, D3DX); the macOS ones export only functions
+  registered by address: ActionGraph node factories (`AG*::DTPCreate`, ROTTR also `DTPIOCount`/`DTPMemSize`, 539 in
+  TR2013 and 754 in ROTTR), the AI planner's `Action_*`/`Goal_*::Birth` and event listener callbacks, nothing of
+  movement, camera, proxies or menus; SOTTR's macOS build exports none. Their class names (GCC typeinfo) are the
+  Windows RTTI's.
+- Compiled out or inert: `Debug_SetDebugNpc` (stub), `AGDebugDrawText`/`DebugDrawVector` (format text, draw
+  nothing), the render debug view modes (only in the shaders' source), `INPUTACTION_Debug_*`. The player handler's 51
+  message hashes have no names in the exe (not the CRC32 of any string in it).
+- Launch options (`NxAppImpl`, mod+0xFE1840): `-nixxes` (sets its +8, read through a shared getter, effect unknown;
+  untried), `-benchmark`, `-nolauncher`, `-nodriverwarning`, `-benchmarkini`, `-setup`, `-config`, Epic's `-DevPort`
+  /`-DevCredentials`. A QA tool's message types ("copperpot_" ping, script, teleport/skew player to marker, kill
+  player, reload unit, ...) are an enum's names at mod+0x146BD50, but nothing refers to the table (no code, no
+  pointers in live memory; the same in ROTTR, TR2013 and 234.1), and the game listens on no ports: the code that
+  handled them is gone from every retail build.
 
 ### Working with the live game
 - The user plays; ask them to switch to the game before anything that needs it running (it pauses when alt-tabbed),

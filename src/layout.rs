@@ -269,6 +269,10 @@ group! {
         /// Pointers to follow from Lara's instance to the player object, where her position chain doesn't go through it
         /// (TR2013 Steam: [[instance + 0xA8] + 0x14])
         from_instance: Vec<usize> = vec![],
+        /// u32 flags with `skew_mask` set while the game's skew (noclip) is on, to check it took (see `skew`): ROTTR and
+        /// SOTTR 0x7C (0x2), TR2013 0x60 (0x8)
+        skew: Option<usize> = None,
+        skew_mask @value = 0x2,
     }
 }
 

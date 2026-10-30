@@ -239,6 +239,8 @@ pub struct Config {
     pub data_dir: Option<String>,
     // Also print errors that are expected while the game loads a level or exits, like pointer chains that don't resolve
     pub debug_logging: bool,
+    // Flight mode also turns on the game's own noclip (skew), which runs code in the game (see `skew`); on by default
+    pub flight_skew: bool,
 }
 
 impl Default for Config {
@@ -251,6 +253,7 @@ impl Default for Config {
             overlay: OverlayConfig::default(),
             data_dir: None,
             debug_logging: false,
+            flight_skew: true,
         }
     }
 }

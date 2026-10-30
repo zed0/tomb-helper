@@ -71,6 +71,10 @@ pub enum AddressType {
     // The menu to switch to (i32, -1 for none), which the game switches to on its next frame; the level select hotkey
     // writes it. Found from `MenuState`'s chain
     RequestedMenu,
+    // The game's send-message function (an address, `[rva]`) and the static pointing at the message system it takes,
+    // which flight mode calls to turn the game's skew (noclip) on and off, if `flight_skew` is set (see `skew`)
+    SendMessage,
+    MessageSystem,
     CutscenePrompt,
     CutsceneStatus,
     CutsceneTimeline,

@@ -202,7 +202,7 @@ fn chain_for(
 
 // The chain to the pointer to Lara's instance: her position chain less its last offset, if it ends in her instance's
 // position
-fn lara_instance(layout: &Layout, offsets: &AddressOffsets) -> Option<Vec<usize>> {
+pub fn lara_instance(layout: &Layout, offsets: &AddressOffsets) -> Option<Vec<usize>> {
     let chain = offsets.get(&AddressType::XPosition)?;
     match chain.split_last() {
         Some((&last, prefix)) if !prefix.is_empty() && last == layout.instance.position => Some(prefix.to_vec()),
@@ -238,6 +238,11 @@ fn player(layout: &Layout, offsets: &AddressOffsets, found: Option<Vec<usize>>) 
     let chain = offsets.get(&AddressType::XPosition)?;
     let n = chain.len();
     (n >= 3 && Some(chain[n - 2]) == layout.player.instance).then(|| chain[..n - 2].to_vec())
+}
+
+/// The chain to the pointer to the player object, where her position chain or the layout says (`player`)
+pub fn player_chain(layout: &Layout, offsets: &AddressOffsets) -> Option<Vec<usize>> {
+    player(layout, offsets, None)
 }
 
 // The chain to the pointer to GameRender: `CameraView`'s less the view's offset

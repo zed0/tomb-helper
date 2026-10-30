@@ -11,7 +11,9 @@
 //! It doesn't touch collision, hers or the camera's, so she can't be flown through walls or into the ground. Turning
 //! her proxy's off (`ProxyFlags`, with `ProxyResolvedCentre` and the camera's `CameraCollision`, which `targets` still
 //! finds) left her physics body behind and broke her collision after the flight (she could jump through walls), so
-//! that's left for later.
+//! that's left for later. With `flight_skew` in the config (the default), it has the game do it instead: the game's
+//! own noclip (`skew`, which turns her gravity and collision off, and back on afterwards) is on for the flight, and off
+//! again when it ends, or when the handler goes (tomb-helper stopping, or the offsets reloading).
 
 use crate::action::Action;
 use crate::components::Components;
@@ -19,6 +21,7 @@ use crate::find_process::Connection;
 use crate::game::Game;
 use crate::handler::{Handler, HelperState};
 use crate::position::Position;
+use crate::skew::Skew;
 use crate::process_details::AddressType;
 use crate::targets::{self, Source};
 use crate::tracked_memory::TrackedMemory;
@@ -45,6 +48,9 @@ pub struct PositionHandler {
     camera_rotation: Option<(TrackedMemory<f32>, TrackedMemory<f32>)>,
     // Set while flying
     flight: Option<Flight>,
+    // The game's noclip, for flights (with `flight_skew`, where the version has it), and whether it's on
+    skew: Option<Skew>,
+    skewing: bool,
     // For finding and checking what flight mode writes
     game: Game,
     components: Components,
@@ -57,12 +63,14 @@ const LARA: [AddressType; 3] = [AddressType::XPosition, AddressType::YPosition, 
 const LOOK_AT: [AddressType; 3] = [AddressType::XLookAt, AddressType::YLookAt, AddressType::ZLookAt];
 
 impl PositionHandler {
-    pub fn new_position_handler(connection: &Connection) -> Option<PositionHandler> {
+    pub fn new_position_handler(connection: &Connection, use_skew: bool) -> Option<PositionHandler> {
         println!("Loading position handler...");
-        let camera_rotation = TrackedMemory::find(connection, AddressType::CameraSin)
+        let mut handler = PositionHandler::new(connection, LARA, "position")?;
+        handler.camera_rotation = TrackedMemory::find(connection, AddressType::CameraSin)
             .zip(TrackedMemory::find(connection, AddressType::CameraCos));
-        let handler = PositionHandler::new(connection, LARA, "position")?;
-        Some(PositionHandler { camera_rotation, is_lara: true, ..handler })
+        handler.is_lara = true;
+        handler.skew = if use_skew { Skew::find(connection) } else { None };
+        Some(handler)
     }
 
     pub fn new_look_at_handler(connection: &Connection) -> Option<PositionHandler> {
@@ -82,6 +90,8 @@ impl PositionHandler {
             is_lara: false,
             camera_rotation: None,
             flight: None,
+            skew: None,
+            skewing: false,
             game: connection.game(),
             components: Components::new(connection.base_address),
             arch: connection.details.arch,
@@ -143,6 +153,35 @@ impl PositionHandler {
         }
     }
 
+    // The game's noclip for a flight, if it's to be used
+    fn start_skew(&mut self) {
+        if let Some(skew) = &self.skew {
+            match skew.set(&self.game, &mut self.components, true) {
+                Ok(()) => {
+                    self.skewing = true;
+                    println!("Flight mode turned on the game's skew (no gravity or collision)");
+                }
+                Err(why) => {
+                    eprintln!("Error: flight mode couldn't turn on the game's skew, so isn't using it: {}", why)
+                }
+            }
+        }
+    }
+
+    // After a flight, if it was on
+    fn stop_skew(&mut self) {
+        if !self.skewing {
+            return;
+        }
+        self.skewing = false;
+        if let Some(skew) = &self.skew {
+            match skew.set(&self.game, &mut self.components, false) {
+                Ok(()) => println!("Flight mode turned off the game's skew"),
+                Err(why) => eprintln!("Error: flight mode couldn't turn off the game's skew: {}", why),
+            }
+        }
+    }
+
     // Moves where she's held to the cached position
     fn hold_here(&self) {
         if let Some(flight) = &self.flight {
@@ -176,6 +215,7 @@ impl Handler for PositionHandler {
             Action::ToggleActive {} => {
                 if active {
                     self.flight = None;
+                    self.stop_skew();
                     println!("Deactivated {} handler", self.name);
                 } else {
                     // Nothing's held unless her position reads, and looks like hers
@@ -186,6 +226,7 @@ impl Handler for PositionHandler {
                         return Err(format!("Not activating the {} handler, its position looks wrong ({})", self.name, why).into());
                     }
                     let held = self.find_held();
+                    self.start_skew();
                     self.flight = Some(Flight::start(held, self.position.to_position()));
                     println!("Activated {} handler", self.name);
                 }
@@ -214,6 +255,14 @@ impl Handler for PositionHandler {
         }
         self.hold_here();
         Ok(())
+    }
+}
+
+// A flight that's still on when the handler goes ends, with the game's noclip
+impl Drop for PositionHandler {
+    fn drop(&mut self) {
+        self.flight = None;
+        self.stop_skew();
     }
 }
 
