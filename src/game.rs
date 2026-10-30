@@ -85,6 +85,13 @@ impl Game {
         Ok(Position { x, y, z })
     }
 
+    /// Where Lara's position is in the game, if its three floats are together (as in every version so far)
+    pub fn lara_position_address(&self) -> Option<usize> {
+        let x = self.resolve(AddressType::XPosition)?;
+        let together = self.resolve(AddressType::YPosition)? == x + 4 && self.resolve(AddressType::ZPosition)? == x + 8;
+        together.then_some(x)
+    }
+
     /// Lara's instance, out of these instances nearest her position first: the first with a PlayerComponent. None where
     /// instances have no component table (TR2013)
     pub fn find_lara(&self, components: &mut Components, nearest: &[usize]) -> Option<usize> {

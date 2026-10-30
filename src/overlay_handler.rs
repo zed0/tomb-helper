@@ -2,6 +2,9 @@
 //! (`inject32`), and each tick sends it what to draw through shared memory (`ui_ipc_data`): Lara's position, the camera
 //! (with a projection made from `CameraLens`), boxes round objects (rescanned every second), triggers, the level's
 //! collision near her, and her own collision (with a 150ms hold on "pushing", as contacts are often caught mid update).
+//! Of the collision triangles near her (kept until she's moved a little), it sends only those the overlay would draw
+//! from the camera (`projection::visible_triangles`, worked out about once a frame in a thread of its own,
+//! `VisibilityWorker`), as that was too slow to do in the game's render thread every frame.
 //! Without the camera or instance array the overlay only shows its window. It sets `should_exit` to make the overlay
 //! eject itself when toggled off or dropped, and toggled back on before that's finished, waits for it to go before
 //! injecting it again: loading it while it's still loaded only counts it twice, so its eject unhooks it but leaves it
@@ -16,6 +19,9 @@ use crate::components::Components;
 use crate::config::{Hotkey, OverlayConfig, OverlayHooks};
 use crate::object_list::{self, Instance, ObjectList};
 use crate::position::Position;
+use crate::projection::{mesh_reach, visible_triangles, OcclusionBuffer, Projector};
+use std::sync::{mpsc, Arc};
+use std::thread;
 use crate::action::Action;
 use crate::handler::Handler;
 use crate::inject32;
@@ -29,7 +35,7 @@ use process_memory::{Architecture, Pid};
 use crate::trigger::{self, Shape};
 use crate::trigger_scripts::{SetOffBy, TriggerScript, TriggerScripts};
 use crate::handler::HelperState;
-use crate::ui_ipc_data::{REQUEST_RESTORE_POSITION, REQUEST_STORE_POSITION, REQUEST_TOGGLE_FLYING, name_bytes, text_bytes, trigger_action_bit, trigger_action_mask, projection_from_lens, BoxKind, Capsule, HotkeyLabel, Line, ObjectBox, ObjectCategory, SharedMemoryManager, TriggerCategory, TriggerFace, TriggerLabel, Triangle, UiSettings, HOTKEY_LABELS, HOTKEY_LABEL_LENGTH, MAX_ATTACHED, MAX_OBJECTS, MAX_TRIANGLES, MAX_TRIGGERS, UNCHECKED};
+use crate::ui_ipc_data::{REQUEST_RESTORE_POSITION, REQUEST_STORE_POSITION, REQUEST_TOGGLE_FLYING, name_bytes, text_bytes, trigger_action_bit, trigger_action_mask, projection_from_lens, BoxKind, Capsule, HotkeyLabel, Line, ObjectBox, ObjectCategory, SharedMemoryManager, TriggerCategory, TriggerFace, TriggerLabel, Triangle, UiSettings, HOTKEY_LABELS, HOTKEY_LABEL_LENGTH, MAX_ATTACHED, MAX_OBJECTS, MAX_TRIGGERS, UNCHECKED};
 
 // The overlay's builds, next to the exe (`build.rs` puts the 32-bit one there)
 const OVERLAY_DLL: &str = "tomb_helper_ui.dll";
@@ -45,6 +51,19 @@ const OBJECT_REFRESH_INTERVAL: time::Duration = time::Duration::from_secs(1);
 const TOUCHING_HOLD: time::Duration = time::Duration::from_millis(150);
 // How long to wait for the overlay from before to unload, when it's toggled back on before it has
 const UNLOAD_TIMEOUT: time::Duration = time::Duration::from_secs(5);
+// The collision triangles near Lara are found again once where they're drawn round has moved this far, and found this
+// much further out than they're drawn so they're there to draw in between
+const NEARBY_SLACK: f32 = 50.0;
+// and at least this often, as some meshes move (e.g. bendy trees)
+const NEARBY_INTERVAL: time::Duration = time::Duration::from_millis(250);
+// Which of them the overlay would draw is worked out from the camera at most this often (about a frame), when anything
+// it depends on has changed and it's not still working out the last
+const VISIBILITY_INTERVAL: time::Duration = time::Duration::from_millis(15);
+// and for this much (of the screen's width and height) past each side of the screen, as the overlay draws with the
+// camera as it is a little later, which may have turned
+const VISIBILITY_MARGIN: f32 = 0.15;
+// The screen's size until the overlay says what it is
+const DEFAULT_SCREEN: [f32; 2] = [1920.0, 1080.0];
 
 // Which objects the window says to show
 #[derive(Clone, Copy, Default, PartialEq)]
@@ -99,9 +118,11 @@ struct TickSettings {
     lara_collision: bool,
     // The meshes round where Lara's aiming, while she aims
     follow_aim: bool,
-    // How far from Lara (or where she's aiming) the meshes are drawn
-    coarse_radius: f32,
-    detailed_radius: f32,
+    // How far from Lara (or where she's aiming) each kind of mesh is drawn (`mesh_reach`), whether triangles hidden behind
+    // others are left out, and the size of the screen they're drawn on
+    mesh_reach: [Option<f32>; 2],
+    cull_hidden: bool,
+    screen: [f32; 2],
 }
 
 impl TickSettings {
@@ -126,8 +147,12 @@ impl TickSettings {
             follow_aim: meshes.any() && settings.follow_aim.get(),
             meshes,
             lara_collision: collision && settings.lara_collision.get(),
-            coarse_radius: settings.coarse_radius.get(),
-            detailed_radius: settings.detailed_radius.get(),
+            mesh_reach: if shown { mesh_reach(settings) } else { [None; 2] },
+            cull_hidden: settings.cull_hidden.get(),
+            screen: match [settings.screen_width.get(), settings.screen_height.get()] {
+                [width, height] if width >= 1.0 && height >= 1.0 => [width, height],
+                _ => DEFAULT_SCREEN,
+            },
         }
     }
 }
@@ -148,6 +173,76 @@ struct CameraData {
     lens_fields: [u32; 4],
     view_address: u64,
     lens_address: u64,
+}
+
+// The collision triangles near where they're drawn round, and how far from it each is
+#[derive(Default)]
+struct NearbyTriangles {
+    triangles: Arc<(Vec<f32>, Vec<Triangle>)>,
+    // Where they were found round, how far out (`mesh_reach`), and when; None until they've been found since the
+    // meshes were last listed
+    found: Option<(Position, [Option<f32>; 2], time::Instant)>,
+    // Changes every time they're found
+    generation: u64,
+    // How long finding them last took
+    milliseconds: f32,
+}
+
+// What the triangles the overlay would draw are worked out from: the nearby ones, the camera (none if the game has
+// none, when nothing's drawn in the world so it's all of them), where they're drawn round, and the settings
+struct VisibilityJob {
+    nearby: Arc<(Vec<f32>, Vec<Triangle>)>,
+    projector: Option<Projector>,
+    centre: Vector3<f32>,
+    reach: [Option<f32>; 2],
+    cull_hidden: bool,
+}
+
+// Works out the triangles the overlay would draw in a thread of its own, as it takes several milliseconds (as long as
+// the tick is, while the camera moves). The thread ends with it.
+struct VisibilityWorker {
+    jobs: mpsc::Sender<VisibilityJob>,
+    // The triangles, nearest Lara first, and how long working them out took
+    results: mpsc::Receiver<(Vec<Triangle>, f32)>,
+    busy: bool,
+}
+
+impl VisibilityWorker {
+    fn new() -> VisibilityWorker {
+        let (jobs, job_receiver) = mpsc::channel::<VisibilityJob>();
+        let (result_sender, results) = mpsc::channel();
+        thread::spawn(move || {
+            let mut occlusion = OcclusionBuffer::default();
+            for job in job_receiver {
+                let started = time::Instant::now();
+                let (distances, triangles) = &*job.nearby;
+                let mut visible = match &job.projector {
+                    Some(projector) => {
+                        visible_triangles(projector, triangles, &job.centre, &job.reach, job.cull_hidden, &mut occlusion)
+                    }
+                    None => (0..triangles.len()).collect(),
+                };
+                visible.sort_unstable_by(|&a, &b| distances[a].total_cmp(&distances[b]));
+                let visible = visible.into_iter().map(|i| triangles[i]).collect();
+                if result_sender.send((visible, started.elapsed().as_secs_f32() * 1000.0)).is_err() {
+                    break;
+                }
+            }
+        });
+        VisibilityWorker { jobs, results, busy: false }
+    }
+}
+
+// Everything the triangles the overlay would draw depend on
+#[derive(PartialEq)]
+struct VisibilityKey {
+    view: [f32; 16],
+    projection: Option<[f32; 16]>,
+    centre: [f32; 3],
+    nearby: u64,
+    reach: [Option<f32>; 2],
+    cull_hidden: bool,
+    screen: [f32; 2],
 }
 
 // The shown triggers' world space outlines, faces and labels
@@ -175,6 +270,12 @@ pub struct OverlayHandler {
     camera_view: [f32; 16],
     camera_lens: Option<[f32; 8]>,
     collision_meshes: CollisionMeshes,
+    nearby: NearbyTriangles,
+    // What the triangles last sent were worked out from, and when
+    visibility: Option<(VisibilityKey, time::Instant)>,
+    visibility_worker: VisibilityWorker,
+    // How long working out which triangles to draw last took
+    visibility_milliseconds: f32,
     // What the other handlers have to show, and actions the window's buttons asked for
     helper_state: HelperState,
     requested: Vec<Action>,
@@ -235,6 +336,10 @@ impl OverlayHandler {
             camera_view: [0.0; 16],
             camera_lens: None,
             collision_meshes: CollisionMeshes::default(),
+            nearby: NearbyTriangles::default(),
+            visibility: None,
+            visibility_worker: VisibilityWorker::new(),
+            visibility_milliseconds: 0.0,
             mesh_settings: MeshSettings::default(),
             helper_state: HelperState::default(),
             requested: vec![],
@@ -423,6 +528,7 @@ impl OverlayHandler {
                 let MeshSettings { coarse, detailed, other_kinds } = settings.meshes;
                 let scene = self.game.require(AddressType::CollisionScene)?;
                 self.collision_meshes.refresh(self.game.handle, scene, coarse, detailed, other_kinds)?;
+                self.nearby.found = None;
             }
         }
         Ok(())
@@ -560,24 +666,89 @@ impl OverlayHandler {
         Ok(())
     }
 
-    // The collision triangles round Lara, or while she aims where she's aiming if they follow it: where she's aiming
-    // then, the triangles, and how long finding them took
-    fn meshes(&mut self, settings: &TickSettings, aiming: bool) -> (Option<Position>, Vec<Triangle>, f32) {
-        let started = time::Instant::now();
+    // The collision triangles round Lara, or while she aims where she's aiming if they follow it, that the overlay would
+    // draw: where she's aiming then, and the triangles if they've been worked out again since they were last sent
+    fn meshes(&mut self, settings: &TickSettings, aiming: bool) -> (Option<Position>, Option<Vec<Triangle>>) {
         let aim_point = if settings.follow_aim && aiming { self.aim_point() } else { None };
-        let triangles = if settings.meshes.any() {
-            let (centre, coarse, detailed) = (aim_point.unwrap_or(self.position), settings.coarse_radius, settings.detailed_radius);
-            self.collision_meshes.triangles_near(self.game.handle, &centre, coarse, detailed, MAX_TRIANGLES)
-        } else {
-            vec![]
+        let centre = aim_point.unwrap_or(self.position);
+        let reach = settings.mesh_reach;
+
+        let nearby_stale = self.nearby.found.as_ref().is_none_or(|(at, found_reach, when)| {
+            (at.vector() - centre.vector()).norm() > NEARBY_SLACK || *found_reach != reach || when.elapsed() > NEARBY_INTERVAL
+        });
+        if nearby_stale {
+            let started = time::Instant::now();
+            // Kinds that aren't drawn get none
+            let radius = |reach: Option<f32>| reach.map_or(-1.0, |reach| reach + NEARBY_SLACK);
+            let triangles = if reach.iter().any(Option::is_some) {
+                self.collision_meshes.triangles_near(self.game.handle, &centre, radius(reach[0]), radius(reach[1]))
+            } else {
+                (vec![], vec![])
+            };
+            self.nearby.triangles = Arc::new(triangles);
+            self.nearby.found = Some((centre, reach, time::Instant::now()));
+            self.nearby.generation += 1;
+            self.nearby.milliseconds = started.elapsed().as_secs_f32() * 1000.0;
+        }
+
+        let worker = &mut self.visibility_worker;
+        let finished = worker.results.try_recv().ok().map(|(triangles, milliseconds)| {
+            worker.busy = false;
+            self.visibility_milliseconds = milliseconds;
+            triangles
+        });
+        let projection = self.projection();
+        let key = VisibilityKey {
+            view: self.camera_view,
+            projection,
+            centre: [centre.x, centre.y, centre.z],
+            nearby: self.nearby.generation,
+            reach,
+            cull_hidden: settings.cull_hidden,
+            screen: settings.screen,
         };
-        (aim_point, triangles, started.elapsed().as_secs_f32() * 1000.0)
+        let due = self.visibility.as_ref().is_none_or(|(last, when)| *last != key && when.elapsed() >= VISIBILITY_INTERVAL);
+        if due && !self.visibility_worker.busy {
+            let projector = match projection {
+                Some(projection) if self.game.has(AddressType::CameraView) => {
+                    Some(Projector::new(&self.camera_view, &projection, settings.screen).widened(VISIBILITY_MARGIN))
+                }
+                _ => None,
+            };
+            let job = VisibilityJob {
+                nearby: self.nearby.triangles.clone(),
+                projector,
+                centre: centre.vector(),
+                reach,
+                cull_hidden: settings.cull_hidden,
+            };
+            // It only stops if it panicked, which the log has
+            if self.visibility_worker.jobs.send(job).is_ok() {
+                self.visibility_worker.busy = true;
+                self.visibility = Some((key, time::Instant::now()));
+            }
+        }
+        (aim_point, finished)
+    }
+
+    // Whether the triangles to draw are still being worked out
+    fn finding_triangles(&self) -> bool {
+        self.visibility_worker.busy
+    }
+
+    // Which of the lens's floats are its near, far, fov and aspect
+    fn lens_fields(&self) -> [u32; 4] {
+        let camera = &self.game.layout().camera;
+        [camera.lens_near, camera.lens_far, camera.lens_fov, camera.lens_aspect].map(|f| f as u32)
+    }
+
+    // The camera's projection, as of this tick, if this game has its lens
+    fn projection(&self) -> Option<[f32; 16]> {
+        self.camera_lens.map(|lens| projection_from_lens(&lens, self.lens_fields()))
     }
 
     // Where the overlay reads the camera from each frame, and the projection to use until it does
     fn camera(&self) -> io::Result<CameraData> {
-        let camera = &self.game.layout().camera;
-        let lens_fields = [camera.lens_near, camera.lens_far, camera.lens_fov, camera.lens_aspect].map(|f| f as u32);
         // 0 tells the overlay there's no camera
         let address = |address_type: AddressType| -> io::Result<u64> {
             if self.game.has(address_type) {
@@ -587,8 +758,8 @@ impl OverlayHandler {
             }
         };
         Ok(CameraData {
-            projection: self.camera_lens.map_or([0.0; 16], |lens| projection_from_lens(&lens, lens_fields)),
-            lens_fields,
+            projection: self.projection().unwrap_or([0.0; 16]),
+            lens_fields: self.lens_fields(),
             view_address: address(AddressType::CameraView)?,
             lens_address: address(AddressType::CameraLens)?,
         })
@@ -760,6 +931,10 @@ impl Handler for OverlayHandler {
         self.take_requests();
         let settings = TickSettings::read(&self.ui_memory_manager.get().settings);
         self.refresh(&settings)?;
+        // Again, as refreshing can take a while: where she is as her collision's read below, which the overlay moves
+        // along with her
+        let position_address = self.game.lara_position_address();
+        self.position = self.game.lara_position()?;
 
         let position = self.position;
         let probes = match (settings.lara_collision && self.config.lara_probes, self.game.probes()) {
@@ -773,7 +948,7 @@ impl Handler for OverlayHandler {
             (true, Some(lara)) => collision::place_capsules(self.game.handle, lara, &self.lara_capsules)?,
             _ => vec![],
         };
-        let (aim_point, triangles, triangle_milliseconds) = self.meshes(&settings, aiming);
+        let (aim_point, triangles) = self.meshes(&settings, aiming);
         let camera = self.camera()?;
 
         let helper_state = &self.helper_state;
@@ -787,6 +962,7 @@ impl Handler for OverlayHandler {
             val.aiming = aim_point.is_some();
             val.object_radius = self.config.object_radius;
             val.position = position;
+            val.position_address = position_address.unwrap_or(0) as u64;
             val.camera_view = self.camera_view;
             val.camera_projection = camera.projection;
             val.lens_fields = camera.lens_fields;
@@ -803,8 +979,12 @@ impl Handler for OverlayHandler {
             val.trigger_count = fill(&mut val.triggers, &triggers.labels);
             val.trigger_line_count = fill(&mut val.trigger_lines, &triggers.lines);
             val.trigger_face_count = fill(&mut val.trigger_faces, &triggers.faces);
-            val.triangle_count = fill(&mut val.triangles, &triangles);
-            val.triangle_milliseconds = triangle_milliseconds;
+            // Otherwise they're as they were
+            if let Some(triangles) = &triangles {
+                val.triangle_count = fill(&mut val.triangles, triangles);
+            }
+            val.triangles_nearby = self.nearby.triangles.1.len() as u32;
+            val.triangle_milliseconds = self.nearby.milliseconds + self.visibility_milliseconds;
             val.mesh_kind_counts = self.collision_meshes.kind_counts;
         });
         Ok(())
@@ -866,19 +1046,26 @@ pub fn print_overlay_data(version: Option<String>, delay: u64) -> Result<()> {
     handler.ui_memory_manager.get().settings.collision.set(true);
     handler.active = true;
     handler.handle_tick().map_err(|e| anyhow!("The update failed: {}", e))?;
+    // Until the triangles to draw have been worked out
+    let started = time::Instant::now();
+    while handler.finding_triangles() && started.elapsed() < time::Duration::from_secs(5) {
+        thread::sleep(time::Duration::from_millis(5));
+        handler.handle_tick().map_err(|e| anyhow!("The update failed: {}", e))?;
+    }
     handler.active = false;
     let mut data = crate::ui_ipc_data::UiData::zeroed();
     handler.ui_memory_manager.get().read(&mut data);
     let capsule = |c: &Capsule| {
         format!("({:.0}, {:.0}, {:.0}) to ({:.0}, {:.0}, {:.0}) radius {:.1}", c.a.x, c.a.y, c.a.z, c.b.x, c.b.y, c.b.z, c.radius)
     };
-    println!("Lara at ({:.0}, {:.0}, {:.0}), camera {}", data.position.x, data.position.y, data.position.z,
-        if data.camera_view_address == 0 { "missing" } else { "found" });
+    let found = |address: u64| if address == 0 { "missing" } else { "found" };
+    println!("Lara at ({:.0}, {:.0}, {:.0}) (its address {}), camera {}", data.position.x, data.position.y,
+        data.position.z, found(data.position_address), found(data.camera_view_address));
     println!("{} objects", data.object_count);
     println!(
-        "{} triggers ({} lines, {} faces), {} collision triangles, {} probes, {} hit capsules",
-        data.trigger_count, data.trigger_line_count, data.trigger_face_count, data.triangle_count, data.probe_count,
-        data.capsule_count
+        "{} triggers ({} lines, {} faces), {} collision triangles drawn of {} nearby ({:.1}ms), {} probes, {} hit capsules",
+        data.trigger_count, data.trigger_line_count, data.trigger_face_count, data.triangle_count, data.triangles_nearby,
+        data.triangle_milliseconds, data.probe_count, data.capsule_count
     );
     for label in data.trigger_labels().iter().take(5) {
         println!("    {}", label.name().replace('\n', ": "));

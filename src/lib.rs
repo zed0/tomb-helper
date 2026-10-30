@@ -1,9 +1,9 @@
 //! The overlay, injected into the game (`tomb_helper_ui.dll`, DirectX 12 through hudhook; built for
 //! i686-pc-windows-msvc it's `tomb_helper_ui32.dll`, DirectX 11, for TR2013). Each frame it reads what the exe sent
-//! (`ui_ipc_data`), shows its window, and draws in the world (clipped at the near plane): the level's collision
-//! triangles (faintly, under everything, without anti-aliasing, skipping back faces, ones off screen, and optionally
-//! ones behind others through a quarter resolution software ID buffer, `OcclusionBuffer`), boxes and names for objects,
-//! triggers, and Lara's collision. It reads the camera from the game itself each frame, at addresses the exe sends, as
+//! (`ui_ipc_data`), shows its window, and draws in the world (clipped at the near plane, `projection`): the level's
+//! collision triangles (faintly, under everything, without anti-aliasing, skipping back faces and ones off screen; the
+//! exe has already left out those hidden behind others, as that's too slow to do here every frame), boxes and names for
+//! objects, triggers, and Lara's collision. It reads the camera from the game itself each frame, at addresses the exe sends, as
 //! the exe's copy lags and made everything judder as the camera turned. It ejects itself when the exe says to, or stops
 //! updating. Opens a console only if `config.overlay.console`, and hooks DirectX through its vtables rather than by
 //! patching its functions unless `config.overlay.hooks` is `"inline"`. Its logs (and panics) go to `tomb-helper.log`
@@ -18,6 +18,7 @@ use hudhook::hooks::dx11::ImguiDx11Hooks as GameHooks;
 use hudhook::hooks::dx12::ImguiDx12Hooks as GameHooks;
 use crate::ui_ipc_data::{hotkey, projection_from_lens, BoolSetting, BoxKind, HotkeyLabel, Capsule, F32Setting, ObjectBox, ObjectCategory, Probe, SharedMemoryManager, SurfaceKind, Triangle, TriggerCategory, U32Setting, UiData, UiSettings, REQUEST_RESTORE_POSITION, REQUEST_STORE_POSITION, REQUEST_TOGGLE_FLYING, TRIGGER_ACTIONS, COLLISION_KINDS};
 use crate::position::Position;
+use crate::projection::{box_distance, drawn_triangle, face_on_screen, fade, game_matrix, mesh_reach, Projector, MIN_OPACITY};
 use crate::tracing::{error, info, warn};
 
 // Shared with the exe, which uses the other half of them
@@ -27,17 +28,20 @@ mod logging;
 mod ui_ipc_data;
 #[allow(dead_code)]
 mod position;
+#[allow(dead_code)]
+mod projection;
 
 use nalgebra::{Matrix4, Vector3, Vector4};
 use std::mem::{size_of, MaybeUninit};
 use winapi::um::memoryapi::ReadProcessMemory;
 use winapi::um::processthreadsapi::GetCurrentProcess;
 
+// Lara's collision is moved along with her by how far she's gone since the exe read it, unless that's further than this
+// (she's been moved, or reloaded)
+const MAX_LARA_MOVE: f32 = 1000.0;
 // How long without an update from the exe before the overlay decides it's gone and ejects itself
 const EXE_GONE: std::time::Duration = std::time::Duration::from_secs(5);
 
-// Points closer to the camera plane than this (in clip space w) are clipped off
-const NEAR_CLIP_W: f32 = 1.0;
 // Lines per circle when drawing capsules
 const CAPSULE_SEGMENTS: usize = 16;
 
@@ -127,18 +131,6 @@ const DETAILED_COLOUR: [f32; 4] = [0.85, 0.4, 1.0, 0.5];
 const SURFACE_FILL_ALPHA: f32 = 0.12;
 // Range of the slider for how quickly what's drawn fades with distance
 const MAX_FADE_STRENGTH: f32 = 8.0;
-// Anything faded more than this isn't drawn
-const MIN_OPACITY: f32 = 0.005;
-// When culling hidden triangles, they're rasterised into a buffer this many times smaller than the screen, keeping
-// the nearest at each pixel, and only those nearest somewhere are drawn. Smaller triangles can be missed.
-const OCCLUSION_SCALE: f32 = 4.0;
-
-// The game stores matrices row-major for row vectors (`v * M`). Reading the same floats column-major
-// gives the transposed matrix, which is the equivalent for nalgebra's column vectors (`M * v`).
-fn game_matrix(elements: &[f32; 16]) -> Matrix4<f32> {
-    Matrix4::from_column_slice(elements)
-}
-
 // Reads the game's memory, which the overlay is part of, through ReadProcessMemory so a bad address fails instead of
 // crashing the game
 fn read_game<T: Copy>(address: usize) -> Option<T> {
@@ -156,154 +148,17 @@ fn read_game<T: Copy>(address: usize) -> Option<T> {
     Some(unsafe { value.assume_init() })
 }
 
-// The part of the convex polygon (in clip space) in front of the near plane
-fn clip_polygon(corners: &[Vector4<f32>]) -> Vec<Vector4<f32>> {
-    let mut clipped = vec![];
-    for (i, &a) in corners.iter().enumerate() {
-        let b = corners[(i + 1) % corners.len()];
-        if a.w >= NEAR_CLIP_W {
-            clipped.push(a);
-        }
-        if (a.w >= NEAR_CLIP_W) != (b.w >= NEAR_CLIP_W) {
-            clipped.push(near_plane_crossing(a, b));
-        }
-    }
-    clipped
-}
-
-// Where the line from `a` to `b` (in clip space) crosses the near plane
-fn near_plane_crossing(a: Vector4<f32>, b: Vector4<f32>) -> Vector4<f32> {
-    a + (b - a) * ((a.w - NEAR_CLIP_W) / (a.w - b.w))
-}
-
-// Keeps which triangle is nearest the camera at each pixel, at a lower resolution than the screen
-#[derive(Default)]
-struct OcclusionBuffer {
-    width: usize,
-    height: usize,
-    // 1 / w, which is linear across the screen, so bigger is nearer
-    depth: Vec<f32>,
-    ids: Vec<u32>,
-}
-
-impl OcclusionBuffer {
-    fn reset(&mut self, screen_width: f32, screen_height: f32) {
-        self.width = (screen_width / OCCLUSION_SCALE).ceil().max(1.0) as usize;
-        self.height = (screen_height / OCCLUSION_SCALE).ceil().max(1.0) as usize;
-        self.depth.clear();
-        self.depth.resize(self.width * self.height, 0.0);
-        self.ids.clear();
-        self.ids.resize(self.width * self.height, u32::MAX);
-    }
-
-    // `corners` are in clip space
-    fn add(&mut self, id: u32, projector: &Projector, corners: &[Vector4<f32>; 3]) {
-        let points: Vec<[f32; 3]> = clip_polygon(corners)
-            .into_iter()
-            .map(|c| {
-                let [x, y] = projector.to_screen(c);
-                [x / OCCLUSION_SCALE, y / OCCLUSION_SCALE, 1.0 / c.w]
-            })
-            .collect();
-        for i in 2..points.len() {
-            self.rasterise(id, [points[0], points[i - 1], points[i]]);
-        }
-    }
-
-    fn rasterise(&mut self, id: u32, p: [[f32; 3]; 3]) {
-        let edge = |a: [f32; 3], b: [f32; 3], x: f32, y: f32| (b[0] - a[0]) * (y - a[1]) - (b[1] - a[1]) * (x - a[0]);
-        let area = edge(p[0], p[1], p[2][0], p[2][1]);
-        if area.abs() < 1e-6 {
-            return;
-        }
-        let min_x = p.iter().map(|c| c[0]).fold(f32::MAX, f32::min).floor().max(0.0) as i64;
-        let max_x = p.iter().map(|c| c[0]).fold(f32::MIN, f32::max).ceil().min(self.width as f32 - 1.0) as i64;
-        let min_y = p.iter().map(|c| c[1]).fold(f32::MAX, f32::min).floor().max(0.0) as i64;
-        let max_y = p.iter().map(|c| c[1]).fold(f32::MIN, f32::max).ceil().min(self.height as f32 - 1.0) as i64;
-        for y in min_y..=max_y {
-            for x in min_x..=max_x {
-                let (px, py) = (x as f32 + 0.5, y as f32 + 0.5);
-                // Barycentric weights, all positive inside whichever way it's wound
-                let w0 = edge(p[1], p[2], px, py) / area;
-                let w1 = edge(p[2], p[0], px, py) / area;
-                let w2 = edge(p[0], p[1], px, py) / area;
-                if w0 < 0.0 || w1 < 0.0 || w2 < 0.0 {
-                    continue;
-                }
-                let depth = w0 * p[0][2] + w1 * p[1][2] + w2 * p[2][2];
-                let i = y as usize * self.width + x as usize;
-                if depth > self.depth[i] {
-                    self.depth[i] = depth;
-                    self.ids[i] = id;
-                }
-            }
-        }
-    }
-
-    // Which of the first `count` ids are nearest at some pixel
-    fn visible(&self, count: usize) -> Vec<bool> {
-        let mut visible = vec![false; count];
-        for &id in &self.ids {
-            if let Some(v) = visible.get_mut(id as usize) {
-                *v = true;
-            }
-        }
-        visible
-    }
-}
-
-struct Projector {
-    view_projection: Matrix4<f32>,
-    camera_position: Vector3<f32>,
-    screen_width: f32,
-    screen_height: f32,
-}
-
-impl Projector {
-    fn to_clip(&self, model: &Matrix4<f32>, point: Vector3<f32>) -> Vector4<f32> {
-        self.view_projection * model * point.push(1.0)
-    }
-
-    fn world_to_clip(&self, point: Vector3<f32>) -> Vector4<f32> {
-        self.view_projection * point.push(1.0)
-    }
-
-    fn to_screen(&self, clip: Vector4<f32>) -> [f32; 2] {
-        let ndc = clip.xy() / clip.w;
-        // The game's view space has y pointing down the screen, so there's no flip here
-        [
-            (ndc.x + 1.0) * 0.5 * self.screen_width,
-            (ndc.y + 1.0) * 0.5 * self.screen_height,
-        ]
-    }
-
-    fn project(&self, point: Vector3<f32>) -> Option<[f32; 2]> {
-        let clip = self.world_to_clip(point);
-        if clip.w < NEAR_CLIP_W {
-            return None;
-        }
-        Some(self.to_screen(clip))
-    }
-
-    // Clips the convex polygon against the near plane, returns its corners on screen (none if it's entirely behind
-    // the camera)
-    fn project_polygon(&self, corners: &[Vector4<f32>]) -> Vec<[f32; 2]> {
-        clip_polygon(corners).into_iter().map(|c| self.to_screen(c)).collect()
-    }
-
-    // Clips the line against the near plane, returns None if it's entirely behind the camera
-    fn project_line(&self, a: Vector4<f32>, b: Vector4<f32>) -> Option<([f32; 2], [f32; 2])> {
-        if a.w < NEAR_CLIP_W && b.w < NEAR_CLIP_W {
-            return None;
-        }
-        let a2 = if a.w < NEAR_CLIP_W { near_plane_crossing(b, a) } else { a };
-        let b2 = if b.w < NEAR_CLIP_W { near_plane_crossing(a, b) } else { b };
-        Some((self.to_screen(a2), self.to_screen(b2)))
-    }
-}
-
 // Faded by its distance from Lara over `object_radius`
-fn draw_box(ui: &Ui, draw_list: &DrawListMut, projector: &Projector, ui_data: &UiData, settings: &UiSettings, object: &ObjectBox) {
+// Lara's box is moved by `lara_moved`
+fn draw_box(
+    ui: &Ui,
+    draw_list: &DrawListMut,
+    projector: &Projector,
+    ui_data: &UiData,
+    settings: &UiSettings,
+    object: &ObjectBox,
+    lara_moved: Vector3<f32>,
+) {
     let colour = match (object.category, object.kind) {
         (ObjectCategory::Interactable, _) => INTERACTABLE_COLOUR,
         (ObjectCategory::Npc, _) => NPC_COLOUR,
@@ -311,7 +166,10 @@ fn draw_box(ui: &Ui, draw_list: &DrawListMut, projector: &Projector, ui_data: &U
         (_, BoxKind::Estimated) => ESTIMATED_COLOUR,
         (_, BoxKind::Lara) => LARA_COLOUR,
     };
-    let model = game_matrix(&object.transform);
+    let mut model = game_matrix(&object.transform);
+    if object.kind == BoxKind::Lara {
+        model = Matrix4::new_translation(&lara_moved) * model;
+    }
     let (min, max) = (object.min, object.max);
     // Corner i uses max for each axis whose bit is set in i
     let local: Vec<Vector3<f32>> = (0..8)
@@ -368,9 +226,10 @@ fn draw_world_line(draw_list: &DrawListMut, projector: &Projector, a: Vector3<f3
     }
 }
 
-fn draw_capsule(draw_list: &DrawListMut, projector: &Projector, capsule: &Capsule, colour: [f32; 4]) {
-    let a = capsule.a.vector();
-    let b = capsule.b.vector();
+// Moved by `offset`
+fn draw_capsule(draw_list: &DrawListMut, projector: &Projector, capsule: &Capsule, offset: Vector3<f32>, colour: [f32; 4]) {
+    let a = capsule.a.vector() + offset;
+    let b = capsule.b.vector() + offset;
     let radius = capsule.radius;
     let axis = (b - a).try_normalize(1e-4).unwrap_or_else(Vector3::z);
     let u = axis.cross(&if axis.x.abs() < 0.9 { Vector3::x() } else { Vector3::y() }).normalize();
@@ -399,10 +258,11 @@ fn draw_capsule(draw_list: &DrawListMut, projector: &Projector, capsule: &Capsul
     }
 }
 
-fn draw_probe(draw_list: &DrawListMut, projector: &Projector, probe: &Probe, colour: [f32; 4]) {
-    draw_world_line(draw_list, projector, probe.start.vector(), probe.end.vector(), colour);
+// Moved by `offset`
+fn draw_probe(draw_list: &DrawListMut, projector: &Projector, probe: &Probe, offset: Vector3<f32>, colour: [f32; 4]) {
+    draw_world_line(draw_list, projector, probe.start.vector() + offset, probe.end.vector() + offset, colour);
     if probe.has_hit {
-        let hit = probe.hit.vector();
+        let hit = probe.hit.vector() + offset;
         for axis in [Vector3::x(), Vector3::y(), Vector3::z()] {
             let offset = axis * PROBE_HIT_SIZE;
             draw_world_line(draw_list, projector, hit - offset, hit + offset, colour);
@@ -414,55 +274,7 @@ fn with_opacity(colour: [f32; 4], opacity: f32) -> [f32; 4] {
     [colour[0], colour[1], colour[2], colour[3] * opacity]
 }
 
-// How much fainter to draw something this far from where it's drawn round, by (1 - distance / radius) ^ strength, if
-// fading with distance is on
-fn fade(settings: &UiSettings, distance: f32, radius: f32) -> f32 {
-    if !settings.fade_with_distance.get() {
-        return 1.0;
-    }
-    let t = (distance / radius.max(1.0)).min(1.0);
-    (1.0 - t).powf(settings.fade_strength.get())
-}
-
-// How far the point is from the nearest part of the box round the points
-fn box_distance(point: &Vector3<f32>, points: &[Vector3<f32>]) -> f32 {
-    let (min, max) = points.iter().fold((points[0], points[0]), |(min, max), p| (min.inf(p), max.sup(p)));
-    (min - point).sup(&(point - max)).sup(&Vector3::zeros()).norm()
-}
-
-// How far the point is from the nearest part of the box round the triangle, like the exe's choice of triangles
-fn triangle_distance(point: &Vector3<f32>, triangle: &Triangle) -> f32 {
-    box_distance(point, &triangle.corners.map(|c| c.vector()))
-}
-
-// The triangle's corners in clip space, unless it's seen from behind or can't be on screen
-fn triangle_on_screen(projector: &Projector, triangle: &Triangle) -> Option<[Vector4<f32>; 3]> {
-    let world = triangle.corners.map(|c| c.vector());
-    // Triangles are wound anticlockwise seen from the side they face
-    let normal = (world[1] - world[0]).cross(&(world[2] - world[0]));
-    if normal.dot(&(projector.camera_position - world[0])) <= 0.0 {
-        return None;
-    }
-    face_on_screen(projector, world)
-}
-
-// The corners in clip space, unless they can't be on screen
-fn face_on_screen(projector: &Projector, world: [Vector3<f32>; 3]) -> Option<[Vector4<f32>; 3]> {
-    let corners = world.map(|c| projector.world_to_clip(c));
-    // All off the same side of the screen, or behind the camera
-    let outside = |test: fn(&Vector4<f32>) -> bool| corners.iter().all(test);
-    if outside(|c| c.x < -c.w)
-        || outside(|c| c.x > c.w)
-        || outside(|c| c.y < -c.w)
-        || outside(|c| c.y > c.w)
-        || outside(|c| c.w < NEAR_CLIP_W)
-    {
-        return None;
-    }
-    Some(corners)
-}
-
-// `corners` are from `triangle_on_screen`, and `opacity` scales the colours' own
+// `corners` are from `drawn_triangle`, and `opacity` scales the colours' own
 fn draw_triangle(
     draw_list: &DrawListMut,
     projector: &Projector,
@@ -536,8 +348,6 @@ struct TombHelperHud {
     last_update: std::time::Instant,
     // How long the last frame's drawing took
     draw_milliseconds: f32,
-    // Reused between frames
-    occlusion: OcclusionBuffer,
 }
 
 impl TombHelperHud {
@@ -582,7 +392,6 @@ impl TombHelperHud {
             last_generation: 0,
             last_update: std::time::Instant::now(),
             draw_milliseconds: 0.0,
-            occlusion: OcclusionBuffer::default(),
         }
     }
 }
@@ -599,18 +408,22 @@ impl ImguiRenderLoop for TombHelperHud {
         let screen = ui.io().display_size;
         // Read again so changes show straight away, rather than once the exe has caught up
         let settings = &self.ui_memory_manager.get().settings;
+        // For the exe to choose the triangles to draw
+        settings.screen_width.set(screen[0]);
+        settings.screen_height.set(screen[1]);
         if settings.show_window.get() {
             settings_window(ui, ui_data, settings, screen[0], self.draw_milliseconds);
         }
         if ui_data.camera_view_address != 0 && settings.overlay.get() {
             let projector = projector(ui_data, screen);
             let draw_list = ui.get_background_draw_list();
-            draw_meshes(&draw_list, &projector, ui_data, settings, &mut self.occlusion);
-            draw_objects(ui, &draw_list, &projector, ui_data, settings);
+            let lara_moved = lara_moved(ui_data);
+            draw_meshes(&draw_list, &projector, ui_data, settings, mesh_centre(ui_data, lara_moved));
+            draw_objects(ui, &draw_list, &projector, ui_data, settings, lara_moved);
             if settings.triggers.get() {
                 draw_triggers(ui, &draw_list, &projector, ui_data, settings);
             }
-            draw_lara(&draw_list, &projector, ui_data, settings);
+            draw_lara(&draw_list, &projector, ui_data, settings, lara_moved);
         }
         self.draw_milliseconds = started.elapsed().as_secs_f32() * 1000.0;
     }
@@ -643,70 +456,56 @@ impl TombHelperHud {
 // The camera as it is now, read from the game itself as the exe's copy lags behind (which made everything judder as
 // the camera turned)
 fn projector(ui_data: &UiData, screen: [f32; 2]) -> Projector {
-    let view = game_matrix(&read_game(ui_data.camera_view_address as usize).unwrap_or(ui_data.camera_view));
+    let view = read_game(ui_data.camera_view_address as usize).unwrap_or(ui_data.camera_view);
     let projection = read_game(ui_data.camera_lens_address as usize)
         .map_or(ui_data.camera_projection, |lens| projection_from_lens(&lens, ui_data.lens_fields));
-    Projector {
-        view_projection: game_matrix(&projection) * view,
-        camera_position: view.try_inverse().map_or(Vector3::zeros(), |m| m.column(3).xyz()),
-        screen_width: screen[0],
-        screen_height: screen[1],
-    }
+    Projector::new(&view, &projection, screen)
+}
+
+// How far Lara's gone since the exe read her position (and collision), read from the game itself like the camera, as the
+// exe's ticks lag behind (more so while it rescans the level), which left her collision behind her as she ran
+fn lara_moved(ui_data: &UiData) -> Vector3<f32> {
+    let moved = read_game::<[f32; 3]>(ui_data.position_address as usize)
+        .map_or(Vector3::zeros(), |[x, y, z]| Vector3::new(x, y, z) - ui_data.position.vector());
+    // Also none if it's NaN
+    if moved.norm() < MAX_LARA_MOVE { moved } else { Vector3::zeros() }
+}
+
+// Where the meshes are drawn round: Lara as she is now, or where she's aiming
+fn mesh_centre(ui_data: &UiData, lara_moved: Vector3<f32>) -> Vector3<f32> {
+    ui_data.mesh_centre.vector() + if ui_data.aiming { Vector3::zeros() } else { lara_moved }
 }
 
 // The level's collision, under everything else, furthest first, faded by distance from where it's drawn round (Lara or
-// where she's aiming). Without anti-aliasing, which takes several times the vertices.
-fn draw_meshes(
-    draw_list: &DrawListMut,
-    projector: &Projector,
-    ui_data: &UiData,
-    settings: &UiSettings,
-    occlusion: &mut OcclusionBuffer,
-) {
-    let collision = settings.collision.get();
-    let coarse_meshes = collision && settings.coarse_meshes.get();
-    let detailed_meshes = collision && settings.detailed_meshes.get();
+// where she's aiming). Without anti-aliasing, which takes several times the vertices. The exe sends only those it saw
+// drawn from the camera a moment ago, so this only checks that they still are.
+fn draw_meshes(draw_list: &DrawListMut, projector: &Projector, ui_data: &UiData, settings: &UiSettings, centre: Vector3<f32>) {
     let mesh_opacity = settings.mesh_opacity.get();
     let radii = [settings.coarse_radius.get(), settings.detailed_radius.get()];
+    let reach = mesh_reach(settings);
 
     let flags = unsafe { &mut (*imgui::sys::igGetBackgroundDrawList()).Flags };
     let anti_aliased = *flags;
     *flags &= !((imgui::sys::ImDrawListFlags_AntiAliasedLines
         | imgui::sys::ImDrawListFlags_AntiAliasedLinesUseTex
         | imgui::sys::ImDrawListFlags_AntiAliasedFill) as i32);
-    let centre = ui_data.mesh_centre.vector();
-    let mut shown = vec![];
     for triangle in ui_data.triangles().iter().rev() {
-        if !((triangle.detailed && detailed_meshes) || (!triangle.detailed && coarse_meshes)) {
-            continue;
+        if let Some((distance, corners)) = drawn_triangle(projector, triangle, &centre, &reach) {
+            let opacity = mesh_opacity * fade(settings, distance, radii[triangle.detailed as usize]);
+            draw_triangle(draw_list, projector, triangle, &corners, opacity);
         }
-        let opacity = mesh_opacity * fade(settings, triangle_distance(&centre, triangle), radii[triangle.detailed as usize]);
-        if opacity < MIN_OPACITY {
-            continue;
-        }
-        if let Some(corners) = triangle_on_screen(projector, triangle) {
-            shown.push((triangle, corners, opacity));
-        }
-    }
-    if settings.cull_hidden.get() {
-        occlusion.reset(projector.screen_width, projector.screen_height);
-        for (i, (_, corners, _)) in shown.iter().enumerate() {
-            occlusion.add(i as u32, projector, corners);
-        }
-        let visible = occlusion.visible(shown.len());
-        let mut i = 0;
-        shown.retain(|_| {
-            i += 1;
-            visible[i - 1]
-        });
-    }
-    for (triangle, corners, opacity) in &shown {
-        draw_triangle(draw_list, projector, triangle, corners, *opacity);
     }
     *flags = anti_aliased;
 }
 
-fn draw_objects(ui: &Ui, draw_list: &DrawListMut, projector: &Projector, ui_data: &UiData, settings: &UiSettings) {
+fn draw_objects(
+    ui: &Ui,
+    draw_list: &DrawListMut,
+    projector: &Projector,
+    ui_data: &UiData,
+    settings: &UiSettings,
+    lara_moved: Vector3<f32>,
+) {
     let (interactables, npcs) = (settings.interactables.get(), settings.npcs.get());
     for object in ui_data.objects() {
         let shown = match object.category {
@@ -715,7 +514,7 @@ fn draw_objects(ui: &Ui, draw_list: &DrawListMut, projector: &Projector, ui_data
             ObjectCategory::Named => true,
         };
         if shown {
-            draw_box(ui, draw_list, projector, ui_data, settings, object);
+            draw_box(ui, draw_list, projector, ui_data, settings, object, lara_moved);
         }
     }
 }
@@ -763,10 +562,10 @@ fn draw_triggers(ui: &Ui, draw_list: &DrawListMut, projector: &Projector, ui_dat
     }
 }
 
-// Where she's aiming (which the meshes are drawn round then), her collision, and a circle where the meshes are drawn
-// round
-fn draw_lara(draw_list: &DrawListMut, projector: &Projector, ui_data: &UiData, settings: &UiSettings) {
-    let centre = ui_data.mesh_centre.vector();
+// Where she's aiming (which the meshes are drawn round then), her collision (moved by `moved`), and a circle where the
+// meshes are drawn round
+fn draw_lara(draw_list: &DrawListMut, projector: &Projector, ui_data: &UiData, settings: &UiSettings, moved: Vector3<f32>) {
+    let centre = mesh_centre(ui_data, moved);
     if ui_data.aiming {
         for axis in [Vector3::x(), Vector3::y(), Vector3::z()] {
             let arm = axis * AIM_MARKER_SIZE;
@@ -776,20 +575,20 @@ fn draw_lara(draw_list: &DrawListMut, projector: &Projector, ui_data: &UiData, s
     if settings.collision.get() && settings.lara_collision.get() {
         let opacity = |colour| with_opacity(colour, settings.mesh_opacity.get());
         for capsule in ui_data.capsules() {
-            draw_capsule(draw_list, projector, capsule, opacity(LARA_COLOUR));
+            draw_capsule(draw_list, projector, capsule, moved, opacity(LARA_COLOUR));
         }
         for probe in ui_data.probes() {
-            draw_probe(draw_list, projector, probe, opacity(PROBE_COLOUR));
+            draw_probe(draw_list, projector, probe, moved, opacity(PROBE_COLOUR));
         }
         for (i, (proxy, colour)) in ui_data.proxies().iter().zip(PROXY_COLOURS).enumerate() {
             let colour = if i == 0 && ui_data.proxy_touching { PUSHING_COLOUR } else { colour };
-            draw_capsule(draw_list, projector, proxy, opacity(colour));
+            draw_capsule(draw_list, projector, proxy, moved, opacity(colour));
         }
         // The camera and weapon only collide while she aims
         if ui_data.attached_active {
             for (capsule, touching) in ui_data.attached().iter().zip(ui_data.attached_touching) {
                 let colour = if touching { PUSHING_COLOUR } else { COLLISION_COLOUR };
-                draw_capsule(draw_list, projector, capsule, opacity(colour));
+                draw_capsule(draw_list, projector, capsule, moved, opacity(colour));
             }
         }
     }
@@ -869,8 +668,9 @@ fn settings_window(ui: &Ui, ui_data: &UiData, settings: &UiSettings, screen_widt
                 if settings.collision.get() {
                     ui.indent();
                     ui.text(format!(
-                        "{} triangles ({:.1}ms to find, {:.1}ms to draw)",
-                        ui_data.triangles().len(), ui_data.triangle_milliseconds, draw_milliseconds
+                        "{} of {} triangles ({:.1}ms to find, {:.1}ms to draw)",
+                        ui_data.triangles().len(), ui_data.triangles_nearby, ui_data.triangle_milliseconds,
+                        draw_milliseconds
                     ));
                     collision_settings(ui, ui_data, settings);
                     ui.unindent();
@@ -982,20 +782,4 @@ fn collision_settings(ui: &Ui, ui_data: &UiData, settings: &UiSettings) {
     slider(ui, "Opacity", 0.0, 1.0, "%.2f", &settings.mesh_opacity);
     checkbox(ui, "Hide triangles behind others", &settings.cull_hidden);
     checkbox(ui, "Round where Lara's aiming, while she aims", &settings.follow_aim);
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn nearer_triangles_hide_ones_behind_them() {
-        let mut buffer = OcclusionBuffer::default();
-        buffer.reset(40.0 * OCCLUSION_SCALE, 40.0 * OCCLUSION_SCALE);
-        // Depth is 1 / w, so 0.5 is nearer than 0.1. The far one is entirely behind the near one, the other only partly.
-        buffer.rasterise(0, [[5., 5., 0.1], [15., 5., 0.1], [5., 15., 0.1]]);
-        buffer.rasterise(1, [[0., 0., 0.5], [30., 0., 0.5], [0., 30., 0.5]]);
-        buffer.rasterise(2, [[20., 20., 0.1], [39., 20., 0.1], [20., 39., 0.1]]);
-        assert_eq!(buffer.visible(3), [false, true, true]);
-    }
 }

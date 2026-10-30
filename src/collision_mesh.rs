@@ -1,6 +1,6 @@
 //! The level's collision meshes (CLAUDE.md's "Level collision"): `CollisionMeshes::refresh` walks the scene's instance
 //! list (dropping duplicates), and `triangles_near` caches each mesh's vertices and triangles and returns the world
-//! space triangles near a point, closest first, tagged floor, wall or ceiling by their normal. `raycast` finds where a
+//! space triangles near a point and how far from it they are, tagged floor, wall or ceiling by their normal. `raycast` finds where a
 //! line first hits them.
 
 use crate::game_memory::{Handle, floats_at, read_u32, u16_at, u32_at, vector_at};
@@ -175,18 +175,18 @@ impl CollisionMeshes {
         Ok(header)
     }
 
-    // The triangles that come within the radius for their kind of mesh of `centre`, closest first
+    // The triangles that come within the radius for their kind of mesh of `centre`, and how far from it each is (from
+    // the box round it), in no particular order
     pub fn triangles_near(
         &mut self,
         handle: Handle,
         centre: &Position,
         coarse_radius: f32,
         detailed_radius: f32,
-        max: usize,
-    ) -> Vec<Triangle> {
+    ) -> (Vec<f32>, Vec<Triangle>) {
         let layout = &handle.layout().collision_instance;
         let centre = centre.vector();
-        let mut found = vec![];
+        let (mut distances, mut found) = (vec![], vec![]);
         for placement in &mut self.placements {
             let radius = if placement.detailed { detailed_radius } else { coarse_radius };
             if box_distance(&centre, &placement.min, &placement.max) > radius + NEARBY_MARGIN {
@@ -205,12 +205,12 @@ impl CollisionMeshes {
             for placed in &placement.placed.as_ref().unwrap().1 {
                 let distance = box_distance(&centre, &placed.min, &placed.max);
                 if distance <= radius {
-                    found.push((distance, placed.triangle));
+                    distances.push(distance);
+                    found.push(placed.triangle);
                 }
             }
         }
-        found.sort_by(|a, b| a.0.total_cmp(&b.0));
-        found.into_iter().take(max).map(|(_, t)| t).collect()
+        (distances, found)
     }
 }
 

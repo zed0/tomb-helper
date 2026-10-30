@@ -86,6 +86,9 @@ mod words;
 // Shared with the overlay, which uses the other half of it
 #[allow(dead_code)]
 mod ui_ipc_data;
+// Shared with the overlay, which draws with it
+#[allow(dead_code)]
+mod projection;
 
 #[cfg(windows)]
 extern crate winapi;

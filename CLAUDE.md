@@ -11,7 +11,7 @@ User docs (hotkeys, config, cutscene timing generation) live in `README.md`.
 | bin `tomb-helper` | `src/main.rs` | `tomb-helper.exe` | Main external process: finds game, runs handlers, listens to hotkeys |
 | lib `tomb_helper_ui` (cdylib) | `src/lib.rs` | `tomb_helper_ui.dll` | ImGui overlay injected *into* the game (DX12 via `hudhook`; built for `i686-pc-windows-msvc` it's DX11 for TR2013, `tomb_helper_ui32.dll`, which `build.rs` builds with a second cargo and copies next to the exe; `TOMB_HELPER_SKIP_TR2013` skips it) |
 
-- The bin and lib share `src/ui_ipc_data.rs`, `src/position.rs` and `src/logging.rs` by each declaring them with `mod` —
+- The bin and lib share `src/ui_ipc_data.rs`, `src/position.rs`, `src/projection.rs` and `src/logging.rs` by each declaring them with `mod` —
   they're compiled into both, so `UiData` must stay `#[repr(C)]` with identical layout on both sides, including in the
   32-bit overlay for TR2013: nothing in the shared memory may be pointer sized (`u64` addresses, `u32` counts). Every
   build checks `UiDoubleBuffer`'s size is `SHARED_SIZE` (`ui_ipc_data.rs`), so a layout change fails the build until
@@ -86,11 +86,12 @@ Each module's `//!` doc says what's in it and how it works; this is where to loo
 | `src/aim_sweep.rs` | TR2013's aim sweep (weapon rod) through her inventory to the weapon's tuning |
 | `src/trigger.rs` | What an instance is (interactable, trigger, NPC), trigger categories and shapes |
 | `src/trigger_scripts.rs` | What sets triggers off and what they do, from a background scan for script nodes |
-| `src/overlay_handler.rs` | Injects the overlay and sends it what to draw each tick; `debug overlay-data` |
+| `src/overlay_handler.rs` | Injects the overlay and sends it what to draw each tick (of the collision triangles near Lara, only those it would draw, worked out in a thread of its own: doing it in the overlay took ~20ms of the game's frame); `debug overlay-data` |
 | `src/inject32.rs` | Injecting the 32-bit overlay into a 32-bit game |
 | `src/ui_ipc_data.rs` | The shared memory: `UiData`, `UiSettings`, double buffering (shared with the DLL) |
 | `src/lib.rs` | The injected overlay (DLL): its window and drawing |
 | `src/position.rs` | `Position`, with `Vector3` conversions (shared with the DLL) |
+| `src/projection.rs` | Projecting onto the screen (the camera's `Projector`), fading, and the occlusion buffer; `visible_triangles`, which collision triangles the overlay draws, worked out by the exe (shared with the DLL) |
 | `src/position_handler.rs` | Save/restore position, flight mode and movement |
 | `src/class_fields.rs` | Which RTTI class each layout field is in (`FIELD_CLASSES`), the fields a class's virtual functions use, and another build's or game's layout from that (`debug class-fields`, `debug class-layout`) |
 | `src/targets.rs` | What tomb-helper writes: chains built from the structures (or the offsets file's), checked before writing |

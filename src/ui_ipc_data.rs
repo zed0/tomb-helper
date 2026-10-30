@@ -314,7 +314,10 @@ pub struct UiData {
     pub should_exit: bool,
     // Hook DirectX through its vtables rather than patching its functions (`config.overlay.hooks`)
     pub vtable_hooks: bool,
+    // Lara's position as her collision was read, and where it is in the game (0 if its floats aren't together), so the
+    // overlay can move her collision along with her by how far she's gone since, as it does the camera
     pub position: Position,
+    pub position_address: u64,
     // The position tools (`PositionHandler`), if this game has them
     pub position_tools: bool,
     pub has_saved_position: bool,
@@ -362,9 +365,11 @@ pub struct UiData {
     pub trigger_lines: [Line; MAX_TRIGGER_LINES],
     pub trigger_face_count: u32,
     pub trigger_faces: [TriggerFace; MAX_TRIGGER_FACES],
-    // The level's collision near Lara, closest first. Last, as only the used part of it is copied.
+    // The level's collision near Lara that the overlay would draw from the camera as the exe last saw it (on screen,
+    // facing it, and unless `cull_hidden` not behind others), closest first. Last, as only the used part of it is copied.
     pub triangle_count: u32,
-    // How long the exe took to find them
+    // How many there were near her before that, and how long the exe last took to find them
+    pub triangles_nearby: u32,
     pub triangle_milliseconds: f32,
     // How many of the level's collision instances have each kind bit
     pub mesh_kind_counts: [u32; COLLISION_KINDS],
@@ -489,6 +494,9 @@ pub struct UiSettings {
     pub fade_strength: F32Setting,
     // Only draw the triangles not hidden behind others
     pub cull_hidden: BoolSetting,
+    // The game's screen as the overlay last drew on it, for the exe to work out what's on it (0 until it has)
+    pub screen_width: F32Setting,
+    pub screen_height: F32Setting,
     // Draw the collision meshes round where Lara's aiming while she aims
     pub follow_aim: BoolSetting,
     // How opaque trigger volumes are filled, 0 to 1
@@ -560,7 +568,7 @@ pub struct UiDoubleBuffer {
 // so they'd never meet). Every build checks it here, so a field that's another size in the 32-bit overlay (one that's
 // pointer sized) fails its build rather than leaving TR2013's overlay blank. Change it with the layout: the error says
 // what it is now ("found one with a size of ...").
-const SHARED_SIZE: usize = 18_643_352;
+const SHARED_SIZE: usize = 18_643_400;
 const _: [(); SHARED_SIZE] = [(); size_of::<UiDoubleBuffer>()];
 
 impl UiDoubleBuffer {
